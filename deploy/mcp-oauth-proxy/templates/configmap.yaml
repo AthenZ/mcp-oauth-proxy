@@ -1,0 +1,214 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-oauth-proxy.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{ include "mcp-oauth-proxy.labels" . | nindent 4 }}
+data:
+  application.yaml: |
+    quarkus:
+      http:
+        ssl-port: {{ .Values.service.targetPort }}
+        insecure-requests: disabled
+        access-log:
+          enabled: true
+          pattern: "%h %t \"%r\" %s %b"
+          exclude-pattern: "/q/.*"
+        tls-configuration-name: enterprise
+        ssl:
+          client-auth: request
+        auth:
+          permission:
+            health:
+              paths: "/q/health/*"
+              policy: "permit"
+            atlassian-mcp:
+              paths: "/atlassian-mcp/*"
+              policy: authenticated
+            atlassian:
+              paths: "/atlassian/*"
+              policy: authenticated
+            github:
+              paths: "/github/*"
+              policy: authenticated
+            google:
+              paths: "/google/*"
+              policy: authenticated
+        cors:
+          enabled: true
+          origins: http://localhost:6274 # allow mcp inspector
+          methods: GET,PUT,POST
+
+      tls:
+        protocols: {{ .Values.application.tls.protocols | quote }}
+        cipher-suites: {{ .Values.application.tls.cipherSuites | quote }}
+        reload-period: {{ .Values.application.tls.reloadPeriod | quote }}
+
+      log:
+        console:
+          format: "%d{HH:mm:ss,SSS} %-5p traceId=%X{traceId}, parentId=%X{parentId}, spanId=%X{spanId}, sampled=%X{sampled} [%c{2.}] (%t) %s%e%n"
+        level: INFO
+        category:
+          "io.quarkus.oidc.runtime":
+            level: INFO
+            min-level: INFO
+
+      oidc:
+        auth-server-url: {{ .Values.oidc.authServerUrl | quote }}
+        client-id: {{ .Values.oidc.clientId | quote }}
+        credentials:
+          client-secret:
+            provider:
+              key: {{ .Values.oidc.clientSecretKey }}
+            method: post
+        authentication:
+          scopes:
+          {{- range .Values.oidc.scopes }}
+            - {{ . | quote }}
+          {{- end }}
+          redirect-path: /authorize/callback
+          restore-path-after-redirect: true
+        application-type: web-app
+        atlassian:
+          auth-server-url: {{ .Values.oidc.atlassian.endpoint | quote }}
+          client-id: {{ .Values.oidc.atlassian.clientId | quote }}
+          credentials:
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.atlassian.clientSecretKey }}
+              method: post
+          authentication:
+            scopes:
+            {{- range .Values.oidc.atlassian.scopes }}
+              - {{ . | quote }}
+            {{- end }}
+            redirect-path: /atlassian/authorize/callback
+            restore-path-after-redirect: true
+            extra-params:
+              audience: "api.atlassian.com"
+              prompt: "consent"
+            add-openid-scope: false
+            id-token-required: false
+          application-type: web-app
+          token-state-manager:
+            strategy: keep-all-tokens
+          user-info-path: {{ .Values.oidc.atlassian.userInfoPath | quote }}
+          token:
+            issuer: any
+        github:
+          provider: github
+          client-id: {{ .Values.oidc.github.clientId | quote }}
+          credentials:
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.github.clientSecretKey }}
+              method: post
+          authentication:
+            scopes:
+            {{- range .Values.oidc.github.scopes }}
+              - {{ . | quote }}
+            {{- end }}
+            redirect-path: /github/authorize/callback
+            restore-path-after-redirect: true
+        google:
+          provider: google
+          client-id: {{ .Values.oidc.google.clientId | quote }}
+          credentials:
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.google.clientSecretKey }}
+              method: post
+          authentication:
+            scopes:
+            {{- range .Values.oidc.google.scopes }}
+              - {{ . | quote }}
+            {{- end }}
+            redirect-path: /google/authorize/callback
+            restore-path-after-redirect: true
+            extra-params:
+              access_type: "offline"
+
+      otel:
+        resource:
+          attributes: service.name={{ include "mcp-oauth-proxy.serviceVersion" . }},service.instance.id=${POD_NAME},cloud.account.id=${CLOUD_ACCOUNT_ID}
+        exporter:
+          otlp:
+            protocol: {{ .Values.application.otel.protocol }}
+            endpoint: {{ .Values.application.otel.endpoint }}
+            trust-cert:
+              certs: {{ .Values.application.otel.trustStorePath | quote }}
+
+      cache:
+        caffeine:
+          token-cache:
+            initial-capacity: 10
+            expire-after-write: PT30M
+            maximum-size: 100
+          code-cache:
+            initial-capacity: 10
+            expire-after-write: PT10M
+            maximum-size: 100
+
+    server:
+      host: {{ .Values.application.host | quote }}
+      tls:
+        certificate:
+          path: {{ .Values.application.tls.certPath | quote }}
+        private-key:
+          path: {{ .Values.application.tls.keyPath | quote }}
+        refresh:
+          interval: {{ .Values.application.tls.refreshDuration | quote }}
+        truststore:
+          path: {{ .Values.application.tls.trustStorePath | quote }}
+      athenz:
+        cert-file: {{ .Values.athenz.certFilePath | quote }}
+        key-file: {{ .Values.athenz.keyFilePath | quote }}
+        truststore-file: {{ .Values.athenz.trustStorePath | quote }}
+        user-prefix: {{ .Values.athenz.userPrefix | quote }}
+        zms:
+          endpoint: {{ .Values.application.zms.endpoint | quote }}
+        zts:
+          endpoint: {{ .Values.application.zts.endpoint | quote }}
+        register:
+          domain: {{ .Values.application.register.domain | quote }}
+          role: {{ .Values.application.register.role | quote }}
+        resource-authorization: false
+        authorization-action: {{ .Values.application.authorization.action | quote }}
+        authorization-domain: {{ .Values.application.authorization.domain | quote }}
+      token-store:
+        implementation: enterprise
+        expiry: {{ .Values.application.tokenStore.expiry }}
+        aws:
+          dynamodb:
+            table-name: {{ .Values.application.aws.dynamoDbTable | quote }}
+          kms:
+            key-id: {{ .Values.application.aws.kmsKeyId | quote }}
+      secret:
+        k8s:
+          name: {{ .Values.application.k8s.secretName | quote }}
+          namespace: {{ .Values.application.k8s.namespace | quote }}
+      token-exchange:
+        idp: {{ .Values.oidc.provider }}
+        remote-servers:
+          endpoints:
+            - name: athenz
+              endpoint: {{ .Values.application.zts.endpoint | quote }}
+              username-claim: {{ .Values.application.zts.claim | quote }}
+            - name: okta
+              endpoint: {{ .Values.oidc.authServerUrl | quote }}
+              username-claim: {{ .Values.oidc.claim | quote }}
+            - name: atlassian
+              endpoint: {{ .Values.oidc.atlassian.endpoint | quote }}
+              username-claim: {{ .Values.oidc.atlassian.claim | quote }}
+            - name: github
+              endpoint: {{ .Values.oidc.github.endpoint | quote }}
+              username-claim: {{ .Values.oidc.github.claim | quote }}
+            - name: google
+              endpoint: {{ .Values.oidc.google.endpoint | quote }}
+              username-claim: {{ .Values.oidc.google.claim | quote }}
+      resources:
+        resource-mapping:
+        {{- with .Values.application.resourceMapping -}}
+          {{ toYaml . | nindent 10 }}
+        {{- end -}}

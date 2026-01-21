@@ -1,0 +1,174 @@
+quarkus:
+  http:
+    ssl-port:
+    insecure-requests: disabled
+    access-log:
+      enabled: true
+      pattern: "%h %t \"%r\" %s %b"
+      exclude-pattern: "/q/.*"
+    tls-configuration-name:
+    ssl:
+      client-auth: request
+    auth:
+      permission:
+        health:
+          paths: "/q/health/*"
+          policy: "permit"
+    cors:
+      enabled: true
+      origins: http://localhost:6274 # allow mcp inspector
+      methods: GET,PUT,POST
+
+  tls:
+    protocols: "TLSv1.3,TLSv1.2"
+    cipher-suites: "TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384,TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_256_GCM_SHA384"
+    reload-period: "1h"
+
+  log:
+    console:
+      format: "%d{HH:mm:ss,SSS} %-5p traceId=%X{traceId}, parentId=%X{parentId}, spanId=%X{spanId}, sampled=%X{sampled} [%c{2.}] (%t) %s%e%n"
+    level: INFO
+    category:
+      "io.quarkus.oidc.runtime":
+        level: INFO
+        min-level: INFO
+
+
+  oidc:
+    auth-server-url:
+    client-id: ${CLIENT_ID}
+    credentials:
+      client-secret:
+        provider:
+          key: ${CLIENT_SECRET}
+        method: post
+    authentication:
+      scopes:
+        - offline_access
+      redirect-path: /authorize/callback
+      restore-path-after-redirect: true
+    application-type: web-app
+    atlassian:
+      auth-server-url: "https://auth.atlassian.com"
+      client-id: ${ATLASSIAN_CLIENT_ID}
+      credentials:
+        client-secret:
+          provider:
+            key: ${ATLASSIAN_CLIENT_SECRET}
+          method: post
+      authentication:
+        scopes:
+          - read:me
+          - read:account
+          - offline_access
+        redirect-path: /atlassian/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          audience: "api.atlassian.com"
+          prompt: "consent"
+        add-openid-scope: false
+        id-token-required: false
+      application-type: web-app
+      user-info-path:
+      token:
+        issuer: any
+    github:
+      provider: github
+      client-id: ${GITHUB_CLIENT_ID}
+      credentials:
+        client-secret:
+          provider:
+            key: ${GITHUB_CLIENT_SECRET}
+          method: post
+      authentication:
+        scopes:
+          - offline_access
+        redirect-path: /github/authorize/callback
+        restore-path-after-redirect: true
+    google:
+      provider: google
+      client-id: ${GOOGLE_CLIENT_ID}
+      credentials:
+        client-secret:
+          provider:
+            key: ${GOOGLE_CLIENT_SECRET}
+          method: post
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+
+  otel:
+    enabled: false
+
+  cache:
+    caffeine:
+      token-cache:
+        initial-capacity:
+        expire-after-write:
+        maximum-size:
+      code-cache:
+        initial-capacity:
+        expire-after-write:
+        maximum-size:
+
+server:
+  host: ${HOST}
+  tls:
+    certificate:
+      path:
+    private-key:
+      path:
+    refresh:
+      interval:
+    truststore:
+      path:
+  athenz:
+    cert-file:
+    key-file:
+    truststore-file:
+    user-prefix:
+    zms:
+      endpoint:
+    zts:
+      endpoint:
+    register:
+      domain:
+      role:
+    resource-authorization:
+    authorization-action:
+    authorization-domain:
+  token-store:
+    implementation:
+    expiry:
+    aws:
+      dynamodb:
+        table-name:
+      kms:
+        key-id:
+  secret:
+    k8s:
+      name:
+      namespace:
+  token-exchange:
+    idp:
+    remote-servers:
+      endpoints:
+        - name:
+          endpoint:
+          username-claim:
+
+  resources:
+    resource-mapping:
+      - uri:
+        domain:
+        scopes: []
+        token:
+          idp:
+          as:
+          jag:
+            enabled:
+            issuer:

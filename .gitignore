@@ -1,0 +1,57 @@
+#Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+release.properties
+.flattened-pom.xml
+
+# Eclipse
+.project
+.classpath
+.settings/
+bin/
+
+# IntelliJ
+.idea
+*.ipr
+*.iml
+*.iws
+
+# NetBeans
+nb-configuration.xml
+
+# Visual Studio Code
+.vscode
+.factorypath
+
+# OSX
+.DS_Store
+
+# Vim
+*.swp
+*.swo
+
+# patch
+*.orig
+*.rej
+
+# Local environment
+.env
+
+# Plugin directory
+/.quarkus/cli/plugins/
+# TLS Certificates
+.certs/
+authentication.conf
+tmp_out/
+k8s_reconn.sh
+tls.cert.pem
+tls.key.pem
+jwt-signing-key.pem
+client-id
+client-secret
+*-client-secret
+OAUTH21_AUTHORIZATION_ENDPOINT.md
+RFC6749_IMPLEMENTATION.md
+/src/main/resources/application-dev.yaml

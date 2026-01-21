@@ -1,0 +1,14 @@
+apiVersion: msd-system.athenz.io/v1
+kind: MSDNetworkPolicyTrigger
+metadata:
+  labels:
+    {{- include "mcp-oauth-proxy.labels" . | nindent 4 }}
+  name: {{ include "mcp-oauth-proxy.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  domain: {{ .Values.athenz.domain }}
+  service: {{ .Values.athenz.service }}
+  msdControllerConfig:
+    policyProvisionMode: on-demand
+    enableIpCidrSync: true
+  releaseId: {{ now | unixEpoch | quote }}

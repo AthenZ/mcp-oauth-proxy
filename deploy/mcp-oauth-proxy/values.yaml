@@ -1,0 +1,186 @@
+# Default values for mcp-oauth-proxy
+replicaCount: 1
+
+image:
+  repository:
+  pullPolicy: IfNotPresent
+  tag:
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn:
+  name:
+
+podAnnotations: {}
+
+podSecurityContext:
+  fsGroup:
+  runAsNonRoot: true
+  runAsUser:
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser:
+
+service:
+  type: LoadBalancer
+  port:
+  targetPort:
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: HTTPS
+
+resources:
+  limits:
+    cpu:
+    memory:
+  requests:
+    cpu:
+    memory:
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - mcp-oauth-proxy
+        topologyKey: kubernetes.io/hostname
+
+athenz:
+  domain:
+  service:
+  certFilePath:
+  keyFilePath:
+  trustStorePath:
+  userPrefix:
+  fsGroup:
+
+application:
+  environment:
+  cloudAccountId:
+  authTokenSubject:
+  otel:
+    protocol:
+    endpoint:
+    trustStorePath:
+  logging:
+    level:
+  host:
+  zms:
+    endpoint:
+  zts:
+    endpoint:
+    claim:
+  register:
+    domain:
+    role:
+  authorization:
+    action:
+    domain:
+  tokenStore:
+    expiry:
+  aws:
+    dynamoDbTable:
+    kmsKeyId:
+  k8s:
+    secretName:
+    namespace:
+  tls:
+    reloadPeriod:
+    protocols:
+    cipherSuites:
+    certPath:
+    keyPath:
+    refreshDuration:
+    volume:
+      secretName:
+    trustStorePath:
+  resourceMapping:
+    - uri:
+      domain:
+      scopes:
+      token:
+        idp:
+        as:
+        jag:
+          enabled:
+          issuer:
+
+oidc:
+  authServerUrl:
+  claim:
+  clientId:
+  clientSecretKey:
+  scopes:
+    - offline_access
+  provider:
+  atlassian:
+    clientId:
+    userInfoPath:
+    endpoint: "https://auth.atlassian.com"
+    claim:
+    clientSecretKey:
+    scopes:
+      - read:me
+      - read:account
+      - offline_access
+  github:
+    endpoint: "https://github.com/login/oauth"
+    clientId:
+    claim:
+    clientSecretKey:
+    scopes:
+      - offline_access
+  google:
+    endpoint: "https://accounts.google.com/o/oauth2/v2/auth"
+    clientId:
+    claim:
+    clientSecretKey:
+    scopes:
+      - openid
+
+healthCheck:
+  enabled: true
+  livenessProbe:
+    httpGet:
+      path: /q/health/live
+      port:
+      scheme: HTTPS
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /q/health/ready
+      port:
+      scheme: HTTPS
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 5
