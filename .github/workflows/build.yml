@@ -1,0 +1,43 @@
+name: Main Branch build
+
+on:
+  push:
+    branches:
+      - 'main'
+
+permissions:
+  actions: none
+  checks: none
+  contents: read
+  deployments: none
+  issues: none
+  discussions: none
+  packages: none
+  pull-requests: none
+  repository-projects: none
+  security-events: none
+  statuses: none
+
+env:
+  JAVA_VERSION_FULL_BUILD: 21
+  JAVA_DISTRO: temurin
+  JAVA_ARCH: x64
+
+jobs:
+  build:
+    runs-on: ubuntu-latest-4-cores
+    steps:
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Java
+        id: setup-java
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ env.JAVA_VERSION_FULL_BUILD }}
+          distribution: ${{ env.JAVA_DISTRO }}
+          architecture: ${{ env.JAVA_ARCH }}
+
+      - name: Build mcp-oauth-proxy
+        run: mvn -B install

@@ -1,0 +1,17 @@
+apiVersion: v2
+name: mcp-oauth-proxy
+description: A Helm chart for MCP OAuth Proxy
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - athenz
+  - MCP
+  - OAuth
+  - quarkus
+home: https://github.com/AthenZ/mcp-oauth-proxy
+sources:
+  - https://github.com/AthenZ/mcp-oauth-proxy
+maintainers:
+  - name: Athenz maintainers
+    email: athenz-team@googlegroups.com
