@@ -24,6 +24,9 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider;
+import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
 import software.amazon.cryptography.dbencryptionsdk.dynamodb.DynamoDbEncryptionInterceptor;
 import software.amazon.cryptography.dbencryptionsdk.dynamodb.model.DynamoDbTableEncryptionConfig;
 import software.amazon.cryptography.dbencryptionsdk.dynamodb.model.DynamoDbTablesEncryptionConfig;
@@ -43,6 +46,9 @@ public class DynamodbClientProvider {
     @ConfigProperty(name = "server.token-store.aws.dynamodb.table-name")
     String tableName;
 
+    @ConfigProperty(name = "server.token-store.aws.sts.role-arn")
+    String stsRoleArn;
+
     private DynamoDbEncryptionInterceptor getDynamoDbEncryptionInterceptor() {
         final MaterialProviders matProv = MaterialProviders
                 .builder()
@@ -57,6 +63,7 @@ public class DynamodbClientProvider {
         final Map<String, CryptoAction> attributeActionsOnEncrypt = new HashMap<>();
         attributeActionsOnEncrypt.put(TokenTableAttribute.USER.attr(), CryptoAction.SIGN_ONLY); // Our partition attribute must be SIGN_ONLY
         attributeActionsOnEncrypt.put(TokenTableAttribute.PROVIDER.attr(), CryptoAction.SIGN_ONLY); // Our sort attribute must be SIGN_ONLY
+        attributeActionsOnEncrypt.put(TokenTableAttribute.ACCESS_TOKEN_HASH.attr(), CryptoAction.SIGN_ONLY); // GSI partition key must be SIGN_ONLY
         attributeActionsOnEncrypt.put(TokenTableAttribute.ID_TOKEN.attr(), CryptoAction.ENCRYPT_AND_SIGN);
         attributeActionsOnEncrypt.put(TokenTableAttribute.ACCESS_TOKEN.attr(), CryptoAction.ENCRYPT_AND_SIGN);
         attributeActionsOnEncrypt.put(TokenTableAttribute.REFRESH_TOKEN.attr(), CryptoAction.ENCRYPT_AND_SIGN);
@@ -94,9 +101,18 @@ public class DynamodbClientProvider {
     @Produces
     public DynamoDbClient getDynamodbClient() {
         final DynamoDbEncryptionInterceptor encryptionInterceptor = getDynamoDbEncryptionInterceptor();
+        final StsAssumeRoleCredentialsProvider credentialsProvider = StsAssumeRoleCredentialsProvider
+                .builder()
+                .stsClient(StsClient.create())
+                .refreshRequest(AssumeRoleRequest.builder()
+                        .roleArn(stsRoleArn)
+                        .roleSessionName("mcp-oauth-proxy-session")
+                        .build())
+                .build();
 
         return DynamoDbClient
                 .builder()
+                .credentialsProvider(credentialsProvider)
                 .overrideConfiguration(
                         ClientOverrideConfiguration
                                 .builder()
@@ -109,8 +125,17 @@ public class DynamodbClientProvider {
     @Produces
     public DynamoDbAsyncClient getDynamodbAsyncClient() {
         final DynamoDbEncryptionInterceptor encryptionInterceptor = getDynamoDbEncryptionInterceptor();
+        final StsAssumeRoleCredentialsProvider credentialsProvider = StsAssumeRoleCredentialsProvider
+                .builder()
+                .stsClient(StsClient.create())
+                .refreshRequest(AssumeRoleRequest.builder()
+                        .roleArn(stsRoleArn)
+                        .roleSessionName("mcp-oauth-proxy-session")
+                        .build())
+                .build();
 
         return DynamoDbAsyncClient.builder()
+                .credentialsProvider(credentialsProvider)
                 .overrideConfiguration(
                         ClientOverrideConfiguration
                                 .builder()

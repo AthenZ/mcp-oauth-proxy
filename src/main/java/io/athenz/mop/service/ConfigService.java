@@ -48,7 +48,7 @@ public class ConfigService {
     void  init() {
         for(ResourceConfig.ResourceMapping rm : resourceConfig.resourceMapping()) {
             resourceMetaMap.put(rm.uri(), new ResourceMeta(rm.scopes(), rm.domain(), rm.token().idp(), rm.token().as(),
-                    rm.token().jag().enabled(), rm.token().jag().issuer()));
+                    rm.token().jag().enabled(), rm.token().jag().issuer(), rm.token().audience().orElse(null)));
         }
         for(TokenExchangeServersConfig.RemoteServer rs : tokenExchangeServersConfig.endpoints()) {
             remoteServerMap.put(rs.name(), rs.endpoint());

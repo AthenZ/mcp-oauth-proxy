@@ -60,6 +60,7 @@ public class WellKnownResource {
                 baseUrl + "/authorize",
                 baseUrl + "/token",
                 baseUrl + "/register",
+                baseUrl + "/userinfo",
                 List.of("code", "token", "id_token token"),
                 List.of("public"),
                 List.of("ES256"),

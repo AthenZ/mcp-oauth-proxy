@@ -17,6 +17,7 @@ package io.athenz.mop.config;
 
 import io.smallrye.config.ConfigMapping;
 import java.util.List;
+import java.util.Optional;
 
 @ConfigMapping(prefix = "server.resources")
 public interface ResourceConfig {
@@ -30,6 +31,7 @@ public interface ResourceConfig {
     interface TokenConfig {
         String idp();
         String as();
+        Optional<String> audience();
         JAGConfig jag();
     }
     interface JAGConfig {

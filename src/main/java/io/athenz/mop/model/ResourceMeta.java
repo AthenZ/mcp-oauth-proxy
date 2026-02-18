@@ -23,5 +23,6 @@ public record ResourceMeta(
         String idpServer,
         String authorizationServer,
         boolean jagEnabled,
-        String jagIssuer
+        String jagIssuer,
+        String audience
 ) {}
