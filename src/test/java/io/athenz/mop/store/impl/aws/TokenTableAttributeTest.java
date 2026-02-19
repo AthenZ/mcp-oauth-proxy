@@ -15,7 +15,6 @@
  */
 package io.athenz.mop.store.impl.aws;
 
-import io.athenz.mop.store.impl.aws.TokenTableAttribute;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -63,9 +62,14 @@ class TokenTableAttributeTest {
     }
 
     @Test
+    void testAccessTokenHashAttribute() {
+        assertEquals("access_token_hash", TokenTableAttribute.ACCESS_TOKEN_HASH.attr());
+    }
+
+    @Test
     void testEnumValues() {
         TokenTableAttribute[] values = TokenTableAttribute.values();
-        assertEquals(8, values.length);
+        assertEquals(9, values.length);
         assertArrayEquals(
                 new TokenTableAttribute[]{
                         TokenTableAttribute.USER,
@@ -75,7 +79,8 @@ class TokenTableAttributeTest {
                         TokenTableAttribute.REFRESH_TOKEN,
                         TokenTableAttribute.TTL,
                         TokenTableAttribute.AUTH_CODE_JSON,
-                        TokenTableAttribute.AUTH_TOKENS_JSON
+                        TokenTableAttribute.AUTH_TOKENS_JSON,
+                        TokenTableAttribute.ACCESS_TOKEN_HASH
                 },
                 values
         );
@@ -91,6 +96,7 @@ class TokenTableAttributeTest {
         assertEquals(TokenTableAttribute.TTL, TokenTableAttribute.valueOf("TTL"));
         assertEquals(TokenTableAttribute.AUTH_CODE_JSON, TokenTableAttribute.valueOf("AUTH_CODE_JSON"));
         assertEquals(TokenTableAttribute.AUTH_TOKENS_JSON, TokenTableAttribute.valueOf("AUTH_TOKENS_JSON"));
+        assertEquals(TokenTableAttribute.ACCESS_TOKEN_HASH, TokenTableAttribute.valueOf("ACCESS_TOKEN_HASH"));
     }
 
     @Test
@@ -117,11 +123,12 @@ class TokenTableAttributeTest {
                 TokenTableAttribute.REFRESH_TOKEN.attr(),
                 TokenTableAttribute.TTL.attr(),
                 TokenTableAttribute.AUTH_CODE_JSON.attr(),
-                TokenTableAttribute.AUTH_TOKENS_JSON.attr()
+                TokenTableAttribute.AUTH_TOKENS_JSON.attr(),
+                TokenTableAttribute.ACCESS_TOKEN_HASH.attr()
         };
 
         // Check that all attribute names are unique
-        assertEquals(8, java.util.Arrays.stream(attributeNames).distinct().count());
+        assertEquals(9, java.util.Arrays.stream(attributeNames).distinct().count());
     }
 
     @Test
@@ -148,6 +155,7 @@ class TokenTableAttributeTest {
         assertEquals("TTL", TokenTableAttribute.TTL.toString());
         assertEquals("AUTH_CODE_JSON", TokenTableAttribute.AUTH_CODE_JSON.toString());
         assertEquals("AUTH_TOKENS_JSON", TokenTableAttribute.AUTH_TOKENS_JSON.toString());
+        assertEquals("ACCESS_TOKEN_HASH", TokenTableAttribute.ACCESS_TOKEN_HASH.toString());
     }
 
     @Test
@@ -160,6 +168,7 @@ class TokenTableAttributeTest {
         assertEquals("TTL", TokenTableAttribute.TTL.name());
         assertEquals("AUTH_CODE_JSON", TokenTableAttribute.AUTH_CODE_JSON.name());
         assertEquals("AUTH_TOKENS_JSON", TokenTableAttribute.AUTH_TOKENS_JSON.name());
+        assertEquals("ACCESS_TOKEN_HASH", TokenTableAttribute.ACCESS_TOKEN_HASH.name());
     }
 
     @Test
@@ -172,6 +181,7 @@ class TokenTableAttributeTest {
         assertEquals(5, TokenTableAttribute.TTL.ordinal());
         assertEquals(6, TokenTableAttribute.AUTH_CODE_JSON.ordinal());
         assertEquals(7, TokenTableAttribute.AUTH_TOKENS_JSON.ordinal());
+        assertEquals(8, TokenTableAttribute.ACCESS_TOKEN_HASH.ordinal());
     }
 
     @Test
@@ -200,6 +210,7 @@ class TokenTableAttributeTest {
         assertEquals("ttl", TokenTableAttribute.TTL.attr());
         assertEquals("auth_code_json", TokenTableAttribute.AUTH_CODE_JSON.attr());
         assertEquals("auth_tokens_json", TokenTableAttribute.AUTH_TOKENS_JSON.attr());
+        assertEquals("access_token_hash", TokenTableAttribute.ACCESS_TOKEN_HASH.attr());
     }
 
     @Test

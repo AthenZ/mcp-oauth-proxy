@@ -15,7 +15,6 @@
  */
 package io.athenz.mop.service;
 
-import io.athenz.mop.service.RedirectUriValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -223,5 +222,13 @@ class RedirectUriValidatorTest {
 
         assertTrue(validator.isValidRedirectUri("https://app.example.com/callback"));
         assertTrue(validator.isValidRedirectUri("https://app.example.com/callback/nested"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_SubdomainAttackPrevention() {
+        assertFalse(validator.isValidRedirectUri("https://localhost.evil.com/callback"));
+        assertFalse(validator.isValidRedirectUri("http://localhost.evil.com/callback"));
+        assertFalse(validator.isValidRedirectUri("https://app.example.com.evil.com/callback"));
+        assertFalse(validator.isValidRedirectUri("https://app.evil.example.com/callback"));
     }
 }

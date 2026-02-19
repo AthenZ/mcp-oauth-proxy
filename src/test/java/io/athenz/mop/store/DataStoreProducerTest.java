@@ -297,5 +297,10 @@ class DataStoreProducerTest {
         public TokenWrapper getUserToken(String user, String provider) {
             return null;
         }
+
+        @Override
+        public TokenWrapper getUserTokenByAccessTokenHash(String accessTokenHash) {
+            return null;
+        }
     }
 }

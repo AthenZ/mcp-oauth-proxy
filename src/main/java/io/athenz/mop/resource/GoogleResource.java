@@ -16,6 +16,7 @@
 package io.athenz.mop.resource;
 
 import io.athenz.mop.model.AuthorizationCode;
+import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.store.AuthCodeStore;
@@ -76,23 +77,43 @@ public class GoogleResource extends BaseResource {
     if (state != null) {
       log.info("Google request to store tokens for user: {}", userInfo.getEmail());
       AuthorizationCode authorizationCode = authCodeStore.getAuthCode(state, providerDefault);
-      if (accessTokenCredential.getRefreshToken() == null
-          || accessTokenCredential.getRefreshToken().getToken() == null) {
-        log.warn("no refresh token received from provider, not storing partial tokens");
+
+      String lookupKey = getUsername(userInfo, configService.getRemoteServerUsernameClaim(PROVIDER), null);
+      String newAccessToken = accessTokenCredential.getToken();
+      String newIdToken = accessTokenCredential.getToken(); // Google uses same token for both
+      String newRefreshToken = (accessTokenCredential.getRefreshToken() != null)
+          ? accessTokenCredential.getRefreshToken().getToken()
+          : null;
+
+      TokenWrapper existingToken = authorizerService.getUserToken(lookupKey, PROVIDER);
+
+      String refreshTokenToStore;
+      if (newRefreshToken != null) {
+        // First time consent or Google returned refresh token - use the new one
+        refreshTokenToStore = newRefreshToken;
+        log.info("Google: Using new refresh token from authorization response");
+      } else if (existingToken != null && existingToken.refreshToken() != null && !existingToken.refreshToken().isEmpty()) {
+        // No refresh token in response, but we have one stored - preserve it
+        refreshTokenToStore = existingToken.refreshToken();
+
+        log.info("Google: Refresh token not in response, preserving existing refresh token from storage");
+      } else {
+        // No refresh token in response and none stored - this shouldn't happen on first consent
+        log.warn("Google: No refresh token received and none found in storage. This may indicate first consent failed.");
         logoutFromProvider(PROVIDER, oidcSession);
         return Response.serverError().build();
-      } else {
-        authorizerService.storeTokens(
-            getUsername(userInfo, configService.getRemoteServerUsernameClaim(PROVIDER), null),
-            authorizationCode.getSubject(),
-            accessTokenCredential.getToken(),
-            accessTokenCredential.getToken(),
-            accessTokenCredential.getRefreshToken().getToken(),
-            PROVIDER);
-
-        logoutFromProvider(PROVIDER, oidcSession);
-        return buildSuccessRedirect(authorizationCode.getRedirectUri(), state, authorizationCode.getState());
       }
+      // Store tokens: update access token, id token, TTL, and preserve refresh token
+      authorizerService.storeTokens(
+          lookupKey,
+          authorizationCode.getSubject(),
+          newIdToken,
+          newAccessToken,
+          refreshTokenToStore,
+          PROVIDER);
+
+      logoutFromProvider(PROVIDER, oidcSession);
+      return buildSuccessRedirect(authorizationCode.getRedirectUri(), state, authorizationCode.getState());
     }
     return Response.status(Response.Status.CREATED).build();
   }

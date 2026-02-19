@@ -53,11 +53,13 @@ public class K8SSecretsProvider implements CredentialsProvider {
             String atlassianClientSecret = new String(data.get("atlassian-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
             String githubClientSecret = new String(data.get("github-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
             String googleClientSecret = new String(data.get("google-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
+            String oktaTokenExchangeClientSecret = new String(data.get("okta-token-exchange-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
             return Map.of(
                     "okta-client-secret", clientSecret,
                     "atlassian-client-secret", atlassianClientSecret,
                     "github-client-secret", githubClientSecret,
-                    "google-client-secret", googleClientSecret
+                    "google-client-secret", googleClientSecret,
+                    "okta-token-exchange-client-secret", oktaTokenExchangeClientSecret
             );
 
         } catch (IOException | ApiException e) {
@@ -69,7 +71,6 @@ public class K8SSecretsProvider implements CredentialsProvider {
     private @Nullable Map<String, byte[]> getSecretFromApiServer(String pkeySecretName) throws IOException, ApiException {
         ApiClient client = Config.defaultClient();
         Configuration.setDefaultApiClient(client);
-
         CoreV1Api api = new CoreV1Api();
         V1Secret secret = api.readNamespacedSecret(pkeySecretName, secretNamespace).execute();
         return secret.getData();

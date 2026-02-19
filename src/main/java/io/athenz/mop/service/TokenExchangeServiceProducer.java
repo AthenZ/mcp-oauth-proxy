@@ -43,6 +43,7 @@ public class TokenExchangeServiceProducer {
             case "github" -> tokenExchangeServiceGithubImpl;
             case "google" -> tokenExchangeServiceGoogleImpl;
             case "okta" -> tokenExchangeServiceOktaImpl;
+            case "glean" -> tokenExchangeServiceOktaImpl;
             case "athenz" -> tokenExchangeServiceZTSImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
         };

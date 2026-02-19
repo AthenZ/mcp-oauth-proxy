@@ -134,14 +134,13 @@ public class AuthorizeResource extends BaseResource {
         }
         ResourceMeta resourceMeta = configService.getResourceMeta(request.getResource());
 
-    authorizerService.storeTokens(
+        authorizerService.storeTokens(
         getUsername(userInfo, configService.getRemoteServerUsernameClaim(providerDefault), accessToken.getRawToken()),
         subject,
         idToken != null ? idToken.getRawToken() : null,
         accessToken.getRawToken(),
         refreshToken != null ? refreshToken.getToken() : null,
         providerDefault);
-
         log.info("after storeToken call in AuthorizeResource Token issuer: {} subject: {} resourceMeta.idpServer: {}", providerDefault, subject,
                 resourceMeta.idpServer());
 

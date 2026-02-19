@@ -13,12 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.athenz.mop.store;
+package io.athenz.mop.service;
 
-import io.athenz.mop.model.TokenWrapper;
+import java.io.IOException;
 
-public interface TokenStore {
-    void storeUserToken(String user, String provider, TokenWrapper token);
-    TokenWrapper getUserToken(String user, String provider);
-    TokenWrapper getUserTokenByAccessTokenHash(String accessTokenHash);
+import com.nimbusds.oauth2.sdk.ParseException;
+import com.nimbusds.oauth2.sdk.TokenRequest;
+import com.nimbusds.oauth2.sdk.TokenResponse;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+/**
+ * Implementation of TokenClient that executes token requests via HTTP.
+ */
+@ApplicationScoped
+public class OktaExchangeTokenClient implements TokenClient {
+    @Override
+    public TokenResponse execute(TokenRequest request) throws IOException, ParseException {
+        return TokenResponse.parse(request.toHTTPRequest().send());
+    }
 }
+

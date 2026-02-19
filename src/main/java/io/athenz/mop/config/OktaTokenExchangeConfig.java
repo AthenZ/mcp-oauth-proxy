@@ -13,12 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.athenz.mop.store;
+package io.athenz.mop.config;
 
-import io.athenz.mop.model.TokenWrapper;
+import io.smallrye.config.ConfigMapping;
+import io.smallrye.config.WithName;
 
-public interface TokenStore {
-    void storeUserToken(String user, String provider, TokenWrapper token);
-    TokenWrapper getUserToken(String user, String provider);
-    TokenWrapper getUserTokenByAccessTokenHash(String accessTokenHash);
+@ConfigMapping(prefix = "server.token-exchange.oktaServiceTypeApp")
+public interface OktaTokenExchangeConfig {
+    @WithName("auth-server-url")
+    String authServerUrl();
+    
+    @WithName("client-id")
+    String clientId();
+    
+    @WithName("client-secret-key")
+    String clientSecretKey();
+    
+    String audience();
 }
+

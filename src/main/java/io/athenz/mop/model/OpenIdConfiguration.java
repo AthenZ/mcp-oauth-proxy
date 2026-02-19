@@ -23,6 +23,7 @@ public record OpenIdConfiguration(
     @JsonProperty("authorization_endpoint") String authorizationEndpoint,
     @JsonProperty("token_endpoint") String tokenEndpoint,
     @JsonProperty("registration_endpoint") String registrationEndpoint,
+    @JsonProperty("userinfo_endpoint") String userinfoEndpoint,
     @JsonProperty("response_types_supported") List<String> responseTypesSupported,
     @JsonProperty("subject_types_supported") List<String> subjectTypesSupported,
     @JsonProperty("id_token_signing_alg_values_supported") List<String> idTokenSigningAlgValuesSupported,

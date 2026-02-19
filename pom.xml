@@ -154,6 +154,11 @@
       <artifactId>sts</artifactId>
     </dependency>
     <dependency>
+      <groupId>com.nimbusds</groupId>
+      <artifactId>oauth2-oidc-sdk</artifactId>
+      <version>11.32</version>
+    </dependency>
+    <dependency>
       <groupId>software.amazon.cryptography</groupId>
       <artifactId>aws-database-encryption-sdk-dynamodb</artifactId>
       <version>${aws.dbencryption.version}</version>
@@ -163,7 +168,6 @@
       <artifactId>aws-cryptographic-material-providers</artifactId>
       <version>${aws.cryptojava.version}</version>
     </dependency>
-
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-junit5</artifactId>

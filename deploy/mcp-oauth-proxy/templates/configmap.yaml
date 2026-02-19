@@ -184,12 +184,19 @@ data:
             table-name: {{ .Values.application.aws.dynamoDbTable | quote }}
           kms:
             key-id: {{ .Values.application.aws.kmsKeyId | quote }}
+          sts:
+            role-arn: {{ .Values.application.aws.stsRoleArn | quote }}
       secret:
         k8s:
           name: {{ .Values.application.k8s.secretName | quote }}
           namespace: {{ .Values.application.k8s.namespace | quote }}
       token-exchange:
         idp: {{ .Values.oidc.provider }}
+        oktaServiceTypeApp:
+          auth-server-url: {{ .Values.application.oktaServiceTypeApp.endpoint | quote }}
+          client-id: {{ .Values.application.oktaServiceTypeApp.clientId | quote }}
+          client-secret-key: {{ .Values.application.oktaServiceTypeApp.clientSecretKey | quote }}
+          audience: {{ .Values.application.oktaServiceTypeApp.audience | quote }}
         remote-servers:
           endpoints:
             - name: athenz

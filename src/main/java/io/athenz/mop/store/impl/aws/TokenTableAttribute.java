@@ -23,7 +23,8 @@ public enum TokenTableAttribute {
     REFRESH_TOKEN("refresh_token"),
     TTL("ttl"),
     AUTH_CODE_JSON("auth_code_json"),
-    AUTH_TOKENS_JSON("auth_tokens_json");
+    AUTH_TOKENS_JSON("auth_tokens_json"),
+    ACCESS_TOKEN_HASH("access_token_hash");
 
     private final String attributeName;
 

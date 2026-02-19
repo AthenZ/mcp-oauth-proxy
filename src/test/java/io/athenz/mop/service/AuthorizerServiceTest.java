@@ -214,7 +214,7 @@ class AuthorizerServiceTest {
         String provider = "okta";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read", "write"), "domain1", provider, "as1", false, null
+                Arrays.asList("read", "write"), "domain1", provider, "as1", false, null,""
         );
 
         TokenWrapper token = new TokenWrapper(
@@ -244,7 +244,7 @@ class AuthorizerServiceTest {
         String provider = "okta";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read", "write"), "domain1", provider, "as1", false, null
+                Arrays.asList("read", "write"), "domain1", provider, "as1", false, null, ""
         );
 
         when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
@@ -297,7 +297,7 @@ class AuthorizerServiceTest {
         String provider = "okta";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read", "write"), "domain1", provider, "as1", false, null
+                Arrays.asList("read", "write"), "domain1", provider, "as1", false, null, ""
         );
 
         TokenWrapper token = new TokenWrapper(
@@ -343,7 +343,7 @@ class AuthorizerServiceTest {
         String provider = "okta";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read", "write"), "domain1", provider, "as1", false, null
+                Arrays.asList("read", "write"), "domain1", provider, "as1", false, null, ""
         );
 
         TokenWrapper token = new TokenWrapper(
@@ -402,7 +402,7 @@ class AuthorizerServiceTest {
         String remoteEndpoint = "https://auth.example.com/token";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read", "write"), "domain1", "okta", authServer, false, null
+                Arrays.asList("read", "write"), "domain1", "okta", authServer, false, null, ""
         );
 
         TokenWrapper inputToken = new TokenWrapper(
@@ -452,7 +452,7 @@ class AuthorizerServiceTest {
         String jagEndpoint = "https://jag.example.com/token";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read", "write"), "domain1", "okta", authServer, true, jagIssuer
+                Arrays.asList("read", "write"), "domain1", "okta", authServer, true, jagIssuer, ""
         );
 
         TokenWrapper inputToken = new TokenWrapper(
@@ -516,7 +516,7 @@ class AuthorizerServiceTest {
         String jagEndpoint = "https://jag.example.com/token";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("custom-scope-1", "custom-scope-2"), "test-domain", "okta", authServer, true, jagIssuer
+                Arrays.asList("custom-scope-1", "custom-scope-2"), "test-domain", "okta", authServer, true, jagIssuer, ""
         );
 
         TokenWrapper inputToken = new TokenWrapper(
@@ -587,7 +587,7 @@ class AuthorizerServiceTest {
         String remoteEndpoint = "https://auth.example.com/token";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Collections.singletonList("admin"), "admin-domain", "okta", authServer, false, null
+                Collections.singletonList("admin"), "admin-domain", "okta", authServer, false, null, ""
         );
 
         TokenWrapper inputToken = new TokenWrapper(

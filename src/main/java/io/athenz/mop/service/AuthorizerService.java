@@ -149,6 +149,7 @@ public class AuthorizerService {
             AuthorizationResultDO atDO = accessTokenIssuer.getAccessTokenFromResourceAuthorizationServer(accessTokenRequestDO);
 
             log.info("token-exchange response: ttl: {}", atDO.token().ttl());
+
             tokenResponse = new TokenResponse(
                     atDO.token().accessToken(),
                     TOKEN_TYPE,
@@ -168,6 +169,9 @@ public class AuthorizerService {
             AuthorizationResultDO atDO = accessTokenIssuer.getAccessTokenFromResourceAuthorizationServer(accessTokenRequestDO);
 
             log.info("non token-exchange response: ttl: {}", atDO.token().ttl());
+
+            storeGleanTokenIfNeeded(resource, token, atDO.token());
+
             tokenResponse = new TokenResponse(
                     atDO.token().accessToken(),
                     TOKEN_TYPE,
@@ -176,5 +180,37 @@ public class AuthorizerService {
             );
         }
         return tokenResponse;
+    }
+
+    /**
+     * Store Glean token in DynamoDB after successful token exchange.
+     * This method checks if the resource is Glean and stores the exchanged token
+     * with provider="glean" using the same subject/user from the Okta token.
+     *
+     * @param resource The resource URI being accessed
+     * @param oktaToken The original Okta token containing the user/subject
+     * @param exchangedToken The token obtained from token exchange
+     */
+    private void storeGleanTokenIfNeeded(String resource, TokenWrapper oktaToken, TokenWrapper exchangedToken) {
+        ResourceMeta resourceMeta = configService.getResourceMeta(resource);
+        if (resourceMeta == null || resourceMeta.audience() == null || !"glean".equals(resourceMeta.audience())) {
+            return;
+        }
+        log.info("Storing Glean token for user: {}", oktaToken.key());
+
+        long nowSeconds = Instant.now().getEpochSecond();
+        long absoluteTtl = nowSeconds + exchangedToken.ttl();
+
+        TokenWrapper gleanToken = new TokenWrapper(
+                oktaToken.key(),
+                "glean",
+                null,
+                exchangedToken.accessToken(),
+                null,
+                absoluteTtl
+        );
+
+        tokenStore.storeUserToken(oktaToken.key(), "glean", gleanToken);
+        log.info("Successfully stored Glean token for user: {} with ttl: {}", oktaToken.key(), gleanToken.ttl());
     }
 }
