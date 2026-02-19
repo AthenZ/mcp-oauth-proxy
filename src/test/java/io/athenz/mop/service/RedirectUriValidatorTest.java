@@ -231,4 +231,17 @@ class RedirectUriValidatorTest {
         assertFalse(validator.isValidRedirectUri("https://app.example.com.evil.com/callback"));
         assertFalse(validator.isValidRedirectUri("https://app.evil.example.com/callback"));
     }
+
+    @Test
+    void testIsValidRedirectUri_RejectUserinfo() {
+        assertFalse(validator.isValidRedirectUri("https://app.example.com/callback@https://localhost.evil.com/callback"));
+        assertFalse(validator.isValidRedirectUri("https://user@localhost/callback"));
+        assertFalse(validator.isValidRedirectUri("https://user:pass@example.com/callback"));
+        assertFalse(validator.isValidRedirectUri("http://user@localhost/callback"));
+        assertFalse(validator.isValidRedirectUri("https%3A%2F%2Fapp.example.com%2Fcallback%40https%3A%2F%2Flocalhost.evil.com%2Fcallback"));
+        
+        // Valid URLs without userinfo should still work
+        assertTrue(validator.isValidRedirectUri("https://app.example.com/callback"));
+        assertTrue(validator.isValidRedirectUri("http://localhost/callback"));
+    }
 }
