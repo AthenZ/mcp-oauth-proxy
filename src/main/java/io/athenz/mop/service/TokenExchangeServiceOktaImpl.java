@@ -58,6 +58,9 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
     @Inject
     K8SSecretsProvider k8SSecretsProvider;
 
+    @Inject
+    TokenClient tokenClient;
+
     @Override
     public AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO) {
         throw new RuntimeException("Not implemented yet");
@@ -124,7 +127,7 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
                 Collections.singletonList(audienceObj));
 
         TokenRequest tokenRequest = new TokenRequest(tokenEndpoint, clientAuth, grant);
-        TokenResponse tokenResponse = TokenResponse.parse(tokenRequest.toHTTPRequest().send());
+        TokenResponse tokenResponse = tokenClient.execute(tokenRequest);
 
         if (!tokenResponse.indicatesSuccess()) {
             TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();

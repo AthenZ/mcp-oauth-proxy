@@ -28,6 +28,20 @@ import org.slf4j.LoggerFactory;
 public class JwtUtils {
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+    /**
+     * Extracts a specific claim from a JWT token.
+     * <p>
+     * <b>Security Note:</b> This method is designed to parse tokens issued by trusted upstream
+     * Identity Provider (IDP) authorization servers (e.g., Okta, Google, GitHub, Atlassian)
+     * and is used from the Quarkus OIDC flow. The Quarkus OIDC extension performs ID Token
+     * validation (signature verification using the provider JWK set, expiration, issuer,
+     * audience, and nonce checks) before creating the SecurityIdentity. The application code
+     * does not handle raw tokens and therefore does not perform additional validation.
+     *
+     * @param token The JWT token from a trusted IDP authorization server
+     * @param claim The name of the claim to extract (e.g., "sub", "iss", "exp")
+     * @return The claim value, or null if the token cannot be parsed or the claim does not exist
+     */
     public static Object getClaimFromToken(String token, String claim) {
         try {
             SignedJWT signedJWT = SignedJWT.parse(token);
@@ -40,8 +54,15 @@ public class JwtUtils {
 
     /**
      * Gets all claims from a JWT token.
+     * <p>
+     * <b>Security Note:</b> This method is designed to parse tokens issued by trusted upstream
+     * Identity Provider (IDP) authorization servers (e.g., Okta, Google, GitHub, Atlassian)
+     * and is used from the Quarkus OIDC flow. The Quarkus OIDC extension performs ID Token
+     * validation (signature verification using the provider JWK set, expiration, issuer,
+     * audience, and nonce checks) before creating the SecurityIdentity. The application code
+     * does not handle raw tokens and therefore does not perform additional validation.
      *
-     * @param token The JWT token
+     * @param token The JWT token from a trusted IDP authorization server
      * @return Map containing all claims from the token, or null if parsing fails
      */
     public static Map<String, Object> getAllClaimsFromToken(String token) {

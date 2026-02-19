@@ -16,8 +16,8 @@
 package io.athenz.mop.store.impl.aws;
 
 import io.athenz.mop.model.TokenWrapper;
-import io.athenz.mop.store.impl.aws.TokenStoreDynamodbImpl;
 import io.athenz.mop.store.impl.aws.TokenTableAttribute;
+import io.athenz.mop.util.JwtUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,7 +38,9 @@ import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import java.util.Date;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -131,6 +133,10 @@ class TokenStoreDynamodbImplTest {
         assertEquals(testAccessToken, item.get(TokenTableAttribute.ACCESS_TOKEN.attr()).s());
         assertEquals(TEST_REFRESH_TOKEN, item.get(TokenTableAttribute.REFRESH_TOKEN.attr()).s());
         assertEquals(TEST_TTL.toString(), item.get(TokenTableAttribute.TTL.attr()).n());
+        // Verify ACCESS_TOKEN_HASH is stored
+        assertTrue(item.containsKey(TokenTableAttribute.ACCESS_TOKEN_HASH.attr()));
+        String expectedHash = JwtUtils.hashAccessToken(testAccessToken);
+        assertEquals(expectedHash, item.get(TokenTableAttribute.ACCESS_TOKEN_HASH.attr()).s());
     }
 
     @Test
@@ -158,8 +164,8 @@ class TokenStoreDynamodbImplTest {
 
         PutItemRequest capturedRequest = requestCaptor.getValue();
         Map<String, AttributeValue> item = capturedRequest.item();
-        // Should handle null refresh token gracefully
-        assertNotNull(item.get(TokenTableAttribute.REFRESH_TOKEN.attr()));
+        // When refresh token is null, it should not be in the item map
+        assertFalse(item.containsKey(TokenTableAttribute.REFRESH_TOKEN.attr()));
     }
 
     @Test
@@ -322,5 +328,82 @@ class TokenStoreDynamodbImplTest {
 
         // Assert
         verify(dynamoDbClient, times(2)).putItem(any(PutItemRequest.class));
+    }
+
+    @Test
+    void testGetUserTokenByAccessTokenHash_Success() {
+        // Arrange
+        String accessTokenHash = JwtUtils.hashAccessToken(testAccessToken);
+        Map<String, AttributeValue> returnedItem = new HashMap<>();
+        returnedItem.put(TokenTableAttribute.USER.attr(), AttributeValue.builder().s(TEST_USER).build());
+        returnedItem.put(TokenTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(TEST_PROVIDER).build());
+        returnedItem.put(TokenTableAttribute.ID_TOKEN.attr(), AttributeValue.builder().s(testIdToken).build());
+        returnedItem.put(TokenTableAttribute.ACCESS_TOKEN.attr(), AttributeValue.builder().s(testAccessToken).build());
+        returnedItem.put(TokenTableAttribute.REFRESH_TOKEN.attr(), AttributeValue.builder().s(TEST_REFRESH_TOKEN).build());
+        returnedItem.put(TokenTableAttribute.TTL.attr(), AttributeValue.builder().n(TEST_TTL.toString()).build());
+        returnedItem.put(TokenTableAttribute.ACCESS_TOKEN_HASH.attr(), AttributeValue.builder().s(accessTokenHash).build());
+
+        List<Map<String, AttributeValue>> itemsList = new ArrayList<>();
+        itemsList.add(returnedItem);
+        QueryResponse queryResponse = (QueryResponse) QueryResponse.builder()
+                .items(itemsList)
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.query(any(QueryRequest.class))).thenReturn(queryResponse);
+
+        // Act
+        TokenWrapper result = tokenStore.getUserTokenByAccessTokenHash(accessTokenHash);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(TEST_USER, result.key());
+        assertEquals(TEST_PROVIDER, result.provider());
+        assertEquals(testIdToken, result.idToken());
+        assertEquals(testAccessToken, result.accessToken());
+        assertEquals(TEST_REFRESH_TOKEN, result.refreshToken());
+        assertEquals(TEST_TTL, result.ttl());
+
+        ArgumentCaptor<QueryRequest> requestCaptor = ArgumentCaptor.forClass(QueryRequest.class);
+        verify(dynamoDbClient).query(requestCaptor.capture());
+
+        QueryRequest capturedRequest = requestCaptor.getValue();
+        assertEquals("test-token-table", capturedRequest.tableName());
+        assertEquals("access-token-hash-index", capturedRequest.indexName());
+        assertEquals("access_token_hash = :hash", capturedRequest.keyConditionExpression());
+    }
+
+    @Test
+    void testGetUserTokenByAccessTokenHash_NotFound() {
+        // Arrange
+        String accessTokenHash = JwtUtils.hashAccessToken(testAccessToken);
+        QueryResponse queryResponse = (QueryResponse) QueryResponse.builder()
+                .items(new ArrayList<>())  // Empty items list
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.query(any(QueryRequest.class))).thenReturn(queryResponse);
+
+        // Act
+        TokenWrapper result = tokenStore.getUserTokenByAccessTokenHash(accessTokenHash);
+
+        // Assert
+        assertNull(result);
+        verify(dynamoDbClient).query(any(QueryRequest.class));
+    }
+
+    @Test
+    void testGetUserTokenByAccessTokenHash_WithNullItems() {
+        // Arrange
+        String accessTokenHash = JwtUtils.hashAccessToken(testAccessToken);
+        QueryResponse queryResponse = (QueryResponse) QueryResponse.builder()
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.query(any(QueryRequest.class))).thenReturn(queryResponse);
+
+        // Act
+        TokenWrapper result = tokenStore.getUserTokenByAccessTokenHash(accessTokenHash);
+
+        // Assert
+        assertNull(result);
+        verify(dynamoDbClient).query(any(QueryRequest.class));
     }
 }

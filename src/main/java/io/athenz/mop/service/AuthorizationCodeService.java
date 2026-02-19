@@ -75,8 +75,10 @@ public class AuthorizationCodeService {
 
         Instant expiresAt = Instant.now().plus(CODE_EXPIRY);
 
+        // This is a default scope for the authorization code if the user does not provide a scope
+        // and is not used for any upstream IDP authorization code flow
         if (scope == null || scope.isEmpty()) {
-            scope = "default";  // @TODO hard coded scope for now
+            scope = "default";  
         }
 
         AuthorizationCode authCode = new AuthorizationCode(
