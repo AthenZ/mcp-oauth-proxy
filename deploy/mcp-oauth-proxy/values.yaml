@@ -104,6 +104,10 @@ application:
     domain:
   tokenStore:
     expiry:
+  refreshToken:
+    tableName: mcp-oauth-proxy-refresh-tokens
+    expirySeconds: 7776000
+    ttlBufferDays: 7
   aws:
     dynamoDbTable:
     kmsKeyId:

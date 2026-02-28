@@ -62,6 +62,8 @@ class TokenExchangeServiceOktaImplTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        tokenExchangeService.oidcClientId = "test-oidc-client-id";
+        tokenExchangeService.oidcClientSecretKey = "okta-client-secret";
 
         // Setup common test data
         tokenWrapper = new TokenWrapper(
@@ -290,6 +292,77 @@ class TokenExchangeServiceOktaImplTest {
         // This test verifies that the K8SSecretsProvider is properly injected
         // Even though it's not used in the current implementation
         assertNotNull(k8SSecretsProvider);
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenTokenNull() {
+        assertNull(tokenExchangeService.refreshWithUpstreamToken(null));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenTokenEmpty() {
+        assertNull(tokenExchangeService.refreshWithUpstreamToken(""));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenOidcClientSecretKeyNotConfigured() {
+        tokenExchangeService.oidcClientSecretKey = "";
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenCredentialsNull() {
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(null);
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenSecretMissingForKey() {
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(new HashMap<>());
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_success_returnsTokenWrapper() throws ParseException, IOException {
+        Map<String, String> credentials = new HashMap<>();
+        credentials.put("okta-client-secret", "secret-value");
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(credentials);
+        when(oktaTokenExchangeConfig.authServerUrl()).thenReturn("https://test-okta.example.com/oauth2/default");
+
+        String jsonSuccess = "{\"access_token\":\"new-access-token\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"new-refresh-token\"}";
+        HTTPResponse mockHttpResponse = new HTTPResponse(200);
+        mockHttpResponse.setContentType("application/json");
+        mockHttpResponse.setBody(jsonSuccess);
+        TokenResponse mockTokenResponse = TokenResponse.parse(mockHttpResponse);
+        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(mockTokenResponse);
+
+        TokenWrapper result = tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token");
+
+        assertNotNull(result);
+        assertEquals("new-access-token", result.accessToken());
+        assertEquals("new-refresh-token", result.refreshToken());
+        assertEquals(3600L, result.ttl());
+        verify(tokenClient, times(1)).execute(any(TokenRequest.class));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_errorResponse_returnsNull() throws ParseException, IOException {
+        Map<String, String> credentials = new HashMap<>();
+        credentials.put("okta-client-secret", "secret-value");
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(credentials);
+        when(oktaTokenExchangeConfig.authServerUrl()).thenReturn("https://test-okta.example.com/oauth2/default");
+
+        String jsonError = "{\"error\":\"invalid_grant\",\"error_description\":\"Refresh token expired\"}";
+        HTTPResponse mockHttpResponse = new HTTPResponse(400);
+        mockHttpResponse.setContentType("application/json");
+        mockHttpResponse.setBody(jsonError);
+        TokenResponse mockTokenResponse = TokenResponse.parse(mockHttpResponse);
+        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(mockTokenResponse);
+
+        TokenWrapper result = tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token");
+
+        assertNull(result);
+        verify(tokenClient, times(1)).execute(any(TokenRequest.class));
     }
 
     @Test

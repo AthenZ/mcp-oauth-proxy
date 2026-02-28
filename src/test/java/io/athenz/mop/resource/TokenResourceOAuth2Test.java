@@ -58,7 +58,8 @@ class TokenResourceOAuth2Test {
         .then()
             .statusCode(400)
             .body("error", equalTo(OAuth2ErrorResponse.ErrorCode.UNSUPPORTED_GRANT_TYPE))
-            .body("error_description", containsString("authorization_code, client_credentials"));
+            .body("error_description", containsString("authorization_code"));
+        // refresh_token is also supported
     }
 
     @Test
@@ -184,6 +185,48 @@ class TokenResourceOAuth2Test {
             .body("token_endpoint_auth_methods_supported", hasItem("tls_client_auth"))
             .body("token_endpoint_auth_methods_supported", not(hasItem("client_secret_basic")))
             .body("token_endpoint_auth_methods_supported", not(hasItem("client_secret_post")));
+    }
+
+    @Test
+    void testRefreshTokenGrantMissingRefreshToken() {
+        given()
+            .contentType(ContentType.URLENC)
+            .formParam("grant_type", "refresh_token")
+            .formParam("client_id", "test-client")
+            .formParam("resource", "https://test.example.com")
+        .when()
+            .post("/token/")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo(OAuth2ErrorResponse.ErrorCode.INVALID_GRANT));
+    }
+
+    @Test
+    void testRefreshTokenGrantMissingClientId() {
+        given()
+            .contentType(ContentType.URLENC)
+            .formParam("grant_type", "refresh_token")
+            .formParam("refresh_token", "rt_abc")
+            .formParam("resource", "https://test.example.com")
+        .when()
+            .post("/token/")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo(OAuth2ErrorResponse.ErrorCode.INVALID_GRANT));
+    }
+
+    @Test
+    void testRefreshTokenGrantMissingResource() {
+        given()
+            .contentType(ContentType.URLENC)
+            .formParam("grant_type", "refresh_token")
+            .formParam("refresh_token", "rt_abc")
+            .formParam("client_id", "test-client")
+        .when()
+            .post("/token/")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo(OAuth2ErrorResponse.ErrorCode.INVALID_GRANT));
     }
 
     @Test

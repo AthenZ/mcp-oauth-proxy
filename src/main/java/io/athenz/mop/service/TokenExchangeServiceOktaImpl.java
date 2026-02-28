@@ -29,8 +29,10 @@ import com.nimbusds.oauth2.sdk.auth.ClientSecretBasic;
 import com.nimbusds.oauth2.sdk.auth.Secret;
 import com.nimbusds.oauth2.sdk.id.Audience;
 import com.nimbusds.oauth2.sdk.id.ClientID;
+import com.nimbusds.oauth2.sdk.RefreshTokenGrant;
 import com.nimbusds.oauth2.sdk.token.AccessToken;
 import com.nimbusds.oauth2.sdk.token.BearerAccessToken;
+import com.nimbusds.oauth2.sdk.token.RefreshToken;
 import com.nimbusds.oauth2.sdk.token.TokenTypeURI;
 import com.nimbusds.oauth2.sdk.tokenexchange.TokenExchangeGrant;
 
@@ -43,6 +45,7 @@ import io.athenz.mop.secret.K8SSecretsProvider;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.lang.invoke.MethodHandles;
@@ -60,6 +63,12 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
 
     @Inject
     TokenClient tokenClient;
+
+    @ConfigProperty(name = "quarkus.oidc.client-id", defaultValue = "")
+    String oidcClientId;
+
+    @ConfigProperty(name = "quarkus.oidc.credentials.client-secret.provider.key", defaultValue = "")
+    String oidcClientSecretKey;
 
     @Override
     public AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO) {
@@ -139,5 +148,74 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
         AccessToken accessToken = successResponse.getTokens().getAccessToken();
         return new AuthorizationResultDO(AuthResult.AUTHORIZED,
                 new TokenWrapper(null, null, null, accessToken.getValue(), null, accessToken.getLifetime()));
+    }
+
+    /**
+     * Refresh with Okta (and Glean). Uses the Okta OIDC app credentials (same as login) to
+     * call the refresh_token grant. The caller (AuthorizerService) then uses the second Okta
+     * authorization server (token-exchange app) to exchange the new access token for the
+     * resource token (e.g. Glean). Okta supports Refresh Token Rotation; persist any new
+     * refresh token returned (caller does so).
+     */
+    @Override
+    public TokenWrapper refreshWithUpstreamToken(String upstreamRefreshToken) {
+        if (upstreamRefreshToken == null || upstreamRefreshToken.isEmpty()) {
+            return null;
+        }
+        String refreshTokenValue = upstreamRefreshToken.trim();
+        if (refreshTokenValue.isEmpty()) {
+            return null;
+        }
+        log.info("Okta refresh: upstream refresh token (debug) token={}", refreshTokenValue);
+        if (oidcClientId == null || oidcClientId.isBlank()) {
+            log.warn("Okta refresh: OIDC client_id not configured (quarkus.oidc.client-id)");
+            return null;
+        }
+        if (oidcClientSecretKey == null || oidcClientSecretKey.isBlank()) {
+            log.warn("Okta refresh: OIDC client secret key not configured (quarkus.oidc.credentials.client-secret.provider.key)");
+            return null;
+        }
+        Map<String, String> credentials = k8SSecretsProvider.getCredentials(null);
+        String clientSecret = credentials != null ? credentials.get(oidcClientSecretKey) : null;
+        if (clientSecret == null || clientSecret.trim().isEmpty()) {
+            log.warn("Okta refresh: OIDC client secret not found (key={})", oidcClientSecretKey);
+            return null;
+        }
+        try {
+            // Use same Okta issuer as token-exchange; refresh uses OIDC app credentials
+            String authServerUrl = oktaTokenExchangeConfig.authServerUrl();
+            URI tokenEndpoint = URI.create(authServerUrl + "/v1/token");
+            ClientSecretBasic clientAuth = new ClientSecretBasic(
+                    new ClientID(oidcClientId.trim()),
+                    new Secret(clientSecret.trim())
+            );
+            RefreshTokenGrant grant = new RefreshTokenGrant(new RefreshToken(refreshTokenValue));
+            TokenRequest tokenRequest = new TokenRequest(tokenEndpoint, clientAuth, grant);
+            TokenResponse tokenResponse = tokenClient.execute(tokenRequest);
+            if (tokenResponse.indicatesSuccess()) {
+                AccessTokenResponse successResponse = tokenResponse.toSuccessResponse();
+                AccessToken accessToken = successResponse.getTokens().getAccessToken();
+                RefreshToken newRefreshToken = successResponse.getTokens().getRefreshToken();
+                Long lifetime = accessToken.getLifetime();
+                long ttl = (lifetime != null) ? lifetime : 3600L;
+                return new TokenWrapper(
+                        null,
+                        null,
+                        null,
+                        accessToken.getValue(),
+                        newRefreshToken != null ? newRefreshToken.getValue() : refreshTokenValue,
+                        ttl
+                );
+            } else {
+                TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
+                String code = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getCode() : "unknown";
+                String desc = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getDescription() : "unknown";
+                log.warn("Okta refresh failed: {} - {}", code, desc);
+                return null;
+            }
+        } catch (Exception e) {
+            log.warn("Okta refresh failed: {}", e.getMessage());
+            return null;
+        }
     }
 }

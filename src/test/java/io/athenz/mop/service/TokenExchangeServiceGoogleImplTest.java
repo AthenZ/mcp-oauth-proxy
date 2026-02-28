@@ -15,23 +15,39 @@
  */
 package io.athenz.mop.service;
 
+import com.nimbusds.oauth2.sdk.ParseException;
+import com.nimbusds.oauth2.sdk.TokenRequest;
+import com.nimbusds.oauth2.sdk.TokenResponse;
+import com.nimbusds.oauth2.sdk.http.HTTPResponse;
 import io.athenz.mop.model.AuthResult;
 import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
-import io.athenz.mop.service.TokenExchangeServiceGoogleImpl;
+import io.athenz.mop.secret.K8SSecretsProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 class TokenExchangeServiceGoogleImplTest {
+
+    @Mock
+    private K8SSecretsProvider k8SSecretsProvider;
+
+    @Mock
+    private TokenClient tokenClient;
 
     @InjectMocks
     private TokenExchangeServiceGoogleImpl tokenExchangeService;
@@ -42,6 +58,8 @@ class TokenExchangeServiceGoogleImplTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        tokenExchangeService.clientId = "test-client-id";
+        tokenExchangeService.clientSecretKey = "google-client-secret";
 
         // Setup common test data
         tokenWrapper = new TokenWrapper(
@@ -72,6 +90,82 @@ class TokenExchangeServiceGoogleImplTest {
         });
 
         assertEquals("Not implemented yet", exception.getMessage());
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenTokenNull() {
+        assertNull(tokenExchangeService.refreshWithUpstreamToken(null));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenTokenEmpty() {
+        assertNull(tokenExchangeService.refreshWithUpstreamToken(""));
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("   "));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenClientIdNotConfigured() {
+        tokenExchangeService.clientId = "";
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenClientSecretKeyNotConfigured() {
+        tokenExchangeService.clientSecretKey = "";
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenCredentialsNull() {
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(null);
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenSecretMissingForKey() {
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(Collections.emptyMap());
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_success_returnsTokenWrapper() throws ParseException, IOException {
+        Map<String, String> credentials = new HashMap<>();
+        credentials.put("google-client-secret", "secret-value");
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(credentials);
+
+        String jsonSuccess = "{\"access_token\":\"new-google-access\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"new-google-refresh\"}";
+        HTTPResponse mockHttpResponse = new HTTPResponse(200);
+        mockHttpResponse.setContentType("application/json");
+        mockHttpResponse.setBody(jsonSuccess);
+        TokenResponse mockTokenResponse = TokenResponse.parse(mockHttpResponse);
+        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(mockTokenResponse);
+
+        TokenWrapper result = tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token");
+
+        assertNotNull(result);
+        assertEquals("new-google-access", result.accessToken());
+        assertEquals("new-google-refresh", result.refreshToken());
+        assertEquals(3600L, result.ttl());
+        verify(tokenClient, times(1)).execute(any(TokenRequest.class));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_errorResponse_returnsNull() throws ParseException, IOException {
+        Map<String, String> credentials = new HashMap<>();
+        credentials.put("google-client-secret", "secret-value");
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(credentials);
+
+        String jsonError = "{\"error\":\"invalid_grant\",\"error_description\":\"Token expired\"}";
+        HTTPResponse mockHttpResponse = new HTTPResponse(400);
+        mockHttpResponse.setContentType("application/json");
+        mockHttpResponse.setBody(jsonError);
+        TokenResponse mockTokenResponse = TokenResponse.parse(mockHttpResponse);
+        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(mockTokenResponse);
+
+        TokenWrapper result = tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token");
+
+        assertNull(result);
+        verify(tokenClient, times(1)).execute(any(TokenRequest.class));
     }
 
     @Test

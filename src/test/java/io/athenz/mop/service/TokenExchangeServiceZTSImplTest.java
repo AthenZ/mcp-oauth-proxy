@@ -65,6 +65,11 @@ class TokenExchangeServiceZTSImplTest {
     }
 
     @Test
+    void testRefreshWithUpstreamToken_returnsNull() {
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("any-upstream-refresh-token"));
+    }
+
+    @Test
     void testGetJWTAuthorizationGrantFromIdentityProvider_Success() {
         // Arrange
         List<String> scopes = Arrays.asList("scope1", "scope2");

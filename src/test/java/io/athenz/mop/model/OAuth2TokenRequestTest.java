@@ -15,7 +15,6 @@
  */
 package io.athenz.mop.model;
 
-import io.athenz.mop.model.OAuth2TokenRequest;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -33,6 +32,7 @@ class OAuth2TokenRequestTest {
         assertNull(request.getRedirectUri());
         assertNull(request.getCodeVerifier());
         assertNull(request.getClientId());
+        assertNull(request.getRefreshToken());
     }
 
     @Test
@@ -46,6 +46,7 @@ class OAuth2TokenRequestTest {
         request.setRedirectUri("https://example.com/callback");
         request.setCodeVerifier("verifier-abc");
         request.setClientId("client-456");
+        request.setRefreshToken("rt_xyz");
 
         assertEquals("authorization_code", request.getGrantType());
         assertEquals("openid profile", request.getScope());
@@ -54,6 +55,7 @@ class OAuth2TokenRequestTest {
         assertEquals("https://example.com/callback", request.getRedirectUri());
         assertEquals("verifier-abc", request.getCodeVerifier());
         assertEquals("client-456", request.getClientId());
+        assertEquals("rt_xyz", request.getRefreshToken());
     }
 
     @Test

@@ -20,17 +20,20 @@ import java.io.IOException;
 import com.nimbusds.oauth2.sdk.ParseException;
 import com.nimbusds.oauth2.sdk.TokenRequest;
 import com.nimbusds.oauth2.sdk.TokenResponse;
+import com.nimbusds.oauth2.sdk.http.HTTPRequest;
 
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
- * Implementation of TokenClient that executes token requests via HTTP.
+ * Single implementation of TokenClient used for all providers (Okta, Google, GitHub, etc.).
+ * Sets Accept: application/json so providers that require it (e.g. GitHub) return JSON.
  */
 @ApplicationScoped
-public class OktaExchangeTokenClient implements TokenClient {
+public class DefaultExchangeTokenClient implements TokenClient {
     @Override
     public TokenResponse execute(TokenRequest request) throws IOException, ParseException {
-        return TokenResponse.parse(request.toHTTPRequest().send());
+        HTTPRequest httpRequest = request.toHTTPRequest();
+        httpRequest.setHeader("Accept", "application/json");
+        return TokenResponse.parse(httpRequest.send());
     }
 }
-

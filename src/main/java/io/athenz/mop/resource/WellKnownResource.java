@@ -67,7 +67,7 @@ public class WellKnownResource {
                 List.of("openid", "offline_access"), // Minimal scopes for JWT generation
                 List.of("tls_client_auth", "none"), // RFC 8705: mTLS client authentication and none
                 List.of("sub", "aud", "iss", "exp", "iat"),
-                List.of("client_credentials", "authorization_code"), // OAuth 2.1: Both grant types
+                List.of("client_credentials", "authorization_code", "refresh_token"), // OAuth 2.1 grant types
                 List.of("S256")
             );
 
@@ -89,7 +89,7 @@ public class WellKnownResource {
                 baseUrl + "/token",
                 baseUrl + "/register",
                 List.of("code", "token", "id_token token"),  // OAuth 2.1: code response type for auth code flow
-                List.of("client_credentials", "authorization_code"), // OAuth 2.1: Both grant types
+                List.of("client_credentials", "authorization_code", "refresh_token"), // OAuth 2.1 grant types
                 List.of("tls_client_auth", "none"), // RFC 8705: mTLS client authentication and none only
                 List.of("ES256"),
                 List.of("S256")
