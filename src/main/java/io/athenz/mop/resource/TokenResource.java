@@ -310,7 +310,8 @@ public class TokenResource {
                         result.record().encryptedUpstreamRefreshToken()
                 );
                 if (refreshResult == null) {
-                    log.warn("refresh_token grant failed: refreshUpstreamAndGetToken() returned null for userId={} provider={} resource={}", result.record().userId(), result.record().provider(), request.getResource());
+                    log.warn("refresh_token grant failed: upstream refresh failed; revoking token family for userId={} provider={} resource={} tokenFamilyId={}", result.record().userId(), result.record().provider(), request.getResource(), result.record().tokenFamilyId());
+                    refreshTokenService.revokeFamily(result.record().tokenFamilyId());
                     return invalidGrant("Invalid or expired refresh token");
                 }
                 // Update the new row's upstream token by primary key (avoids GSI eventual consistency right after rotate)
