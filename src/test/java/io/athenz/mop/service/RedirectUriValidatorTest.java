@@ -34,6 +34,8 @@ class RedirectUriValidatorTest {
         validator.allowedRedirectUriPrefixes = Arrays.asList(
                 "http://localhost",
                 "https://localhost",
+                "http://127.0.0.1",
+                "https://127.0.0.1",
                 "cursor://anysphere.cursor-",
                 "https://app.example.com"
         );
@@ -99,6 +101,18 @@ class RedirectUriValidatorTest {
         // 127.0.0.1 needs to be in the allowlist or allowlist needs to include localhost patterns
         assertTrue(validator.isValidRedirectUri("http://localhost:8080/callback"));
         assertTrue(validator.isValidRedirectUri("http://localhost/callback"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_127_0_0_1_SameAsLocalhost() {
+        // 127.0.0.1 is allowed identically to localhost: any path, with or without port, http and https
+        assertTrue(validator.isValidRedirectUri("http://127.0.0.1/callback"));
+        assertTrue(validator.isValidRedirectUri("http://127.0.0.1:8080/callback"));
+        assertTrue(validator.isValidRedirectUri("http://127.0.0.1:3000/oauth/callback"));
+        assertTrue(validator.isValidRedirectUri("http://127.0.0.1/"));
+        assertTrue(validator.isValidRedirectUri("https://127.0.0.1/callback"));
+        assertTrue(validator.isValidRedirectUri("https://127.0.0.1:4443/callback"));
+        assertTrue(validator.isValidRedirectUri("https://127.0.0.1/"));
     }
 
     @Test
