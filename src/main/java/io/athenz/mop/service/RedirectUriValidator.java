@@ -32,7 +32,7 @@ public class RedirectUriValidator {
 
     @ConfigProperty(
             name = "server.allowed-redirect-uri-prefixes",
-            defaultValue = "http://localhost,https://localhost,cursor://anysphere.cursor-")
+            defaultValue = "http://localhost,https://localhost,http://127.0.0.1,https://127.0.0.1,cursor://anysphere.cursor-")
     List<String> allowedRedirectUriPrefixes;
 
     /**
