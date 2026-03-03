@@ -15,23 +15,40 @@
  */
 package io.athenz.mop.service;
 
+import com.nimbusds.oauth2.sdk.ParseException;
+import com.nimbusds.oauth2.sdk.TokenRequest;
+import com.nimbusds.oauth2.sdk.TokenResponse;
+import com.nimbusds.oauth2.sdk.http.HTTPResponse;
 import io.athenz.mop.model.AuthResult;
 import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
-import io.athenz.mop.service.TokenExchangeServiceGithubImpl;
+import io.athenz.mop.secret.K8SSecretsProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 class TokenExchangeServiceGithubImplTest {
+
+    @Mock
+    private K8SSecretsProvider k8SSecretsProvider;
+
+    @Mock
+    private TokenClient tokenClient;
 
     @InjectMocks
     private TokenExchangeServiceGithubImpl tokenExchangeService;
@@ -40,8 +57,10 @@ class TokenExchangeServiceGithubImplTest {
     private TokenExchangeDO tokenExchangeDO;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
+        setField(tokenExchangeService, "clientId", "test-client-id");
+        setField(tokenExchangeService, "clientSecretKey", "github-client-secret");
 
         // Setup common test data
         tokenWrapper = new TokenWrapper(
@@ -552,6 +571,96 @@ class TokenExchangeServiceGithubImplTest {
         assertThrows(RuntimeException.class, () -> {
             tokenExchangeService.getAccessTokenFromResourceAuthorizationServerWithClientCredentials(tokenExchangeDO);
         });
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenTokenNull() {
+        assertNull(tokenExchangeService.refreshWithUpstreamToken(null));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenTokenBlank() {
+        assertNull(tokenExchangeService.refreshWithUpstreamToken(""));
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("   "));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenClientIdNotConfigured() throws Exception {
+        setField(tokenExchangeService, "clientId", "");
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenClientSecretKeyNotConfigured() throws Exception {
+        setField(tokenExchangeService, "clientSecretKey", "");
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    private static void setField(Object target, String fieldName, Object value) throws Exception {
+        Field f = target.getClass().getDeclaredField(fieldName);
+        f.setAccessible(true);
+        f.set(target, value);
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenCredentialsNull() {
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(null);
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenSecretMissingForKey() {
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(Collections.emptyMap());
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenSecretBlank() {
+        Map<String, String> creds = new HashMap<>();
+        creds.put("github-client-secret", "");
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(creds);
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_success_returnsTokenWrapper() throws ParseException, IOException {
+        Map<String, String> credentials = new HashMap<>();
+        credentials.put("github-client-secret", "secret-value");
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(credentials);
+
+        String jsonSuccess = "{\"access_token\":\"new-github-access\",\"token_type\":\"Bearer\",\"expires_in\":28800,\"refresh_token\":\"new-github-refresh\"}";
+        HTTPResponse mockHttpResponse = new HTTPResponse(200);
+        mockHttpResponse.setContentType("application/json");
+        mockHttpResponse.setBody(jsonSuccess);
+        TokenResponse mockTokenResponse = TokenResponse.parse(mockHttpResponse);
+        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(mockTokenResponse);
+
+        TokenWrapper result = tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token");
+
+        assertNotNull(result);
+        assertEquals("new-github-access", result.accessToken());
+        assertEquals("new-github-refresh", result.refreshToken());
+        assertEquals(28800L, result.ttl());
+        verify(tokenClient, times(1)).execute(any(TokenRequest.class));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_errorResponse_returnsNull() throws ParseException, IOException {
+        Map<String, String> credentials = new HashMap<>();
+        credentials.put("github-client-secret", "secret-value");
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(credentials);
+
+        String jsonError = "{\"error\":\"bad_verification_code\",\"error_description\":\"The code passed is incorrect\"}";
+        HTTPResponse mockHttpResponse = new HTTPResponse(400);
+        mockHttpResponse.setContentType("application/json");
+        mockHttpResponse.setBody(jsonError);
+        TokenResponse mockTokenResponse = TokenResponse.parse(mockHttpResponse);
+        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(mockTokenResponse);
+
+        TokenWrapper result = tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token");
+
+        assertNull(result);
+        verify(tokenClient, times(1)).execute(any(TokenRequest.class));
     }
 
     @Test

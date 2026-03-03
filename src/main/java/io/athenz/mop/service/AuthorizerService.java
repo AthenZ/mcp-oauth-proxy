@@ -213,4 +213,71 @@ public class AuthorizerService {
         tokenStore.storeUserToken(oktaToken.key(), "glean", gleanToken);
         log.info("Successfully stored Glean token for user: {} with ttl: {}", oktaToken.key(), gleanToken.ttl());
     }
+
+    /**
+     * Refresh upstream IDP tokens using the given refresh token, update the token store,
+     * then exchange the new access token for the resource (e.g. Okta/Glean exchange at
+     * TokenExchangeServiceOktaImpl 87-92) and return that exchanged token. Used by refresh_token grant.
+     * When the IDP returns a new refresh token, it is included in the result so the caller can
+     * persist it in the new refresh token table.
+     *
+     * @param userId                  internal user id (lookup key)
+     * @param provider                upstream IDP (e.g. okta)
+     * @param resource                resource URI for scope/metadata
+     * @param upstreamRefreshToken    decrypted upstream refresh token from refresh table
+     * @return RefreshAndTokenResult with new access token and new upstream refresh (if IDP returned one), or null on failure
+     */
+    public RefreshAndTokenResult refreshUpstreamAndGetToken(String userId, String provider, String resource,
+                                                           String upstreamRefreshToken) {
+        if (upstreamRefreshToken == null || upstreamRefreshToken.isEmpty()) {
+            log.warn("refreshUpstreamAndGetToken: no upstream refresh token for user {} provider {}", userId, provider);
+            return null;
+        }
+        TokenExchangeService exchangeService = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
+        TokenWrapper newToken = exchangeService.refreshWithUpstreamToken(upstreamRefreshToken);
+        if (newToken == null) {
+            log.warn("refreshUpstreamAndGetToken: upstream IDP refresh failed (refreshWithUpstreamToken returned null) for user {} provider {}", userId, provider);
+            return null;
+        }
+        long nowSeconds = Instant.now().getEpochSecond();
+        long absoluteTtl = nowSeconds + (newToken.ttl() != null ? newToken.ttl() : 3600L);
+        String newUpstreamRefresh = (newToken.refreshToken() != null && !newToken.refreshToken().isEmpty())
+                ? newToken.refreshToken() : null;
+        TokenWrapper toStore = new TokenWrapper(
+                userId,
+                provider,
+                newToken.idToken(),
+                newToken.accessToken(),
+                newToken.refreshToken(),
+                absoluteTtl
+        );
+        tokenStore.storeUserToken(userId, provider, toStore);
+
+        ResourceMeta resourceMeta = configService.getResourceMeta(resource);
+        String scopeStr = resourceMeta != null ? resourceMeta.scopes().toString() : "";
+        // Run the new access token through the resource's authorization server (e.g. Okta/Glean exchange)
+        // so the client receives the same exchanged token as in the auth_code flow (TokenExchangeServiceOktaImpl 87-92)
+        TokenExchangeService accessTokenIssuer = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(
+                resourceMeta != null ? resourceMeta.authorizationServer() : provider);
+        TokenExchangeDO accessTokenRequestDO = new TokenExchangeDO(
+                resourceMeta != null ? resourceMeta.scopes() : null,
+                resource,
+                resourceMeta != null ? resourceMeta.domain() : null,
+                resourceMeta != null ? configService.getRemoteServerEndpoint(resourceMeta.authorizationServer()) : null,
+                toStore
+        );
+        AuthorizationResultDO atDO = accessTokenIssuer.getAccessTokenFromResourceAuthorizationServer(accessTokenRequestDO);
+        if (atDO == null || atDO.token() == null || atDO.authResult() != AuthResult.AUTHORIZED) {
+            log.warn("Token exchange after refresh failed for user {} resource {}", userId, resource);
+            return null;
+        }
+        TokenResponse tokenResponse = new TokenResponse(
+                atDO.token().accessToken(),
+                TOKEN_TYPE,
+                atDO.token().ttl(),
+                scopeStr
+        );
+        return new RefreshAndTokenResult(tokenResponse, newUpstreamRefresh);
+    }
+
 }

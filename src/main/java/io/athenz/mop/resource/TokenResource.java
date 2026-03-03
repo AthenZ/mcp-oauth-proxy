@@ -19,6 +19,8 @@ import com.yahoo.athenz.auth.util.Crypto;
 import io.athenz.mop.model.*;
 import io.athenz.mop.service.AuthorizationCodeService;
 import io.athenz.mop.service.AuthorizerService;
+import io.athenz.mop.service.ConfigService;
+import io.athenz.mop.service.RefreshTokenService;
 import io.quarkus.security.credential.CertificateCredential;
 import io.quarkus.security.credential.Credential;
 import io.quarkus.security.identity.SecurityIdentity;
@@ -56,7 +58,16 @@ public class TokenResource {
     AuthorizationCodeService authorizationCodeService;
 
     @Inject
+    ConfigService configService;
+
+    @Inject
+    RefreshTokenService refreshTokenService;
+
+    @Inject
     SecurityIdentity securityIdentity;
+
+    @ConfigProperty(name = "server.refresh-token.expiry-seconds", defaultValue = "7776000")
+    long refreshExpirySeconds;
 
     /**
      * RFC 6749/OAuth 2.1 compliant token endpoint
@@ -78,12 +89,14 @@ public class TokenResource {
             return handleAuthorizationCodeGrant(request);
         } else if ("client_credentials".equals(request.getGrantType())) {
             return handleClientCredentialsGrant(request);
+        } else if ("refresh_token".equals(request.getGrantType())) {
+            return handleRefreshTokenGrant(request);
         } else {
             log.warn("Unsupported grant_type: {}", request.getGrantType());
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity(OAuth2ErrorResponse.of(
                             OAuth2ErrorResponse.ErrorCode.UNSUPPORTED_GRANT_TYPE,
-                            "Supported grant types: authorization_code, client_credentials"))
+                            "Supported grant types: authorization_code, client_credentials, refresh_token"))
                     .build();
         }
     }
@@ -161,12 +174,50 @@ public class TokenResource {
         log.info("Authorization code validated for subject: {}, client: {}",
                 authCode.getSubject(), authCode.getClientId());
 
-        // Generate token with the subject and parameters from the authorization code
-        return getTokenFromResourceAuthorizationServer(
+        // Get token response; then attach MOP refresh token if possible (authorization_code only)
+        Response response = getTokenFromResourceAuthorizationServer(
                 authCode.getSubject(),
                 authCode.getScope(),
                 authCode.getResource()
         );
+        if (response.getStatus() != 200 || response.getEntity() == null) {
+            return response;
+        }
+        TokenResponse tokenResponse = (TokenResponse) response.getEntity();
+        String resource = authCode.getResource() != null ? authCode.getResource() : request.getResource();
+        try {
+            ResourceMeta resourceMeta = resource != null ? configService.getResourceMeta(resource) : null;
+            String provider = resourceMeta != null ? resourceMeta.idpServer() : configService.getDefaultIDP();
+            TokenWrapper tokenWrapper = authorizerService.getUserToken(authCode.getSubject(), provider);
+            String upstreamRefresh = (tokenWrapper != null && tokenWrapper.refreshToken() != null) ? tokenWrapper.refreshToken() : null;
+            if (upstreamRefresh == null) {
+                upstreamRefresh = refreshTokenService.getUpstreamRefreshToken(authCode.getSubject(), provider);
+            }
+            String mopRefresh = refreshTokenService.store(
+                    authCode.getSubject(),
+                    request.getClientId(),
+                    provider,
+                    authCode.getSubject(),
+                    upstreamRefresh
+            );
+            if (mopRefresh == null) {
+                log.warn("RefreshTokenService.store returned null; returning token response without refresh");
+                return Response.ok(tokenResponse).build();
+            }
+            TokenResponse withRefresh = new TokenResponse(
+                    tokenResponse.accessToken(),
+                    tokenResponse.tokenType(),
+                    tokenResponse.expiresIn(),
+                    tokenResponse.scope(),
+                    mopRefresh,
+                    refreshExpirySeconds
+            );
+            log.info("Attached MOP refresh token to authorization_code token response for subject={} clientId={}", authCode.getSubject(), request.getClientId());
+            return Response.ok(withRefresh).build();
+        } catch (Exception e) {
+            log.warn("Could not create MOP refresh token; returning token response without refresh: {}", e.getMessage());
+            return Response.ok(tokenResponse).build();
+        }
     }
 
     /**
@@ -214,6 +265,79 @@ public class TokenResource {
         String subject = clientId;
 
         return getTokenFromResourceAuthorizationServer(subject, request.getScope(), resource);
+    }
+
+    /**
+     * Handle refresh_token grant (OAuth 2.0 BCP): validate, rotate on ACTIVE, return new tokens.
+     */
+    private Response handleRefreshTokenGrant(OAuth2TokenRequest request) {
+        log.info("Processing refresh_token grant");
+
+        if (request.getRefreshToken() == null || request.getRefreshToken().isEmpty()) {
+            return invalidGrant("Missing required parameter: refresh_token");
+        }
+        if (request.getClientId() == null || request.getClientId().isEmpty()) {
+            return invalidGrant("Missing required parameter: client_id");
+        }
+        if (request.getResource() == null || request.getResource().trim().isEmpty()) {
+            return invalidGrant("Missing required parameter: resource");
+        }
+
+        RefreshTokenValidationResult result = refreshTokenService.validate(request.getRefreshToken(), request.getClientId());
+
+        switch (result.status()) {
+            case INVALID:
+            case REVOKED:
+                return invalidGrant("Invalid or expired refresh token");
+            case ROTATED_REPLAY:
+                refreshTokenService.handleReplay(request.getRefreshToken());
+                return invalidGrant("Invalid or expired refresh token");
+            case ACTIVE:
+                if (result.record() == null) {
+                    return invalidGrant("Invalid or expired refresh token");
+                }
+                // --- NEW: rotate returns RotateResult; update upstream by primary key (avoids GSI eventual consistency) ---
+                RefreshTokenRotateResult rotateResult = refreshTokenService.rotate(request.getRefreshToken(), request.getClientId());
+                if (rotateResult == null) {
+                    log.warn("refresh_token grant failed: rotate() returned null for userId={} provider={}", result.record().userId(), result.record().provider());
+                    return invalidGrant("Invalid or expired refresh token");
+                }
+                // Refresh upstream IDP tokens and get new access token
+                RefreshAndTokenResult refreshResult = authorizerService.refreshUpstreamAndGetToken(
+                        result.record().userId(),
+                        result.record().provider(),
+                        request.getResource(),
+                        result.record().encryptedUpstreamRefreshToken()
+                );
+                if (refreshResult == null) {
+                    log.warn("refresh_token grant failed: refreshUpstreamAndGetToken() returned null for userId={} provider={} resource={}", result.record().userId(), result.record().provider(), request.getResource());
+                    return invalidGrant("Invalid or expired refresh token");
+                }
+                // Update the new row's upstream token by primary key (avoids GSI eventual consistency right after rotate)
+                if (refreshResult.newUpstreamRefreshToken() != null && !refreshResult.newUpstreamRefreshToken().isEmpty()) {
+                    refreshTokenService.updateUpstreamRefreshForToken(
+                            rotateResult.refreshTokenId(),
+                            rotateResult.providerUserId(),
+                            refreshResult.newUpstreamRefreshToken());
+                }
+                TokenResponse withNewRefresh = new TokenResponse(
+                        refreshResult.tokenResponse().accessToken(),
+                        refreshResult.tokenResponse().tokenType(),
+                        refreshResult.tokenResponse().expiresIn(),
+                        refreshResult.tokenResponse().scope(),
+                        rotateResult.rawToken(),
+                        refreshExpirySeconds
+                );
+                return Response.ok(withNewRefresh).build();
+            default:
+                return invalidGrant("Invalid or expired refresh token");
+        }
+    }
+
+    private Response invalidGrant(String message) {
+        return Response.status(Response.Status.BAD_REQUEST)
+                .entity(OAuth2ErrorResponse.of(OAuth2ErrorResponse.ErrorCode.INVALID_GRANT, message))
+                .build();
     }
 
     /**

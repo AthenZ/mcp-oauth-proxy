@@ -149,6 +149,10 @@ server:
         table-name:
       kms:
         key-id:
+  refresh-token:
+    table-name: ${MOP_REFRESH_TOKEN_TABLE_NAME:mcp-oauth-proxy-refresh-tokens}
+    expiry-seconds: ${MOP_REFRESH_EXPIRY_SECONDS:7776000}
+    ttl-buffer-days: ${MOP_REFRESH_TTL_BUFFER_DAYS:7}
   secret:
     k8s:
       name:

@@ -18,10 +18,6 @@ package io.athenz.mop.service;
 import com.yahoo.athenz.zms.Access;
 import com.yahoo.athenz.zms.ZMSClient;
 import io.athenz.mop.model.*;
-import io.athenz.mop.service.AuthorizerService;
-import io.athenz.mop.service.ConfigService;
-import io.athenz.mop.service.TokenExchangeService;
-import io.athenz.mop.service.TokenExchangeServiceProducer;
 import io.athenz.mop.store.TokenStore;
 import io.quarkus.oidc.RefreshToken;
 import org.eclipse.microprofile.jwt.JsonWebToken;
@@ -622,5 +618,80 @@ class AuthorizerServiceTest {
         assertEquals("admin-domain", request.namespace());
         assertEquals(remoteEndpoint, request.remoteServer());
         assertEquals(inputToken, request.tokenWrapper());
+    }
+
+    @Test
+    void testRefreshUpstreamAndGetToken_returnsNullWhenUpstreamRefreshTokenNull() {
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", "okta", "https://resource.example.com", null);
+        assertNull(result);
+    }
+
+    @Test
+    void testRefreshUpstreamAndGetToken_returnsNullWhenUpstreamRefreshTokenEmpty() {
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", "okta", "https://resource.example.com", "");
+        assertNull(result);
+    }
+
+    @Test
+    void testRefreshUpstreamAndGetToken_returnsNullWhenExchangeReturnsNull() {
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta")).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(null);
+
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", "okta", "https://resource.example.com", "upstream-refresh-token");
+
+        assertNull(result);
+    }
+
+    @Test
+    void testRefreshUpstreamAndGetToken_success_returnsRefreshAndTokenResultWithNewUpstreamRefresh() {
+        String resource = "https://resource.example.com";
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read"), "domain1", "okta", "okta", false, null, ""
+        );
+        TokenWrapper newToken = new TokenWrapper(
+                "user1", "okta", "new-id-token", "new-access-token", "new-upstream-refresh",
+                Instant.now().getEpochSecond() + 3600
+        );
+        TokenWrapper exchangedToken = new TokenWrapper(
+                null, null, null, "exchanged-access-token", null, 3600L
+        );
+        AuthorizationResultDO atDO = new AuthorizationResultDO(AuthResult.AUTHORIZED, exchangedToken);
+
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta")).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(newToken);
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        when(configService.getRemoteServerEndpoint("okta")).thenReturn("https://okta.example.com");
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta")).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class))).thenReturn(atDO);
+
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", "okta", resource, "upstream-refresh-token");
+
+        assertNotNull(result);
+        assertNotNull(result.tokenResponse());
+        assertEquals("exchanged-access-token", result.tokenResponse().accessToken());
+        assertEquals("new-upstream-refresh", result.newUpstreamRefreshToken());
+        verify(tokenStore).storeUserToken(eq("user1"), eq("okta"), any(TokenWrapper.class));
+    }
+
+    @Test
+    void testRefreshUpstreamAndGetToken_returnsNullWhenTokenExchangeFails() {
+        String resource = "https://resource.example.com";
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read"), "domain1", "okta", "okta", false, null, ""
+        );
+        TokenWrapper newToken = new TokenWrapper(
+                "user1", "okta", "id", "access", "refresh", Instant.now().getEpochSecond() + 3600
+        );
+
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta")).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(newToken);
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        when(configService.getRemoteServerEndpoint("okta")).thenReturn("https://okta.example.com");
+        when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class)))
+                .thenReturn(new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null));
+
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", "okta", resource, "upstream-refresh-token");
+
+        assertNull(result);
     }
 }

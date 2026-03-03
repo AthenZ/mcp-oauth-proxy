@@ -16,11 +16,13 @@
 package io.athenz.mop.resource;
 
 import io.athenz.mop.model.AuthorizationCode;
+import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.store.AuthCodeStore;
 import io.quarkus.oidc.OidcSession;
 import io.quarkus.oidc.RefreshToken;
+import io.quarkus.oidc.UserInfo;
 import io.quarkus.security.Authenticated;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
@@ -61,8 +63,12 @@ public class AtlassianResource extends BaseResource {
 
     @Inject
     OidcSession oidcSession;
+
     @Inject
     ConfigService configService;
+
+    @Inject
+    UserInfo userInfo;
 
     /**
      * Secondary Authorization Endpoint to return to
@@ -75,13 +81,19 @@ public class AtlassianResource extends BaseResource {
     public Response authorize(@QueryParam("state") String state) {
         log.info("Atlassian request to store tokens: ");
         AuthorizationCode authorizationCode = authCodeStore.getAuthCode(state, providerDefault);
-
+        // Use same lookup key as used to obtain record from old table (username from userInfo + provider claim)
+        String lookupKey = getUsername(userInfo, configService.getRemoteServerUsernameClaim(PROVIDER), null);
+        String refreshToStore = (refreshToken != null) ? refreshToken.getToken() : null;
+        if (refreshToStore == null || refreshToStore.isEmpty()) {
+            TokenWrapper existing = authorizerService.getUserToken(lookupKey, PROVIDER);
+            refreshToStore = (existing != null && existing.refreshToken() != null) ? existing.refreshToken() : null;
+        }
         authorizerService.storeTokens(
-            getUsername(null, configService.getRemoteServerUsernameClaim(PROVIDER), accessToken.getRawToken()),
+            lookupKey,
             authorizationCode.getSubject(),
             accessToken.getRawToken(),
             accessToken.getRawToken(),
-            refreshToken.getToken(),
+            refreshToStore,
             PROVIDER
         );
         

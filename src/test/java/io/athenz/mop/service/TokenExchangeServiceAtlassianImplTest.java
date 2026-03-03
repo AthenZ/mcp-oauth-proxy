@@ -19,10 +19,11 @@ import io.athenz.mop.model.AuthResult;
 import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
-import io.athenz.mop.service.TokenExchangeServiceAtlassianImpl;
+import io.athenz.mop.secret.K8SSecretsProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import java.util.Arrays;
@@ -30,8 +31,12 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.when;
 
 class TokenExchangeServiceAtlassianImplTest {
+
+    @Mock
+    private K8SSecretsProvider k8SSecretsProvider;
 
     @InjectMocks
     private TokenExchangeServiceAtlassianImpl tokenExchangeService;
@@ -42,6 +47,8 @@ class TokenExchangeServiceAtlassianImplTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        tokenExchangeService.clientId = "test-client-id";
+        tokenExchangeService.clientSecretKey = "atlassian-client-secret";
 
         // Setup common test data
         tokenWrapper = new TokenWrapper(
@@ -130,6 +137,41 @@ class TokenExchangeServiceAtlassianImplTest {
         assertEquals("atlassian-access-token", result.token().accessToken());
         assertEquals("atlassian-refresh-token", result.token().refreshToken());
         assertEquals(3600L, result.token().ttl());
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenTokenNull() {
+        assertNull(tokenExchangeService.refreshWithUpstreamToken(null));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenTokenEmpty() {
+        assertNull(tokenExchangeService.refreshWithUpstreamToken(""));
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("   "));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenClientIdNotConfigured() {
+        tokenExchangeService.clientId = "";
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenClientSecretKeyNotConfigured() {
+        tokenExchangeService.clientSecretKey = "";
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenCredentialsNull() {
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(null);
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
+    }
+
+    @Test
+    void testRefreshWithUpstreamToken_returnsNullWhenSecretMissingForKey() {
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(Collections.emptyMap());
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
     }
 
     @Test

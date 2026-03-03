@@ -16,6 +16,7 @@
 package io.athenz.mop.resource;
 
 import io.athenz.mop.model.AuthorizationCode;
+import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.store.AuthCodeStore;
@@ -78,12 +79,22 @@ public class GithubResource extends BaseResource {
         if (state != null) {
             log.info("Github request to store tokens for user: {}", userInfo.get("login"));
             AuthorizationCode authorizationCode = authCodeStore.getAuthCode(state, providerDefault);
+            // Use same lookup key as used to obtain record from old table (username from userInfo + provider claim)
+            String lookupKey = getUsername(userInfo, configService.getRemoteServerUsernameClaim(PROVIDER), null);
+            String refreshToStore = null;
+            if (accessTokenCredential.getRefreshToken() != null) {
+                refreshToStore = accessTokenCredential.getRefreshToken().getToken();
+            }
+            if (refreshToStore == null || refreshToStore.isEmpty()) {
+                TokenWrapper existing = authorizerService.getUserToken(lookupKey, PROVIDER);
+                refreshToStore = (existing != null && existing.refreshToken() != null) ? existing.refreshToken() : null;
+            }
             authorizerService.storeTokens(
-                    getUsername(userInfo, configService.getRemoteServerUsernameClaim(PROVIDER), null),
+                    lookupKey,
                     authorizationCode.getSubject(),
                     accessTokenCredential.getToken(),
                     accessTokenCredential.getToken(),
-                    accessTokenCredential.getRefreshToken().getToken(),
+                    refreshToStore,
                     PROVIDER);
             logoutFromProvider(PROVIDER, oidcSession);
             return buildSuccessRedirect(authorizationCode.getRedirectUri(), state, authorizationCode.getState());

@@ -68,6 +68,12 @@ public class OAuth2TokenRequest {
     @FormParam("client_id")
     private String clientId;
 
+    /**
+     * Refresh token (required for refresh_token grant)
+     */
+    @FormParam("refresh_token")
+    private String refreshToken;
+
     public OAuth2TokenRequest() {
     }
 
@@ -125,5 +131,13 @@ public class OAuth2TokenRequest {
 
     public void setClientId(String clientId) {
         this.clientId = clientId;
+    }
+
+    public String getRefreshToken() {
+        return refreshToken;
+    }
+
+    public void setRefreshToken(String refreshToken) {
+        this.refreshToken = refreshToken;
     }
 }

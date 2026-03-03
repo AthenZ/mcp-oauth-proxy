@@ -15,11 +15,20 @@
  */
 package io.athenz.mop.model;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public record TokenResponse(
     @JsonProperty("access_token") String accessToken,
     @JsonProperty("token_type") String tokenType,
     @JsonProperty("expires_in") Long expiresIn,
-    @JsonProperty("scope") String scope
-) {}
+    @JsonProperty("scope") String scope,
+    @JsonProperty("refresh_token") String refreshToken,
+    @JsonProperty("refresh_expires_in") Long refreshExpiresIn
+) {
+    /** Constructor for responses without refresh token (e.g. client_credentials). */
+    public TokenResponse(String accessToken, String tokenType, Long expiresIn, String scope) {
+        this(accessToken, tokenType, expiresIn, scope, null, null);
+    }
+}

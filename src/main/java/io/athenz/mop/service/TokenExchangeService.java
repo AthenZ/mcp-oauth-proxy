@@ -17,9 +17,21 @@ package io.athenz.mop.service;
 
 import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
+import io.athenz.mop.model.TokenWrapper;
 
 public interface TokenExchangeService {
     AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO);
     AuthorizationResultDO getAccessTokenFromResourceAuthorizationServer(TokenExchangeDO tokenExchangeDO);
     AuthorizationResultDO getAccessTokenFromResourceAuthorizationServerWithClientCredentials(TokenExchangeDO tokenExchangeDO);
+
+    /**
+     * Refresh upstream IDP tokens using the given refresh token.
+     * Returns new TokenWrapper (access, id, refresh, ttl) or null if not supported or on failure.
+     * <p>
+     * Refresh token behavior is provider-specific: return the new refresh token in the wrapper
+     * when the IDP returns one (caller persists it in the refresh token table). When the IDP does
+     * not return a new refresh token, return the existing upstream token so the caller can keep it.
+     * </p>
+     */
+    TokenWrapper refreshWithUpstreamToken(String upstreamRefreshToken);
 }

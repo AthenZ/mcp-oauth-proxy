@@ -46,6 +46,9 @@ public class DynamodbClientProvider {
     @ConfigProperty(name = "server.token-store.aws.dynamodb.table-name")
     String tableName;
 
+    @ConfigProperty(name = "server.refresh-token.table-name", defaultValue = "")
+    String refreshTokenTableName;
+
     @ConfigProperty(name = "server.token-store.aws.sts.role-arn")
     String stsRoleArn;
 
@@ -85,6 +88,40 @@ public class DynamodbClientProvider {
                         .algorithmSuiteId(DBEAlgorithmSuiteId.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384_SYMSIG_HMAC_SHA384)
                         .build()
         );
+
+        if (refreshTokenTableName != null && !refreshTokenTableName.isBlank()) {
+            final Map<String, CryptoAction> refreshAttributeActions = new HashMap<>();
+            refreshAttributeActions.put(RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.REFRESH_TOKEN_HASH.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.USER_ID.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.PROVIDER.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(), CryptoAction.ENCRYPT_AND_SIGN);
+            refreshAttributeActions.put(RefreshTableAttribute.STATUS.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.CLIENT_ID.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.PROVIDER_SUBJECT.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.ROTATED_FROM.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.REPLACED_BY.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.ROTATED_AT.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.ISSUED_AT.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.EXPIRES_AT.attr(), CryptoAction.SIGN_ONLY);
+            refreshAttributeActions.put(RefreshTableAttribute.TTL.attr(), CryptoAction.DO_NOTHING);
+
+            tableConfigs.put(
+                    refreshTokenTableName,
+                    DynamoDbTableEncryptionConfig
+                            .builder()
+                            .logicalTableName(refreshTokenTableName)
+                            .partitionKeyName(RefreshTableAttribute.REFRESH_TOKEN_ID.attr())
+                            .sortKeyName(RefreshTableAttribute.PROVIDER_USER_ID.attr())
+                            .attributeActionsOnEncrypt(refreshAttributeActions)
+                            .allowedUnsignedAttributes(List.of(RefreshTableAttribute.TTL.attr()))
+                            .keyring(kmsKeyring)
+                            .algorithmSuiteId(DBEAlgorithmSuiteId.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384_SYMSIG_HMAC_SHA384)
+                            .build()
+            );
+        }
 
         return DynamoDbEncryptionInterceptor
                         .builder()

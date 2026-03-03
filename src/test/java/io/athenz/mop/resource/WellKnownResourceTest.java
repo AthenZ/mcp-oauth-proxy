@@ -78,7 +78,8 @@ class WellKnownResourceTest {
         .then()
             .statusCode(200)
             .body("grant_types_supported", hasItem("client_credentials"))
-            .body("grant_types_supported", hasItem("authorization_code"));
+            .body("grant_types_supported", hasItem("authorization_code"))
+            .body("grant_types_supported", hasItem("refresh_token"));
     }
 
     @Test
@@ -156,7 +157,8 @@ class WellKnownResourceTest {
         .then()
             .statusCode(200)
             .body("grant_types_supported", hasItem("client_credentials"))
-            .body("grant_types_supported", hasItem("authorization_code"));
+            .body("grant_types_supported", hasItem("authorization_code"))
+            .body("grant_types_supported", hasItem("refresh_token"));
     }
 
     @Test

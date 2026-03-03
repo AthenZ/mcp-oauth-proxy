@@ -78,4 +78,10 @@ public class TokenExchangeServiceZTSImpl implements TokenExchangeService {
         TokenWrapper resourceAccessToken = new TokenWrapper(tokenExchangeDO.tokenWrapper().key(), tokenExchangeDO.remoteServer(), null, tokenResponse.getAccess_token(), null, Long.valueOf(tokenResponse.getExpires_in()));
         return new AuthorizationResultDO(AuthResult.AUTHORIZED, resourceAccessToken);
     }
+
+    @Override
+    public TokenWrapper refreshWithUpstreamToken(String upstreamRefreshToken) {
+        // ZTS is the Athenz token service (authorization server), not an upstream IDP that issues refresh tokens in this flow.
+        return null;
+    }
 }
