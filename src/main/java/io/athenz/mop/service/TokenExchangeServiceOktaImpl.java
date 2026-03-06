@@ -35,6 +35,8 @@ import com.nimbusds.oauth2.sdk.token.BearerAccessToken;
 import com.nimbusds.oauth2.sdk.token.RefreshToken;
 import com.nimbusds.oauth2.sdk.token.TokenTypeURI;
 import com.nimbusds.oauth2.sdk.tokenexchange.TokenExchangeGrant;
+import com.nimbusds.openid.connect.sdk.OIDCTokenResponse;
+import com.nimbusds.openid.connect.sdk.token.OIDCTokens;
 
 import io.athenz.mop.config.OktaTokenExchangeConfig;
 import io.athenz.mop.model.AuthResult;
@@ -166,7 +168,7 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
         if (refreshTokenValue.isEmpty()) {
             return null;
         }
-        log.info("Okta refresh: upstream refresh token (debug) token={}", refreshTokenValue);
+        //log.info("Okta refresh: upstream refresh token (debug) token={}", refreshTokenValue);
         if (oidcClientId == null || oidcClientId.isBlank()) {
             log.warn("Okta refresh: OIDC client_id not configured (quarkus.oidc.client-id)");
             return null;
@@ -193,15 +195,17 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
             TokenRequest tokenRequest = new TokenRequest(tokenEndpoint, clientAuth, grant);
             TokenResponse tokenResponse = tokenClient.execute(tokenRequest);
             if (tokenResponse.indicatesSuccess()) {
-                AccessTokenResponse successResponse = tokenResponse.toSuccessResponse();
-                AccessToken accessToken = successResponse.getTokens().getAccessToken();
-                RefreshToken newRefreshToken = successResponse.getTokens().getRefreshToken();
+                OIDCTokenResponse oidcResponse = OIDCTokenResponse.parse(tokenResponse.toHTTPResponse());
+                OIDCTokens tokens = oidcResponse.getOIDCTokens();
+                AccessToken accessToken = tokens.getAccessToken();
+                RefreshToken newRefreshToken = tokens.getRefreshToken();
+                String idTokenString = tokens.getIDToken() != null ? tokens.getIDToken().serialize() : null;
                 Long lifetime = accessToken.getLifetime();
                 long ttl = (lifetime != null) ? lifetime : 3600L;
                 return new TokenWrapper(
                         null,
                         null,
-                        null,
+                        idTokenString,
                         accessToken.getValue(),
                         newRefreshToken != null ? newRefreshToken.getValue() : refreshTokenValue,
                         ttl

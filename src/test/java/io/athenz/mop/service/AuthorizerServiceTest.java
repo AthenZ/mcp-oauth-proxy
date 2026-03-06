@@ -670,7 +670,90 @@ class AuthorizerServiceTest {
         assertNotNull(result.tokenResponse());
         assertEquals("exchanged-access-token", result.tokenResponse().accessToken());
         assertEquals("new-upstream-refresh", result.newUpstreamRefreshToken());
-        verify(tokenStore).storeUserToken(eq("user1"), eq("okta"), any(TokenWrapper.class));
+        // Two stores: upstream token, then storeRefreshedAccessToken (non-Glean)
+        verify(tokenStore, times(2)).storeUserToken(eq("user1"), eq("okta"), any(TokenWrapper.class));
+    }
+
+    @Test
+    void testRefreshUpstreamAndGetToken_storeRefreshedAccessToken_Glean_storesExchangedTokenUnderGlean() {
+        String resource = "https://glean.resource.example.com";
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read"), "domain1", "okta", "okta", false, null, "glean"
+        );
+        long tokenTtl = 3600L;
+        TokenWrapper newToken = new TokenWrapper(
+                "user1", "okta", "new-id-token", "new-access-token", "new-upstream-refresh",
+                Instant.now().getEpochSecond() + tokenTtl
+        );
+        TokenWrapper exchangedToken = new TokenWrapper(
+                null, null, null, "glean-exchanged-access-token", null, tokenTtl
+        );
+        AuthorizationResultDO atDO = new AuthorizationResultDO(AuthResult.AUTHORIZED, exchangedToken);
+
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta")).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(newToken);
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        when(configService.getRemoteServerEndpoint("okta")).thenReturn("https://okta.example.com");
+        when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class))).thenReturn(atDO);
+
+        authorizerService.refreshUpstreamAndGetToken("user1", "okta", resource, "upstream-refresh-token");
+
+        ArgumentCaptor<String> userCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> providerCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<TokenWrapper> tokenCaptor = ArgumentCaptor.forClass(TokenWrapper.class);
+        verify(tokenStore, times(2)).storeUserToken(userCaptor.capture(), providerCaptor.capture(), tokenCaptor.capture());
+
+        // Second call is from storeRefreshedAccessToken for Glean
+        assertEquals("user1", userCaptor.getAllValues().get(1));
+        assertEquals("glean", providerCaptor.getAllValues().get(1));
+        TokenWrapper storedForUserinfo = tokenCaptor.getAllValues().get(1);
+        assertEquals("user1", storedForUserinfo.key());
+        assertEquals("glean", storedForUserinfo.provider());
+        assertNull(storedForUserinfo.idToken());
+        assertEquals("glean-exchanged-access-token", storedForUserinfo.accessToken());
+        assertNull(storedForUserinfo.refreshToken());
+        // TTL = now + tokenTtl + 300 (grace)
+        long expectedMinTtl = Instant.now().getEpochSecond() + tokenTtl + 300L;
+        assertTrue(storedForUserinfo.ttl() >= expectedMinTtl - 2, "stored TTL should be token expiry + 5 min grace");
+    }
+
+    @Test
+    void testRefreshUpstreamAndGetToken_storeRefreshedAccessToken_NonGlean_storesUnderUpstreamProvider() {
+        String resource = "https://api.github.com";
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read"), "domain1", "github", "github", false, null, ""
+        );
+        // Relative TTL (seconds) as returned by upstream; code converts to absolute and adds grace
+        TokenWrapper newToken = new TokenWrapper(
+                "user2", "github", "github-id-token", "github-access-token", "github-refresh",
+                3600L
+        );
+        // For GitHub, exchange returns same token (request's tokenWrapper)
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("github")).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(newToken);
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        when(configService.getRemoteServerEndpoint("github")).thenReturn("https://github.com");
+        when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class)))
+                .thenAnswer(inv -> new AuthorizationResultDO(AuthResult.AUTHORIZED, inv.getArgument(0, TokenExchangeDO.class).tokenWrapper()));
+
+        authorizerService.refreshUpstreamAndGetToken("user2", "github", resource, "upstream-refresh-token");
+
+        ArgumentCaptor<String> userCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> providerCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<TokenWrapper> tokenCaptor = ArgumentCaptor.forClass(TokenWrapper.class);
+        verify(tokenStore, times(2)).storeUserToken(userCaptor.capture(), providerCaptor.capture(), tokenCaptor.capture());
+
+        // Second call is from storeRefreshedAccessToken (non-Glean): same provider, returned token stored for /userinfo
+        assertEquals("user2", userCaptor.getAllValues().get(1));
+        assertEquals("github", providerCaptor.getAllValues().get(1));
+        TokenWrapper storedForUserinfo = tokenCaptor.getAllValues().get(1);
+        assertEquals("user2", storedForUserinfo.key());
+        assertEquals("github", storedForUserinfo.provider());
+        assertEquals("github-id-token", storedForUserinfo.idToken());
+        assertEquals("github-access-token", storedForUserinfo.accessToken());
+        assertEquals("github-refresh", storedForUserinfo.refreshToken());
+        // TTL is same as first stored token (absolute, with grace already applied in first store)
+        assertEquals(tokenCaptor.getAllValues().get(0).ttl(), storedForUserinfo.ttl());
     }
 
     @Test
