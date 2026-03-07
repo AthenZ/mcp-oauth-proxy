@@ -34,6 +34,9 @@ public class AuthorizerService {
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
     private static final String TOKEN_TYPE = "Bearer";
+    private static final String PROVIDER_GLEAN = "glean";
+    /** Grace period (seconds) added to token expiry when storing in the token store so the record is not evicted right away. */
+    private static final long TOKEN_STORE_TTL_GRACE_SECONDS = 300L; // 5 minutes
 
     @Inject
     ZMSClient zmsClient;
@@ -83,7 +86,7 @@ public class AuthorizerService {
                 idToken,
                 accessToken,
                 refreshToken,
-                nowSeconds + ttl
+                nowSeconds + ttl + TOKEN_STORE_TTL_GRACE_SECONDS
         );
         tokenStore.storeUserToken(lookupKey, provider, cachedToken);
     }
@@ -193,25 +196,69 @@ public class AuthorizerService {
      */
     private void storeGleanTokenIfNeeded(String resource, TokenWrapper oktaToken, TokenWrapper exchangedToken) {
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
-        if (resourceMeta == null || resourceMeta.audience() == null || !"glean".equals(resourceMeta.audience())) {
+        if (resourceMeta == null || resourceMeta.audience() == null || !PROVIDER_GLEAN.equals(resourceMeta.audience())) {
             return;
         }
         log.info("Storing Glean token for user: {}", oktaToken.key());
 
         long nowSeconds = Instant.now().getEpochSecond();
-        long absoluteTtl = nowSeconds + exchangedToken.ttl();
+        long absoluteTtl = nowSeconds + exchangedToken.ttl() + TOKEN_STORE_TTL_GRACE_SECONDS;
 
         TokenWrapper gleanToken = new TokenWrapper(
                 oktaToken.key(),
-                "glean",
+                PROVIDER_GLEAN,
                 null,
                 exchangedToken.accessToken(),
                 null,
                 absoluteTtl
         );
 
-        tokenStore.storeUserToken(oktaToken.key(), "glean", gleanToken);
+        tokenStore.storeUserToken(oktaToken.key(), PROVIDER_GLEAN, gleanToken);
         log.info("Successfully stored Glean token for user: {} with ttl: {}", oktaToken.key(), gleanToken.ttl());
+    }
+
+    /**
+     * Store the token we are returning to the client so /userinfo can resolve it by access token hash.
+     * For Glean (token exchange) we store under provider "glean". For other resources (GitHub, Google, Okta)
+     * we store under the upstream provider so the returned access token is findable by hash.
+     *
+     * @param resource       The resource URI from the refresh request
+     * @param userId         User id (subject) from the refresh token record
+     * @param provider       Upstream IDP (okta, github, google)
+     * @param upstreamToken   The upstream token we stored (used for Glean to get user key)
+     * @param returnedToken  The token we are returning to the client (may be exchanged or same as upstream)
+     */
+    private void storeRefreshedAccessToken(String resource, String userId, String provider,
+                                          TokenWrapper upstreamToken, TokenWrapper returnedToken) {
+        ResourceMeta resourceMeta = configService.getResourceMeta(resource);
+        String storeProvider;
+        TokenWrapper toStore;
+        if (resourceMeta != null && resourceMeta.audience() != null && PROVIDER_GLEAN.equals(resourceMeta.audience())) {
+            storeProvider = PROVIDER_GLEAN;
+            long absoluteTtl = Instant.now().getEpochSecond() + returnedToken.ttl() + TOKEN_STORE_TTL_GRACE_SECONDS;
+            toStore = new TokenWrapper(
+                    userId,
+                    storeProvider,
+                    null,
+                    returnedToken.accessToken(),
+                    null,
+                    absoluteTtl
+            );
+            log.info("Storing exchanged Glean token for user: {} so /userinfo can resolve it", userId);
+        } else {
+            storeProvider = provider;
+            // returnedToken is the same as the token we already stored with grace in refreshUpstreamAndGetToken
+            toStore = new TokenWrapper(
+                    userId,
+                    storeProvider,
+                    returnedToken.idToken(),
+                    returnedToken.accessToken(),
+                    returnedToken.refreshToken(),
+                    returnedToken.ttl()
+            );
+            log.info("Storing returned token for user: {} provider: {} so /userinfo can resolve it", userId, storeProvider);
+        }
+        tokenStore.storeUserToken(userId, storeProvider, toStore);
     }
 
     /**
@@ -240,7 +287,7 @@ public class AuthorizerService {
             return null;
         }
         long nowSeconds = Instant.now().getEpochSecond();
-        long absoluteTtl = nowSeconds + (newToken.ttl() != null ? newToken.ttl() : 3600L);
+        long absoluteTtl = nowSeconds + (newToken.ttl() != null ? newToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
         String newUpstreamRefresh = (newToken.refreshToken() != null && !newToken.refreshToken().isEmpty())
                 ? newToken.refreshToken() : null;
         TokenWrapper toStore = new TokenWrapper(
@@ -271,6 +318,7 @@ public class AuthorizerService {
             log.warn("Token exchange after refresh failed for user {} resource {}", userId, resource);
             return null;
         }
+        storeRefreshedAccessToken(resource, userId, provider, toStore, atDO.token());
         TokenResponse tokenResponse = new TokenResponse(
                 atDO.token().accessToken(),
                 TOKEN_TYPE,
