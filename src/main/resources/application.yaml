@@ -153,6 +153,10 @@ server:
     table-name: ${MOP_REFRESH_TOKEN_TABLE_NAME:mcp-oauth-proxy-refresh-tokens}
     expiry-seconds: ${MOP_REFRESH_EXPIRY_SECONDS:7776000}
     ttl-buffer-days: ${MOP_REFRESH_TTL_BUFFER_DAYS:7}
+  userinfo:
+    retry:
+      delay-ms: ${MOP_USERINFO_RETRY_DELAY_MS:200}
+      max-attempts: ${MOP_USERINFO_RETRY_MAX_ATTEMPTS:10}
   secret:
     k8s:
       name:
