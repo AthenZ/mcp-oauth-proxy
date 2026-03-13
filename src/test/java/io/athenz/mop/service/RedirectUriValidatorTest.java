@@ -37,7 +37,9 @@ class RedirectUriValidatorTest {
                 "http://127.0.0.1",
                 "https://127.0.0.1",
                 "cursor://anysphere.cursor-",
-                "https://app.example.com"
+                "https://app.example.com",
+                "https://vscode.dev",
+                "https://vscode.dev/"
         );
     }
 
@@ -244,6 +246,19 @@ class RedirectUriValidatorTest {
         assertFalse(validator.isValidRedirectUri("http://localhost.evil.com/callback"));
         assertFalse(validator.isValidRedirectUri("https://app.example.com.evil.com/callback"));
         assertFalse(validator.isValidRedirectUri("https://app.evil.example.com/callback"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_VscodeDevAllowed() {
+        // https://vscode.dev/* pattern: base and any path under vscode.dev
+        assertTrue(validator.isValidRedirectUri("https://vscode.dev/"));
+        assertTrue(validator.isValidRedirectUri("https://vscode.dev/callback"));
+        assertTrue(validator.isValidRedirectUri("https://vscode.dev/oauth/callback"));
+        assertTrue(validator.isValidRedirectUri("https://vscode.dev/foo/bar?state=xyz"));
+        assertTrue(validator.isValidRedirectUri("https://vscode.dev", "client-vscode"));
+        // Subdomains and other hosts must not match
+        assertFalse(validator.isValidRedirectUri("https://evil-vscode.dev/callback"));
+        assertFalse(validator.isValidRedirectUri("https://vscode.dev.evil.com/callback"));
     }
 
     @Test
