@@ -14,12 +14,19 @@ import java.lang.invoke.MethodHandles;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 @Path("/userinfo")
 public class UserInfoResource {
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
+    @ConfigProperty(name = "server.userinfo.retry.delay-ms", defaultValue = "200")
+    long retryDelayMs;
+
+    @ConfigProperty(name = "server.userinfo.retry.max-attempts", defaultValue = "10")
+    int retryMaxAttempts;
 
     @Inject
     TokenStore tokenStore;
@@ -44,10 +51,34 @@ public class UserInfoResource {
         log.info("Processing userinfo request for access token");
 
         String accessTokenHash = JwtUtils.hashAccessToken(accessToken);
-        TokenWrapper tokenByHash = tokenStore.getUserTokenByAccessTokenHash(accessTokenHash);
+        TokenWrapper tokenByHash = null;
+        int attempt = 0;
+        while (attempt <= retryMaxAttempts) {
+            tokenByHash = tokenStore.getUserTokenByAccessTokenHash(accessTokenHash);
+            if (tokenByHash != null) {
+                break;
+            }
+            attempt++;
+            if (attempt <= retryMaxAttempts) {
+                log.debug("Token not found for access token hash, retry {}/{} in {}ms", attempt, retryMaxAttempts, retryDelayMs);
+                try {
+                    Thread.sleep(retryDelayMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Userinfo retry interrupted");
+                    return Response.status(Response.Status.UNAUTHORIZED)
+                            .entity(Map.of(
+                                    "error", "invalid_token",
+                                    "error_description", "Token not found"
+                            ))
+                            .type(MediaType.APPLICATION_JSON)
+                            .build();
+                }
+            }
+        }
 
         if (tokenByHash == null) {
-            log.warn("Token not found for access token hash");
+            log.warn("Token not found for access token hash after {} attempts", retryMaxAttempts + 1);
             return Response.status(Response.Status.UNAUTHORIZED)
                     .entity(Map.of(
                             "error", "invalid_token",

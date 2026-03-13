@@ -190,6 +190,10 @@ data:
         table-name: {{ .Values.application.refreshToken.tableName | quote }}
         expiry-seconds: {{ .Values.application.refreshToken.expirySeconds }}
         ttl-buffer-days: {{ .Values.application.refreshToken.ttlBufferDays }}
+      userinfo:
+        retry:
+          delay-ms: {{ .Values.application.userinfo.retry.delayMs }}
+          max-attempts: {{ .Values.application.userinfo.retry.maxAttempts }}
       secret:
         k8s:
           name: {{ .Values.application.k8s.secretName | quote }}

@@ -108,6 +108,10 @@ application:
     tableName: mcp-oauth-proxy-refresh-tokens
     expirySeconds: 7776000
     ttlBufferDays: 7
+  userinfo:
+    retry:
+      delayMs: 200
+      maxAttempts: 10
   aws:
     dynamoDbTable:
     kmsKeyId:
