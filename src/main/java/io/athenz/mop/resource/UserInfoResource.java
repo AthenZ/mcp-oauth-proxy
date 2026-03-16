@@ -107,7 +107,7 @@ public class UserInfoResource {
 
         if (oktaToken == null) {
             log.error("Okta token not found for user: {}", user);
-            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+            return Response.status(Response.Status.UNAUTHORIZED)
                     .entity(Map.of(
                             "error", "server_error",
                             "error_description", "Okta token record not found"
@@ -119,7 +119,7 @@ public class UserInfoResource {
         String idToken = oktaToken.idToken();
         if (idToken == null || idToken.isEmpty()) {
             log.error("id_token is missing in Okta record for user: {}", user);
-            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+            return Response.status(Response.Status.UNAUTHORIZED)
                     .entity(Map.of(
                             "error", "server_error",
                             "error_description", "id_token not available"
