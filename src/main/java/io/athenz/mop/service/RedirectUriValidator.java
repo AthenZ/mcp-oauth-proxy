@@ -35,6 +35,11 @@ public class RedirectUriValidator {
             defaultValue = "http://localhost,https://localhost,http://127.0.0.1,https://127.0.0.1,cursor://anysphere.cursor-,https://vscode.dev,https://vscode.dev/")
     List<String> allowedRedirectUriPrefixes;
 
+    @ConfigProperty(
+            name = "server.allowed-redirect-uri-exact",
+            defaultValue = "https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback,https://insiders.vscode.net/redirect")
+    List<String> allowedRedirectUriExact;
+
     /**
      * Validate a redirect URI against security requirements and allowlist
      *
@@ -88,7 +93,18 @@ public class RedirectUriValidator {
             }
         }
 
-        // Check against allowlist
+        // Check against exact allowlist first
+        if (allowedRedirectUriExact != null && !allowedRedirectUriExact.isEmpty()) {
+            boolean exactMatch = allowedRedirectUriExact.stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .anyMatch(redirectUri::equals);
+            if (exactMatch) {
+                return true;
+            }
+        }
+
+        // Check against prefix allowlist
         if (allowedRedirectUriPrefixes != null && !allowedRedirectUriPrefixes.isEmpty()) {
             boolean isAllowed = allowedRedirectUriPrefixes.stream()
                     .anyMatch(allowed -> matchesPattern(uri, allowed));

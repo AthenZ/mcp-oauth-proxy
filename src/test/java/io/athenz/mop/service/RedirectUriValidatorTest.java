@@ -41,6 +41,11 @@ class RedirectUriValidatorTest {
                 "https://vscode.dev",
                 "https://vscode.dev/"
         );
+        validator.allowedRedirectUriExact = Arrays.asList(
+                "https://claude.ai/api/mcp/auth_callback",
+                "https://claude.com/api/mcp/auth_callback",
+                "https://insiders.vscode.net/redirect"
+        );
     }
 
     @Test
@@ -272,5 +277,78 @@ class RedirectUriValidatorTest {
         // Valid URLs without userinfo should still work
         assertTrue(validator.isValidRedirectUri("https://app.example.com/callback"));
         assertTrue(validator.isValidRedirectUri("http://localhost/callback"));
+    }
+
+    // --- Exact-match allowlist (claude.ai, claude.com, insiders.vscode.net) ---
+
+    @Test
+    void testIsValidRedirectUri_ExactMatch_ClaudeAiAllowed() {
+        assertTrue(validator.isValidRedirectUri("https://claude.ai/api/mcp/auth_callback"));
+        assertTrue(validator.isValidRedirectUri("https://claude.ai/api/mcp/auth_callback", "client-claude"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_ExactMatch_ClaudeComAllowed() {
+        assertTrue(validator.isValidRedirectUri("https://claude.com/api/mcp/auth_callback"));
+        assertTrue(validator.isValidRedirectUri("https://claude.com/api/mcp/auth_callback", "client-claude"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_ExactMatch_InsidersVscodeNetAllowed() {
+        assertTrue(validator.isValidRedirectUri("https://insiders.vscode.net/redirect"));
+        assertTrue(validator.isValidRedirectUri("https://insiders.vscode.net/redirect", "client-vscode"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_ExactMatch_RejectsSubpathsAndNearMisses() {
+        // Subpaths under exact URIs must not match
+        assertFalse(validator.isValidRedirectUri("https://insiders.vscode.net/redirect/"));
+        assertFalse(validator.isValidRedirectUri("https://insiders.vscode.net/redirect/foo"));
+        assertFalse(validator.isValidRedirectUri("https://claude.ai/api/mcp/auth_callback/"));
+        assertFalse(validator.isValidRedirectUri("https://claude.ai/api/mcp/auth_callback/extra"));
+        assertFalse(validator.isValidRedirectUri("https://claude.com/api/mcp/auth_callback?state=xyz"));
+        // Wrong host or path
+        assertFalse(validator.isValidRedirectUri("https://claude.ai/api/mcp/other"));
+        assertFalse(validator.isValidRedirectUri("https://vscode.net/redirect"));
+    }
+
+    @Test
+    void testValidateRedirectUris_ExactMatchUris() {
+        List<String> uris = Arrays.asList(
+                "https://claude.ai/api/mcp/auth_callback",
+                "https://claude.com/api/mcp/auth_callback",
+                "https://insiders.vscode.net/redirect"
+        );
+        assertTrue(validator.validateRedirectUris(uris, "client-mcp"));
+    }
+
+    @Test
+    void testValidateRedirectUris_ExactMatchRejectsInvalidInList() {
+        List<String> uris = Arrays.asList(
+                "https://claude.ai/api/mcp/auth_callback",
+                "https://insiders.vscode.net/redirect/foo"  // not exact
+        );
+        assertFalse(validator.validateRedirectUris(uris, "client-mcp"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_ExactMatch_TrimmedConfigEntries() {
+        validator.allowedRedirectUriExact = Arrays.asList(
+                "  https://claude.ai/api/mcp/auth_callback  ",
+                "https://insiders.vscode.net/redirect"
+        );
+        assertTrue(validator.isValidRedirectUri("https://claude.ai/api/mcp/auth_callback"));
+        assertTrue(validator.isValidRedirectUri("https://insiders.vscode.net/redirect"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_ExactMatch_NullOrEmptyListFallsBackToPrefix() {
+        validator.allowedRedirectUriExact = null;
+        assertFalse(validator.isValidRedirectUri("https://claude.ai/api/mcp/auth_callback"));
+        assertTrue(validator.isValidRedirectUri("https://app.example.com/callback"));
+
+        validator.allowedRedirectUriExact = Collections.emptyList();
+        assertFalse(validator.isValidRedirectUri("https://claude.ai/api/mcp/auth_callback"));
+        assertTrue(validator.isValidRedirectUri("https://app.example.com/callback"));
     }
 }
