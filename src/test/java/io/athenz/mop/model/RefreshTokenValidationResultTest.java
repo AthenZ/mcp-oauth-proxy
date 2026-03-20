@@ -15,6 +15,7 @@
  */
 package io.athenz.mop.model;
 
+import io.athenz.mop.service.AudienceConstants;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -23,7 +24,7 @@ class RefreshTokenValidationResultTest {
 
     private static RefreshTokenRecord sampleRecord() {
         return new RefreshTokenRecord(
-                "id", "okta#u", "u", "c", "okta", "sub", "enc", "ACTIVE",
+                "id", AudienceConstants.PROVIDER_OKTA + "#u", "u", "c", AudienceConstants.PROVIDER_OKTA, "sub", "enc", "ACTIVE",
                 "f1", null, null, 0L, 1L, 2L, 3L);
     }
 

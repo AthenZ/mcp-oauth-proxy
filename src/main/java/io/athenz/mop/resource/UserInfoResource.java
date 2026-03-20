@@ -1,7 +1,9 @@
 package io.athenz.mop.resource;
 
 import io.athenz.mop.model.TokenWrapper;
+import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.store.TokenStore;
+import io.athenz.mop.store.impl.aws.UserInfoCrossRegionFallback;
 import io.athenz.mop.util.JwtUtils;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
@@ -14,7 +16,6 @@ import java.lang.invoke.MethodHandles;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,14 +23,11 @@ import org.slf4j.LoggerFactory;
 public class UserInfoResource {
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-    @ConfigProperty(name = "server.userinfo.retry.delay-ms", defaultValue = "200")
-    long retryDelayMs;
-
-    @ConfigProperty(name = "server.userinfo.retry.max-attempts", defaultValue = "10")
-    int retryMaxAttempts;
-
     @Inject
     TokenStore tokenStore;
+
+    @Inject
+    UserInfoCrossRegionFallback crossRegionFallback;
 
     @GET
     @Path("/")
@@ -48,37 +46,18 @@ public class UserInfoResource {
         }
 
         String accessToken = authorization.substring("Bearer ".length());
-        log.info("Processing userinfo request for access token");
+        log.info("Processing userinfo request");
 
         String accessTokenHash = JwtUtils.hashAccessToken(accessToken);
-        TokenWrapper tokenByHash = null;
-        int attempt = 0;
-        while (attempt <= retryMaxAttempts) {
-            tokenByHash = tokenStore.getUserTokenByAccessTokenHash(accessTokenHash);
-            if (tokenByHash != null) {
-                break;
-            }
-            attempt++;
-            if (attempt <= retryMaxAttempts) {
-                log.debug("Token not found for access token hash, retry {}/{} in {}ms", attempt, retryMaxAttempts, retryDelayMs);
-                try {
-                    Thread.sleep(retryDelayMs);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    log.warn("Userinfo retry interrupted");
-                    return Response.status(Response.Status.UNAUTHORIZED)
-                            .entity(Map.of(
-                                    "error", "invalid_token",
-                                    "error_description", "Token not found"
-                            ))
-                            .type(MediaType.APPLICATION_JSON)
-                            .build();
-                }
-            }
+        TokenWrapper tokenByHash = tokenStore.getUserTokenByAccessTokenHash(accessTokenHash);
+        boolean fromFallback = false;
+        if (tokenByHash == null) {
+            tokenByHash = crossRegionFallback.getUserTokenByAccessTokenHash(accessTokenHash);
+            fromFallback = (tokenByHash != null);
         }
 
         if (tokenByHash == null) {
-            log.warn("Token not found for access token hash after {} attempts", retryMaxAttempts + 1);
+            log.warn("Token not found for userinfo lookup");
             return Response.status(Response.Status.UNAUTHORIZED)
                     .entity(Map.of(
                             "error", "invalid_token",
@@ -101,9 +80,11 @@ public class UserInfoResource {
         }
 
         String user = tokenByHash.key();
-        log.info("Found token by hash for user: {}, provider: {}", user, tokenByHash.provider());
+        log.info("Found token by hash for user: {}, provider: {} (fromFallback={})", user, tokenByHash.provider(), fromFallback);
 
-        TokenWrapper oktaToken = tokenStore.getUserToken(user, "okta");
+        TokenWrapper oktaToken = fromFallback
+                ? crossRegionFallback.getUserToken(user, AudienceConstants.PROVIDER_OKTA)
+                : tokenStore.getUserToken(user, AudienceConstants.PROVIDER_OKTA);
 
         if (oktaToken == null) {
             log.error("Okta token not found for user: {}", user);
@@ -129,7 +110,7 @@ public class UserInfoResource {
         }
 
         Map<String, Object> userInfo = buildUserInfo(idToken, tokenByHash.provider());
-        log.info("Successfully returned userinfo for user: {}", user);
+        log.info("Successfully returned userinfo for user={} provider={} (claims not logged)", user, tokenByHash.provider());
         return Response.ok(userInfo).type(MediaType.APPLICATION_JSON).build();
     }
 

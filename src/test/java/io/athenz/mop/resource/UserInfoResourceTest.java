@@ -24,7 +24,9 @@ import com.nimbusds.jose.jwk.Curve;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import io.athenz.mop.model.TokenWrapper;
+import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.store.TokenStore;
+import io.athenz.mop.store.impl.aws.UserInfoCrossRegionFallback;
 import jakarta.ws.rs.core.Response;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,11 +38,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Date;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -50,17 +47,20 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for UserInfoResource, including retry strategy when token is not found (e.g. eventual consistency).
+ * Unit tests for UserInfoResource, including cross-region fallback when token is not found locally.
  */
 @ExtendWith(MockitoExtension.class)
 class UserInfoResourceTest {
 
     private static final String ACCESS_TOKEN = "test_access_token";
     private static final String USER = "user.test";
-    private static final String PROVIDER = "okta";
+    private static final String PROVIDER = AudienceConstants.PROVIDER_OKTA;
 
     @Mock
     private TokenStore tokenStore;
+
+    @Mock
+    private UserInfoCrossRegionFallback crossRegionFallback;
 
     @InjectMocks
     private UserInfoResource userInfoResource;
@@ -71,9 +71,6 @@ class UserInfoResourceTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        userInfoResource.retryDelayMs = 1L;
-        userInfoResource.retryMaxAttempts = 3;
-
         idToken = createIdToken(USER);
         long ttl = System.currentTimeMillis() / 1000 + 3600;
         tokenWrapper = new TokenWrapper(USER, PROVIDER, idToken, ACCESS_TOKEN, "refresh", ttl);
@@ -113,62 +110,42 @@ class UserInfoResourceTest {
     }
 
     @Test
-    void getUserInfo_tokenFoundOnFirstAttempt_returns200() {
+    void getUserInfo_tokenFoundInPrimary_returns200() {
         when(tokenStore.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(tokenWrapper);
-        when(tokenStore.getUserToken(USER, "okta")).thenReturn(oktaTokenWrapper);
+        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(oktaTokenWrapper);
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
 
         assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
         verify(tokenStore, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
+        verify(crossRegionFallback, never()).getUserTokenByAccessTokenHash(ArgumentMatchers.any());
     }
 
     @Test
-    void getUserInfo_tokenFoundAfterRetries_returns200() {
-        when(tokenStore.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString()))
-                .thenReturn(null)
-                .thenReturn(null)
-                .thenReturn(tokenWrapper);
-        when(tokenStore.getUserToken(USER, "okta")).thenReturn(oktaTokenWrapper);
+    void getUserInfo_tokenFoundInFallback_returns200() {
+        when(tokenStore.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
+        when(crossRegionFallback.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(tokenWrapper);
+        when(crossRegionFallback.getUserToken(USER, PROVIDER)).thenReturn(oktaTokenWrapper);
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
 
         assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
-        verify(tokenStore, times(3)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
+        verify(tokenStore, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
+        verify(crossRegionFallback, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
+        verify(crossRegionFallback, times(1)).getUserToken(USER, PROVIDER);
     }
 
     @Test
-    void getUserInfo_tokenNotFoundAfterMaxRetries_returns401() {
+    void getUserInfo_tokenNotFound_returns401() {
         when(tokenStore.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
+        when(crossRegionFallback.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
 
         assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
         assertErrorBody(response, "invalid_token", "Token not found");
-        verify(tokenStore, times(4)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
-    }
-
-    @Test
-    void getUserInfo_interruptedDuringRetry_returns401TokenNotFound() throws Exception {
-        userInfoResource.retryDelayMs = 5000L;
-        userInfoResource.retryMaxAttempts = 5;
-        when(tokenStore.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
-
-        ExecutorService executor = Executors.newSingleThreadExecutor();
-        CountDownLatch started = new CountDownLatch(1);
-        Future<Response> future = executor.submit(() -> {
-            started.countDown();
-            return userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
-        });
-
-        started.await(2, TimeUnit.SECONDS);
-        Thread.sleep(50);
-        executor.shutdownNow();
-
-        Response response = future.get(3, TimeUnit.SECONDS);
-        assertNotNull(response);
-        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
-        assertErrorBody(response, "invalid_token", "Token not found");
+        verify(tokenStore, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
+        verify(crossRegionFallback, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
     }
 
     @SuppressWarnings("unchecked")

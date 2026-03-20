@@ -18,11 +18,15 @@ package io.athenz.mop.service;
 import com.yahoo.athenz.zts.AccessTokenResponse;
 import com.yahoo.athenz.zts.OAuthTokenRequestBuilder;
 import com.yahoo.athenz.zts.ZTSClient;
+import com.yahoo.athenz.zts.ZTSClientException;
+import jakarta.ws.rs.WebApplicationException;
+import io.athenz.mop.client.ZTSClientProducer;
+import io.athenz.mop.config.AthenzTokenExchangeConfig;
 import io.athenz.mop.model.AuthResult;
 import io.athenz.mop.model.AuthorizationResultDO;
+import io.athenz.mop.model.RequestedZtsTokenType;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
-import io.athenz.mop.service.TokenExchangeServiceZTSImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -36,12 +40,19 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class TokenExchangeServiceZTSImplTest {
 
     @Mock
     private ZTSClient ztsClient;
+
+    @Mock
+    private ZTSClientProducer ztsClientProducer;
+
+    @Mock
+    private AthenzTokenExchangeConfig athenzTokenExchangeConfig;
 
     @InjectMocks
     private TokenExchangeServiceZTSImpl tokenExchangeService;
@@ -52,8 +63,9 @@ class TokenExchangeServiceZTSImplTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        when(ztsClientProducer.getZTSClient()).thenReturn(ztsClient);
+        when(athenzTokenExchangeConfig.audience()).thenReturn("sys.auth.gcp");
 
-        // Setup common test data
         tokenWrapper = new TokenWrapper(
                 "test-key",
                 "test-provider",
@@ -519,5 +531,159 @@ class TokenExchangeServiceZTSImplTest {
         // Assert
         verify(ztsClient, times(1)).getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true));
         assertNotNull(builderCaptor.getValue());
+    }
+
+    // --- getAccessTokenFromResourceAuthorizationServer when requestedZtsTokenType == ID_TOKEN (getAthenzIdTokenViaZts) ---
+
+    @Test
+    void testGetAccessTokenFromResourceAuthorizationServer_IdTokenPath_Success() {
+        List<String> scopes = Arrays.asList("scope1");
+        tokenExchangeDO = new TokenExchangeDO(
+                scopes,
+                "resource",
+                "test-namespace",
+                "test-remote-server",
+                tokenWrapper,
+                RequestedZtsTokenType.ID_TOKEN
+        );
+
+        AccessTokenResponse mockResponse = new AccessTokenResponse();
+        mockResponse.setId_token("athenz-id-token-value");
+        mockResponse.setExpires_in(7200);
+
+        when(ztsClient.getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true))).thenReturn(mockResponse);
+
+        AuthorizationResultDO result = tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(tokenExchangeDO);
+
+        assertNotNull(result);
+        assertEquals(AuthResult.AUTHORIZED, result.authResult());
+        assertNotNull(result.token());
+        assertEquals("test-key", result.token().key());
+        assertEquals("test-remote-server", result.token().provider());
+        assertEquals("athenz-id-token-value", result.token().idToken());
+        assertNull(result.token().accessToken());
+        assertEquals(7200L, result.token().ttl());
+        verify(ztsClient, times(1)).getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true));
+    }
+
+    @Test
+    void testGetAccessTokenFromResourceAuthorizationServer_IdTokenPath_NullIdToken_ReturnsUnauthorized() {
+        List<String> scopes = Arrays.asList("scope1");
+        tokenExchangeDO = new TokenExchangeDO(
+                scopes,
+                "resource",
+                "test-namespace",
+                "test-remote-server",
+                tokenWrapper,
+                RequestedZtsTokenType.ID_TOKEN
+        );
+
+        AccessTokenResponse mockResponse = new AccessTokenResponse();
+        mockResponse.setId_token(null);
+        mockResponse.setExpires_in(3600);
+
+        when(ztsClient.getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true))).thenReturn(mockResponse);
+
+        AuthorizationResultDO result = tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(tokenExchangeDO);
+
+        assertNotNull(result);
+        assertEquals(AuthResult.UNAUTHORIZED, result.authResult());
+        assertNull(result.token());
+        verify(ztsClient, times(1)).getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true));
+    }
+
+    @Test
+    void testGetAccessTokenFromResourceAuthorizationServer_IdTokenPath_BlankIdToken_ReturnsUnauthorized() {
+        List<String> scopes = Arrays.asList("scope1");
+        tokenExchangeDO = new TokenExchangeDO(
+                scopes,
+                "resource",
+                "test-namespace",
+                "test-remote-server",
+                tokenWrapper,
+                RequestedZtsTokenType.ID_TOKEN
+        );
+
+        AccessTokenResponse mockResponse = new AccessTokenResponse();
+        mockResponse.setId_token("   ");
+        mockResponse.setExpires_in(3600);
+
+        when(ztsClient.getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true))).thenReturn(mockResponse);
+
+        AuthorizationResultDO result = tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(tokenExchangeDO);
+
+        assertNotNull(result);
+        assertEquals(AuthResult.UNAUTHORIZED, result.authResult());
+        assertNull(result.token());
+        verify(ztsClient, times(1)).getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true));
+    }
+
+    @Test
+    void testGetAccessTokenFromResourceAuthorizationServer_IdTokenPath_NullExpiresIn_DefaultsTo3600() {
+        List<String> scopes = Arrays.asList("scope1");
+        tokenExchangeDO = new TokenExchangeDO(
+                scopes,
+                "resource",
+                "test-namespace",
+                "test-remote-server",
+                tokenWrapper,
+                RequestedZtsTokenType.ID_TOKEN
+        );
+
+        AccessTokenResponse mockResponse = new AccessTokenResponse();
+        mockResponse.setId_token("athenz-id-token");
+        mockResponse.setExpires_in(null);
+
+        when(ztsClient.getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true))).thenReturn(mockResponse);
+
+        AuthorizationResultDO result = tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(tokenExchangeDO);
+
+        assertNotNull(result);
+        assertEquals(AuthResult.AUTHORIZED, result.authResult());
+        assertEquals(3600L, result.token().ttl());
+        verify(ztsClient, times(1)).getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true));
+    }
+
+    @Test
+    void testGetAccessTokenFromResourceAuthorizationServer_IdTokenPath_ZTSThrows_Propagates() {
+        List<String> scopes = Arrays.asList("scope1");
+        tokenExchangeDO = new TokenExchangeDO(
+                scopes,
+                "resource",
+                "test-namespace",
+                "test-remote-server",
+                tokenWrapper,
+                RequestedZtsTokenType.ID_TOKEN
+        );
+
+        when(ztsClient.getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true)))
+                .thenThrow(new RuntimeException("ZTS id_token error"));
+
+        assertThrows(RuntimeException.class, () ->
+                tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(tokenExchangeDO));
+
+        verify(ztsClient, times(1)).getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true));
+    }
+
+    @Test
+    void testGetAccessTokenFromResourceAuthorizationServer_ZTSClientException_mapsToUnauthorized() {
+        List<String> scopes = Arrays.asList("scope1");
+        tokenExchangeDO = new TokenExchangeDO(
+                scopes,
+                "resource",
+                "test-namespace",
+                "test-remote-server",
+                tokenWrapper,
+                RequestedZtsTokenType.ID_TOKEN
+        );
+
+        when(ztsClient.getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true)))
+                .thenThrow(new ZTSClientException(403, "Principal not authorized for token exchange for the requested role"));
+
+        WebApplicationException ex = assertThrows(WebApplicationException.class, () ->
+                tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(tokenExchangeDO));
+
+        assertEquals(401, ex.getResponse().getStatus());
+        verify(ztsClient, times(1)).getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true));
     }
 }

@@ -7,7 +7,7 @@
   <name>mcp-oauth-proxy</name>
 
   <properties>
-    <athenz.version>1.12.32</athenz.version>
+    <athenz.version>1.12.36</athenz.version>
     <aws.cryptojava.version>1.11.0</aws.cryptojava.version>
     <aws.dbencryption.version>3.9.0</aws.dbencryption.version>
     <aws.sdk.version>2.41.10</aws.sdk.version>

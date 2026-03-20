@@ -17,4 +17,22 @@ package io.athenz.mop.model;
 
 import java.util.List;
 
-public record TokenExchangeDO(List<String> scopes, String resource, String namespace, String remoteServer, TokenWrapper tokenWrapper) {}
+/**
+ * Data object for token exchange requests.
+ *
+ * @param requestedZtsTokenType when ID_TOKEN, ZTS getAccessTokenFromResourceAuthorizationServer
+ *        uses token exchange (getIDToken) and returns Athenz id_token; when null or JAG, JAG path (getJAGExchangeToken).
+ */
+public record TokenExchangeDO(
+        List<String> scopes,
+        String resource,
+        String namespace,
+        String remoteServer,
+        TokenWrapper tokenWrapper,
+        RequestedZtsTokenType requestedZtsTokenType) {
+
+    /** Constructor without requestedZtsTokenType (defaults to null = JAG path). */
+    public TokenExchangeDO(List<String> scopes, String resource, String namespace, String remoteServer, TokenWrapper tokenWrapper) {
+        this(scopes, resource, namespace, remoteServer, tokenWrapper, null);
+    }
+}

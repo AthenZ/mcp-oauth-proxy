@@ -13,12 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.athenz.mop.service.impl;
+package io.athenz.mop.service;
 
+import io.athenz.mop.model.RefreshTokenLockKey;
 import io.athenz.mop.model.RefreshTokenRecord;
 import io.athenz.mop.model.RefreshTokenRotateResult;
 import io.athenz.mop.model.RefreshTokenValidationResult;
-import io.athenz.mop.service.RefreshTokenService;
 import io.athenz.mop.store.impl.aws.RefreshTableAttribute;
 import io.athenz.mop.store.impl.aws.RefreshTableConstants;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -32,6 +32,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
@@ -137,8 +138,22 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         item.put(RefreshTableAttribute.TTL.attr(), AttributeValue.builder().n(String.valueOf(ttl)).build());
 
         dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
-        log.info("store: saved refresh token refresh_token_id={} token_hash={} userId={} provider={} client_id={} expires_at={}", refreshTokenId, tokenHash, userId, provider, clientId, expiresAt);
+        log.info("store: saved refresh token refresh_token_id={} userId={} provider={} client_id={} expires_at={}",
+                refreshTokenId, userId, provider, clientId, expiresAt);
         return rawToken;
+    }
+
+    @Override
+    public Optional<RefreshTokenLockKey> lookupUserIdAndProviderForLock(String refreshToken, String clientId) {
+        if (refreshToken == null || refreshToken.isEmpty() || clientId == null || clientId.isEmpty()) {
+            return Optional.empty();
+        }
+        String hash = hashToken(refreshToken);
+        RefreshTokenRecord record = lookupByHash(hash);
+        if (record == null || !clientId.equals(record.clientId())) {
+            return Optional.empty();
+        }
+        return Optional.of(new RefreshTokenLockKey(record.userId(), record.provider()));
     }
 
     @Override
@@ -148,18 +163,18 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
             return RefreshTokenValidationResult.invalid();
         }
         String hash = hashToken(refreshToken);
-        // Debug: token shape and computed hash (hash is safe to log; do not log raw token)
-        String tokenPrefix = refreshToken.length() >= 4 ? refreshToken.substring(0, 4) : "???";
-        log.info("validate: refresh_token length={} prefix={} computed_hash={} client_id={}", refreshToken.length(), tokenPrefix, hash, clientId);
+        log.debug("validate: refresh_token lookup by hash client_id={} (hash redacted)", clientId);
         RefreshTokenRecord record = lookupByHash(hash);
         if (record == null) {
-            log.info("validate: invalid grant - no record found for refresh token (client_id={}); GSI query returned 0 items for hash", clientId);
+            log.info("validate: invalid grant - no record found for refresh token (client_id={})", clientId);
             return RefreshTokenValidationResult.invalid();
         }
         long now = System.currentTimeMillis() / 1000;
-        log.info("validate: found record refresh_token_id={} status={} expires_at={} now={} userId={}", record.refreshTokenId(), record.status(), record.expiresAt(), now, record.userId());
+        log.info("validate: found record refresh_token_id={} status={} expires_at={} now={} userId={}",
+                record.refreshTokenId(), record.status(), record.expiresAt(), now, record.userId());
         if (now > record.expiresAt()) {
-            log.info("validate: invalid grant - refresh token expired; userId={} provider={} expires_at={} now={}", record.userId(), record.provider(), record.expiresAt(), now);
+            log.info("validate: invalid grant - refresh token expired; userId={} provider={} expires_at={} now={}",
+                    record.userId(), record.provider(), record.expiresAt(), now);
             return RefreshTokenValidationResult.invalid();
         }
         if (!clientId.equals(record.clientId())) {
@@ -192,7 +207,6 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         String newHash = hashToken(newRawToken);
         String providerUserId = current.provider() + "#" + current.userId();
 
-        // Use Put of full item instead of Update: DynamoDB Encryption SDK forbids Update on signed attributes (status, replaced_by, rotated_at)
         Map<String, AttributeValue> currentItem = getItemByPrimaryKey(current.refreshTokenId(), current.providerUserId());
         if (currentItem == null) {
             log.warn("rotate: current row not found by primary key");
@@ -220,7 +234,8 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         newItem.put(RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s(current.clientId()).build());
         newItem.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(current.provider()).build());
         newItem.put(RefreshTableAttribute.PROVIDER_SUBJECT.attr(), AttributeValue.builder().s(current.providerSubject() != null ? current.providerSubject() : "").build());
-        if (current.encryptedUpstreamRefreshToken() != null && !current.encryptedUpstreamRefreshToken().isEmpty()) {
+        if (!AudienceConstants.PROVIDER_OKTA.equals(current.provider())
+                && current.encryptedUpstreamRefreshToken() != null && !current.encryptedUpstreamRefreshToken().isEmpty()) {
             newItem.put(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(), AttributeValue.builder().s(current.encryptedUpstreamRefreshToken()).build());
         }
         newItem.put(RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build());
@@ -264,7 +279,6 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
             .build());
         List<Map<String, AttributeValue>> items = response.items();
         if (items == null || items.isEmpty()) return;
-        // Use Put of full item instead of Update: DynamoDB Encryption SDK forbids Update on signed attributes
         for (Map<String, AttributeValue> item : items) {
             Map<String, AttributeValue> itemWithRevoked = new HashMap<>(item);
             itemWithRevoked.put(RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_REVOKED).build());
@@ -328,7 +342,7 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
             .expressionAttributeValues(Map.of(":h", AttributeValue.builder().s(hash).build()))
             .build());
         int count = response.items() != null ? response.items().size() : 0;
-        log.info("lookupByHash: GSI query hash={} returned {} item(s)", hash, count);
+        log.debug("lookupByHash: GSI query returned {} item(s) (hash redacted)", count);
         if (count == 0) return null;
         return itemToRecord(response.items().get(0));
     }
@@ -345,7 +359,6 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
             log.warn("updateUpstreamRefreshForToken: no row found for MOP token hash");
             return;
         }
-        // Use Put of full item: DynamoDB Encryption SDK forbids Update on signed/encrypted attributes (encrypted_upstream_refresh_token)
         Map<String, AttributeValue> currentItem = getItemByPrimaryKey(record.refreshTokenId(), record.providerUserId());
         if (currentItem == null) {
             log.warn("updateUpstreamRefreshForToken: row not found by primary key");
@@ -373,15 +386,44 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         log.debug("updateUpstreamRefreshForToken: updated upstream token for refreshTokenId={}", refreshTokenId);
     }
 
-    /**
-     * Get a single item by primary key (used by rotate and updateUpstreamRefreshForToken).
-     */
+    @Override
+    public void updateUpstreamRefreshForAllRowsWithUserAndProvider(String userId, String provider, String newUpstreamRefresh) {
+        if (userId == null || userId.isEmpty() || provider == null || provider.isEmpty()
+                || newUpstreamRefresh == null || newUpstreamRefresh.isEmpty()) {
+            return;
+        }
+        Map<String, AttributeValue> exprValues = new HashMap<>(Map.of(
+                ":uid", AttributeValue.builder().s(userId).build(),
+                ":prov", AttributeValue.builder().s(provider).build(),
+                ":active", AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build()));
+        QueryResponse response = dynamoDbClient.query(QueryRequest.builder()
+            .tableName(tableName)
+            .indexName(RefreshTableConstants.GSI_USER_PROVIDER)
+            .keyConditionExpression(
+                RefreshTableAttribute.USER_ID.attr() + " = :uid AND " + RefreshTableAttribute.PROVIDER.attr() + " = :prov")
+            .filterExpression("#s = :active")
+            .expressionAttributeNames(Map.of("#s", RefreshTableAttribute.STATUS.attr()))
+            .expressionAttributeValues(exprValues)
+            .build());
+        List<Map<String, AttributeValue>> items = response.items();
+        if (items == null || items.isEmpty()) {
+            log.debug("updateUpstreamRefreshForAllRowsWithUserAndProvider: no rows for userId={} provider={}", userId, provider);
+            return;
+        }
+        for (Map<String, AttributeValue> item : items) {
+            Map<String, AttributeValue> updatedItem = new HashMap<>(item);
+            updatedItem.put(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(), AttributeValue.builder().s(newUpstreamRefresh).build());
+            dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(updatedItem).build());
+        }
+        log.info("updateUpstreamRefreshForAllRowsWithUserAndProvider: updated {} row(s) for userId={} provider={}",
+                items.size(), userId, provider);
+    }
+
     public RefreshTokenRecord getByPrimaryKey(String refreshTokenId, String providerUserId) {
         Map<String, AttributeValue> item = getItemByPrimaryKey(refreshTokenId, providerUserId);
         return item == null ? null : itemToRecord(item);
     }
 
-    /** Returns raw item map by primary key (used by rotate to clone and Put without Update on signed attributes). */
     private Map<String, AttributeValue> getItemByPrimaryKey(String refreshTokenId, String providerUserId) {
         Map<String, AttributeValue> key = Map.of(
             RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s(refreshTokenId).build(),
