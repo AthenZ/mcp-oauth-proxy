@@ -44,7 +44,7 @@ class RedirectUriValidatorTest {
         validator.allowedRedirectUriExact = Arrays.asList(
                 "https://claude.ai/api/mcp/auth_callback",
                 "https://claude.com/api/mcp/auth_callback",
-                "https://insiders.vscode.net/redirect"
+                "https://insiders.vscode.dev/redirect"
         );
     }
 
@@ -295,8 +295,8 @@ class RedirectUriValidatorTest {
 
     @Test
     void testIsValidRedirectUri_ExactMatch_InsidersVscodeNetAllowed() {
-        assertTrue(validator.isValidRedirectUri("https://insiders.vscode.net/redirect"));
-        assertTrue(validator.isValidRedirectUri("https://insiders.vscode.net/redirect", "client-vscode"));
+        assertTrue(validator.isValidRedirectUri("https://insiders.vscode.dev/redirect"));
+        assertTrue(validator.isValidRedirectUri("https://insiders.vscode.dev/redirect", "client-vscode"));
     }
 
     @Test
@@ -317,7 +317,7 @@ class RedirectUriValidatorTest {
         List<String> uris = Arrays.asList(
                 "https://claude.ai/api/mcp/auth_callback",
                 "https://claude.com/api/mcp/auth_callback",
-                "https://insiders.vscode.net/redirect"
+                "https://insiders.vscode.dev/redirect"
         );
         assertTrue(validator.validateRedirectUris(uris, "client-mcp"));
     }
@@ -326,7 +326,7 @@ class RedirectUriValidatorTest {
     void testValidateRedirectUris_ExactMatchRejectsInvalidInList() {
         List<String> uris = Arrays.asList(
                 "https://claude.ai/api/mcp/auth_callback",
-                "https://insiders.vscode.net/redirect/foo"  // not exact
+                "https://insiders.vscode.dev/redirect/foo"  // not exact
         );
         assertFalse(validator.validateRedirectUris(uris, "client-mcp"));
     }
@@ -335,10 +335,10 @@ class RedirectUriValidatorTest {
     void testIsValidRedirectUri_ExactMatch_TrimmedConfigEntries() {
         validator.allowedRedirectUriExact = Arrays.asList(
                 "  https://claude.ai/api/mcp/auth_callback  ",
-                "https://insiders.vscode.net/redirect"
+                "https://insiders.vscode.dev/redirect"
         );
         assertTrue(validator.isValidRedirectUri("https://claude.ai/api/mcp/auth_callback"));
-        assertTrue(validator.isValidRedirectUri("https://insiders.vscode.net/redirect"));
+        assertTrue(validator.isValidRedirectUri("https://insiders.vscode.dev/redirect"));
     }
 
     @Test
