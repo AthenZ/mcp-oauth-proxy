@@ -37,7 +37,7 @@ public class RedirectUriValidator {
 
     @ConfigProperty(
             name = "server.allowed-redirect-uri-exact",
-            defaultValue = "https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback,https://insiders.vscode.net/redirect")
+            defaultValue = "https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback,https://insiders.vscode.dev/redirect")
     List<String> allowedRedirectUriExact;
 
     /**
