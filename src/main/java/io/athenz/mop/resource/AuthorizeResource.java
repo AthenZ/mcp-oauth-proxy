@@ -19,10 +19,12 @@ import io.athenz.mop.model.OAuth2AuthorizationRequest;
 import io.athenz.mop.model.OAuth2ErrorResponse;
 import io.athenz.mop.model.ResourceMeta;
 import io.athenz.mop.model.TokenWrapper;
+import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.service.AuthorizationCodeService;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RedirectUriValidator;
+import io.athenz.mop.service.UpstreamRefreshService;
 import io.quarkus.oidc.IdToken;
 import io.quarkus.oidc.RefreshToken;
 import io.quarkus.oidc.UserInfo;
@@ -33,6 +35,7 @@ import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.lang.invoke.MethodHandles;
+import java.time.Instant;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.slf4j.Logger;
@@ -68,6 +71,9 @@ public class AuthorizeResource extends BaseResource {
     @Inject
     ConfigService configService;
 
+    @Inject
+    UpstreamRefreshService upstreamRefreshService;
+
     @ConfigProperty(name = "server.host", defaultValue = "localhost")
     String host;
 
@@ -85,7 +91,7 @@ public class AuthorizeResource extends BaseResource {
     @Authenticated
     @Produces(MediaType.TEXT_HTML)
     public Response authorize(@Valid @BeanParam OAuth2AuthorizationRequest request) {
-        log.info("OAuth 2.1 authorization request from client: {} {}", request.getClientId(), userInfo.getUserInfoString());
+        log.info("OAuth 2.1 authorization request from client: {}", request.getClientId());
 
         // Validate response_type (must be "code" for OAuth 2.1)
         if (!"code".equals(request.getResponseType())) {
@@ -134,12 +140,17 @@ public class AuthorizeResource extends BaseResource {
         }
         ResourceMeta resourceMeta = configService.getResourceMeta(request.getResource());
 
+        String lookupKey = getUsername(userInfo, configService.getRemoteServerUsernameClaim(providerDefault), accessToken.getRawToken());
+        String oidcRefreshToken = refreshToken != null ? refreshToken.getToken() : null;
+        String refreshToStore = computeRefreshToStore(lookupKey, oidcRefreshToken);
+        refreshToStore = preferCentralizedOktaUpstreamRefresh(subject, refreshToStore);
+
         authorizerService.storeTokens(
-        getUsername(userInfo, configService.getRemoteServerUsernameClaim(providerDefault), accessToken.getRawToken()),
+        lookupKey,
         subject,
         idToken != null ? idToken.getRawToken() : null,
         accessToken.getRawToken(),
-        refreshToken != null ? refreshToken.getToken() : null,
+        refreshToStore,
         providerDefault);
         log.info("after storeToken call in AuthorizeResource Token issuer: {} subject: {} resourceMeta.idpServer: {}", providerDefault, subject,
                 resourceMeta.idpServer());
@@ -169,5 +180,40 @@ public class AuthorizeResource extends BaseResource {
         }
         // Build success redirect with authorization code
         return buildSuccessRedirect(request.getRedirectUri(), code, request.getState());
+    }
+
+    /**
+     * Chooses which refresh token to store: reuses existing active upstream refresh token when present
+     * (so multiple resources share one Okta RT and a second login does not overwrite it).
+     * Package-private for unit testing.
+     */
+    String computeRefreshToStore(String lookupKey, String oidcRefreshToken) {
+        TokenWrapper existing = authorizerService.getUserToken(lookupKey, providerDefault);
+        if (existing != null
+                && existing.refreshToken() != null
+                && !existing.refreshToken().isEmpty()
+                && existing.ttl() != null
+                && existing.ttl() > Instant.now().getEpochSecond()) {
+            log.info("Reusing existing active {} refresh token for lookupKey={} (second or subsequent login for another resource)",
+                    providerDefault, lookupKey);
+            return existing.refreshToken();
+        }
+        return oidcRefreshToken;
+    }
+
+    /**
+     * When centralized upstream already has a refresh token (e.g. rotated via MOP refresh), use it instead of
+     * the OIDC session token so relogin with an active Quarkus session does not persist a stale RT.
+     * Package-private for unit testing.
+     */
+    String preferCentralizedOktaUpstreamRefresh(String subject, String refreshToStore) {
+        if (!AudienceConstants.PROVIDER_OKTA.equals(providerDefault) || subject == null || subject.isEmpty()) {
+            return refreshToStore;
+        }
+        String providerUserId = AudienceConstants.PROVIDER_OKTA + "#" + subject;
+        return upstreamRefreshService.getCurrentUpstream(providerUserId)
+                .map(rec -> rec.encryptedOktaRefreshToken())
+                .filter(rt -> rt != null && !rt.isEmpty())
+                .orElse(refreshToStore);
     }
 }

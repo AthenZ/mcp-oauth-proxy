@@ -18,12 +18,19 @@ package io.athenz.mop.service;
 import com.yahoo.athenz.zts.AccessTokenResponse;
 import com.yahoo.athenz.zts.OAuthTokenRequestBuilder;
 import com.yahoo.athenz.zts.ZTSClient;
+import com.yahoo.athenz.zts.ZTSClientException;
+import io.athenz.mop.client.ZTSClientProducer;
+import io.athenz.mop.config.AthenzTokenExchangeConfig;
 import io.athenz.mop.model.AuthResult;
 import io.athenz.mop.model.AuthorizationResultDO;
+import io.athenz.mop.model.OAuth2ErrorResponse;
+import io.athenz.mop.model.RequestedZtsTokenType;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.core.Response;
 import java.lang.invoke.MethodHandles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +41,10 @@ public class TokenExchangeServiceZTSImpl implements TokenExchangeService {
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
     @Inject
-    ZTSClient ztsClient;
+    ZTSClientProducer ztsClientProducer;
+
+    @Inject
+    AthenzTokenExchangeConfig athenzTokenExchangeConfig;
 
     @Override
     public AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO) {
@@ -49,13 +59,22 @@ public class TokenExchangeServiceZTSImpl implements TokenExchangeService {
                 .subjectToken(tokenExchangeDO.tokenWrapper().idToken())
                 .openIdIssuer(true);
 
-        AccessTokenResponse tokenResponse = ztsClient.getJAGToken(builder);
+        ZTSClient ztsClient = ztsClientProducer.getZTSClient();
+        AccessTokenResponse tokenResponse;
+        try {
+            tokenResponse = ztsClient.getJAGToken(builder);
+        } catch (ZTSClientException e) {
+            throw mapZtsException(e);
+        }
         TokenWrapper jagToken = new TokenWrapper(tokenExchangeDO.tokenWrapper().key(), tokenExchangeDO.remoteServer(), tokenResponse.getAccess_token(), null, null, Long.valueOf(tokenResponse.getExpires_in()));
-        return new AuthorizationResultDO(AuthResult.AUTHORIZED, jagToken);
+         return new AuthorizationResultDO(AuthResult.AUTHORIZED, jagToken);
     }
 
     @Override
     public AuthorizationResultDO getAccessTokenFromResourceAuthorizationServer(TokenExchangeDO tokenExchangeDO) {
+        if (tokenExchangeDO.requestedZtsTokenType() == RequestedZtsTokenType.ID_TOKEN) {
+            return getAthenzIdTokenViaZts(tokenExchangeDO);
+        }
         log.info("getAccessTokenFromResourceAuthorizationServer");
         OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder
                 .newBuilder(OAuthTokenRequestBuilder.OAUTH_GRANT_JWT_BEARER)
@@ -65,16 +84,66 @@ public class TokenExchangeServiceZTSImpl implements TokenExchangeService {
                 .roleNames(tokenExchangeDO.scopes())
                 .openIdIssuer(true);
 
-        AccessTokenResponse tokenResponse = ztsClient.getJAGExchangeToken(builder);
+        ZTSClient ztsClient = ztsClientProducer.getZTSClient();
+        AccessTokenResponse tokenResponse;
+        try {
+            tokenResponse = ztsClient.getJAGExchangeToken(builder);
+        } catch (ZTSClientException e) {
+            throw mapZtsException(e);
+        }
         TokenWrapper resourceAccessToken = new TokenWrapper(tokenExchangeDO.tokenWrapper().key(), tokenExchangeDO.remoteServer(), null, tokenResponse.getAccess_token(), null, Long.valueOf(tokenResponse.getExpires_in()));
         return new AuthorizationResultDO(AuthResult.AUTHORIZED, resourceAccessToken);
+    }
+
+    /**
+     * Token exchange path: Okta id_token → Athenz id_token via ZTS (same builder as user code).
+     * Uses getJAGToken which posts token-exchange request; ZTS returns AccessTokenResponse with id_token.
+     */
+    private AuthorizationResultDO getAthenzIdTokenViaZts(TokenExchangeDO tokenExchangeDO) {
+        log.info("getAccessTokenFromResourceAuthorizationServer: token exchange for Athenz id_token");
+        OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder
+                .newBuilder(OAuthTokenRequestBuilder.OAUTH_GRANT_TOKEN_EXCHANGE)
+                .requestedTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_ID)
+                .audience(athenzTokenExchangeConfig.audience())
+                .roleNames(tokenExchangeDO.scopes())
+                .subjectTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_ID)
+                .subjectToken(tokenExchangeDO.tokenWrapper().idToken())
+                .openIdIssuer(true);
+
+        ZTSClient ztsClient = ztsClientProducer.getZTSClient();
+        AccessTokenResponse tokenResponse;
+        try {
+            tokenResponse = ztsClient.getAccessToken(builder, true);
+        } catch (ZTSClientException e) {
+            throw mapZtsException(e);
+        }
+        String idTokenValue = tokenResponse.getId_token();
+        if (idTokenValue == null || idTokenValue.isBlank()) {
+            log.warn("Token exchange for id_token: ZTS response had no id_token");
+            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+        }
+        Long expiresIn = tokenResponse.getExpires_in() != null ? tokenResponse.getExpires_in().longValue() : 3600L;
+        TokenWrapper idToken = new TokenWrapper(
+                tokenExchangeDO.tokenWrapper().key(),
+                tokenExchangeDO.remoteServer(),
+                idTokenValue,
+                null,
+                null,
+                expiresIn);
+        return new AuthorizationResultDO(AuthResult.AUTHORIZED, idToken);
     }
 
     @Override
     public AuthorizationResultDO getAccessTokenFromResourceAuthorizationServerWithClientCredentials(TokenExchangeDO tokenExchangeDO) {
         OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder.newBuilder("client_credentials");
         builder.openIdIssuer(true).expiryTime(3600L).roleNames(tokenExchangeDO.scopes()).domainName(tokenExchangeDO.namespace());
-        AccessTokenResponse tokenResponse = ztsClient.getAccessToken(builder, true);
+        ZTSClient ztsClient = ztsClientProducer.getZTSClient();
+        AccessTokenResponse tokenResponse;
+        try {
+            tokenResponse = ztsClient.getAccessToken(builder, true);
+        } catch (ZTSClientException e) {
+            throw mapZtsException(e);
+        }
         TokenWrapper resourceAccessToken = new TokenWrapper(tokenExchangeDO.tokenWrapper().key(), tokenExchangeDO.remoteServer(), null, tokenResponse.getAccess_token(), null, Long.valueOf(tokenResponse.getExpires_in()));
         return new AuthorizationResultDO(AuthResult.AUTHORIZED, resourceAccessToken);
     }
@@ -83,5 +152,19 @@ public class TokenExchangeServiceZTSImpl implements TokenExchangeService {
     public TokenWrapper refreshWithUpstreamToken(String upstreamRefreshToken) {
         // ZTS is the Athenz token service (authorization server), not an upstream IDP that issues refresh tokens in this flow.
         return null;
+    }
+
+    private WebApplicationException mapZtsException(ZTSClientException e) {
+        String description = e.getMessage();
+        if (description == null || description.isBlank()) {
+            description = e.toString();
+        }
+        log.warn("ZTS client error: {}", description, e);
+        return new WebApplicationException(
+                Response.status(Response.Status.UNAUTHORIZED)
+                        .entity(OAuth2ErrorResponse.of(
+                                OAuth2ErrorResponse.ErrorCode.INVALID_GRANT,
+                                description))
+                        .build());
     }
 }

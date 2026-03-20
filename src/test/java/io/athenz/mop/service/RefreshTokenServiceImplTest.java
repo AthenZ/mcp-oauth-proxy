@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.athenz.mop.service.impl;
+package io.athenz.mop.service;
 
 import io.athenz.mop.model.RefreshTokenRecord;
 import io.athenz.mop.model.RefreshTokenValidationResult;
@@ -44,6 +44,8 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class RefreshTokenServiceImplTest {
+
+    private static final String OKTA_PID_USER1 = AudienceConstants.PROVIDER_OKTA + "#user1";
 
     @Mock
     DynamoDbClient dynamoDbClient;
@@ -128,10 +130,10 @@ class RefreshTokenServiceImplTest {
         long pastExpiry = now - 3600;
         Map<String, AttributeValue> item = Map.of(
                 RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build(),
-                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#user1").build(),
+                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(OKTA_PID_USER1).build(),
                 RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build(),
                 RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("client1").build(),
-                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("okta").build(),
+                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build(),
                 RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build(),
                 RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), AttributeValue.builder().s("f1").build(),
                 RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(pastExpiry)).build(),
@@ -159,10 +161,10 @@ class RefreshTokenServiceImplTest {
         long now = System.currentTimeMillis() / 1000;
         Map<String, AttributeValue> item = Map.of(
                 RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build(),
-                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#user1").build(),
+                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(OKTA_PID_USER1).build(),
                 RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build(),
                 RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("client1").build(),
-                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("okta").build(),
+                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build(),
                 RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build(),
                 RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), AttributeValue.builder().s("f1").build(),
                 RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build(),
@@ -175,7 +177,7 @@ class RefreshTokenServiceImplTest {
         assertEquals(RefreshTokenValidationResult.Status.ACTIVE, result.status());
         assertNotNull(result.record());
         assertEquals("user1", result.record().userId());
-        assertEquals("okta", result.record().provider());
+        assertEquals(AudienceConstants.PROVIDER_OKTA, result.record().provider());
     }
 
     @Test
@@ -184,10 +186,10 @@ class RefreshTokenServiceImplTest {
         long now = System.currentTimeMillis() / 1000;
         Map<String, AttributeValue> item = Map.of(
                 RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build(),
-                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#user1").build(),
+                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(OKTA_PID_USER1).build(),
                 RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build(),
                 RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("other-client").build(),
-                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("okta").build(),
+                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build(),
                 RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build(),
                 RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), AttributeValue.builder().s("f1").build(),
                 RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build(),
@@ -206,10 +208,10 @@ class RefreshTokenServiceImplTest {
         long now = System.currentTimeMillis() / 1000;
         Map<String, AttributeValue> item = new java.util.HashMap<>(Map.of(
                 RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build(),
-                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#user1").build(),
+                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(OKTA_PID_USER1).build(),
                 RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build(),
                 RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("client1").build(),
-                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("okta").build(),
+                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build(),
                 RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ROTATED).build(),
                 RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), AttributeValue.builder().s("f1").build(),
                 RefreshTableAttribute.REPLACED_BY.attr(), AttributeValue.builder().s("id2").build(),
@@ -231,10 +233,10 @@ class RefreshTokenServiceImplTest {
         long now = System.currentTimeMillis() / 1000;
         Map<String, AttributeValue> item = Map.of(
                 RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build(),
-                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#user1").build(),
+                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(OKTA_PID_USER1).build(),
                 RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build(),
                 RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("client1").build(),
-                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("okta").build(),
+                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build(),
                 RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_REVOKED).build(),
                 RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), AttributeValue.builder().s("f1").build(),
                 RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build(),
@@ -253,10 +255,10 @@ class RefreshTokenServiceImplTest {
         long now = System.currentTimeMillis() / 1000;
         Map<String, AttributeValue> activeItem = new java.util.HashMap<>(Map.of(
                 RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build(),
-                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#user1").build(),
+                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(OKTA_PID_USER1).build(),
                 RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build(),
                 RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("client1").build(),
-                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("okta").build(),
+                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build(),
                 RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build(),
                 RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), AttributeValue.builder().s("f1").build(),
                 RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build(),
@@ -277,12 +279,12 @@ class RefreshTokenServiceImplTest {
 
     @Test
     void getUpstreamRefreshToken_returnsNullWhenUserIdNull() {
-        assertNull(service.getUpstreamRefreshToken(null, "okta"));
+        assertNull(service.getUpstreamRefreshToken(null, AudienceConstants.PROVIDER_OKTA));
     }
 
     @Test
     void getUpstreamRefreshToken_returnsNullWhenUserIdEmpty() {
-        assertNull(service.getUpstreamRefreshToken("", "okta"));
+        assertNull(service.getUpstreamRefreshToken("", AudienceConstants.PROVIDER_OKTA));
     }
 
     @Test
@@ -299,7 +301,7 @@ class RefreshTokenServiceImplTest {
     void getUpstreamRefreshToken_returnsNullWhenNoItems() {
         when(dynamoDbClient.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of()).build());
-        assertNull(service.getUpstreamRefreshToken("user1", "okta"));
+        assertNull(service.getUpstreamRefreshToken("user1", AudienceConstants.PROVIDER_OKTA));
     }
 
     @Test
@@ -307,10 +309,10 @@ class RefreshTokenServiceImplTest {
         long now = System.currentTimeMillis() / 1000;
         Map<String, AttributeValue> item = new HashMap<>();
         item.put(RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build());
-        item.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#user1").build());
+        item.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(OKTA_PID_USER1).build());
         item.put(RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build());
         item.put(RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("c1").build());
-        item.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("okta").build());
+        item.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build());
         item.put(RefreshTableAttribute.PROVIDER_SUBJECT.attr(), AttributeValue.builder().s("sub1").build());
         item.put(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(), AttributeValue.builder().s("enc-upstream-1").build());
         item.put(RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build());
@@ -323,44 +325,38 @@ class RefreshTokenServiceImplTest {
         item.put(RefreshTableAttribute.TTL.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build());
         when(dynamoDbClient.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of(item)).build());
-        String result = service.getUpstreamRefreshToken("user1", "okta");
+        String result = service.getUpstreamRefreshToken("user1", AudienceConstants.PROVIDER_OKTA);
         assertEquals("enc-upstream-1", result);
     }
 
     @Test
     void updateUpstreamRefreshForToken_byId_noOpWhenRefreshTokenIdNull() {
         service.updateUpstreamRefreshForToken(null, "pu", "newUpstream");
-        // no exception, no dynamo call for putItem with null id
     }
 
     @Test
     void updateUpstreamRefreshForToken_byId_noOpWhenNewUpstreamEmpty() {
-        service.updateUpstreamRefreshForToken("id1", "okta#user1", "");
-        // no putItem when newUpstream is empty
+        service.updateUpstreamRefreshForToken("id1", OKTA_PID_USER1, "");
     }
 
     @Test
     void handleReplay_noOpWhenTokenNull() {
         service.handleReplay(null);
-        // no exception
     }
 
     @Test
     void handleReplay_noOpWhenTokenEmpty() {
         service.handleReplay("");
-        // no exception
     }
 
     @Test
     void revokeFamily_noOpWhenTokenFamilyIdNull() {
         service.revokeFamily(null);
-        // no exception
     }
 
     @Test
     void revokeFamily_noOpWhenTokenFamilyIdEmpty() {
         service.revokeFamily("");
-        // no exception
     }
 
     @Test
@@ -368,10 +364,10 @@ class RefreshTokenServiceImplTest {
         long now = System.currentTimeMillis() / 1000;
         Map<String, AttributeValue> item = new HashMap<>();
         item.put(RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build());
-        item.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#user1").build());
+        item.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(OKTA_PID_USER1).build());
         item.put(RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build());
         item.put(RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("c1").build());
-        item.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("okta").build());
+        item.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build());
         item.put(RefreshTableAttribute.PROVIDER_SUBJECT.attr(), AttributeValue.builder().s("sub1").build());
         item.put(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(), AttributeValue.builder().s("enc").build());
         item.put(RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build());
@@ -387,9 +383,9 @@ class RefreshTokenServiceImplTest {
         RefreshTokenRecord record = service.getByPrimaryKey("id1", "okta#user1");
         assertNotNull(record);
         assertEquals("id1", record.refreshTokenId());
-        assertEquals("okta#user1", record.providerUserId());
+        assertEquals(OKTA_PID_USER1, record.providerUserId());
         assertEquals("user1", record.userId());
-        assertEquals("okta", record.provider());
+        assertEquals(AudienceConstants.PROVIDER_OKTA, record.provider());
         assertEquals("enc", record.encryptedUpstreamRefreshToken());
         assertEquals(RefreshTableConstants.STATUS_ACTIVE, record.status());
         assertEquals(12345L, record.rotatedAt());

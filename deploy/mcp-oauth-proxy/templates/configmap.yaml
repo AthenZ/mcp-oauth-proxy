@@ -190,16 +190,49 @@ data:
         table-name: {{ .Values.application.refreshToken.tableName | quote }}
         expiry-seconds: {{ .Values.application.refreshToken.expirySeconds }}
         ttl-buffer-days: {{ .Values.application.refreshToken.ttlBufferDays }}
+      refresh-lock:
+        table-name: {{ .Values.application.refreshLock.tableName | quote }}
+        ttl-seconds: {{ .Values.application.refreshLock.ttlSeconds }}
+        {{- if .Values.application.refreshLock.instanceId }}
+        instance-id: {{ .Values.application.refreshLock.instanceId | quote }}
+        {{- end }}
+        max-retries: {{ .Values.application.refreshLock.maxRetries }}
+        initial-backoff-ms: {{ .Values.application.refreshLock.initialBackoffMs }}
+      upstream-token:
+        table-name: {{ .Values.application.upstreamToken.tableName | quote }}
+        expiry-seconds: {{ .Values.application.upstreamToken.expirySeconds }}
+        ttl-buffer-days: {{ .Values.application.upstreamToken.ttlBufferDays }}
       userinfo:
-        retry:
-          delay-ms: {{ .Values.application.userinfo.retry.delayMs }}
-          max-attempts: {{ .Values.application.userinfo.retry.maxAttempts }}
+        cross-region-fallback:
+          enabled: {{ .Values.application.userinfo.crossRegionFallback.enabled | default false }}
+          {{- if .Values.application.userinfo.crossRegionFallback.enabled }}
+          region: {{ .Values.application.userinfo.crossRegionFallback.region | quote }}
+          table-name: {{ .Values.application.userinfo.crossRegionFallback.tableName | quote }}
+          kms:
+            key-id: {{ .Values.application.userinfo.crossRegionFallback.kmsKeyId | quote }}
+          sts:
+            role-arn: {{ .Values.application.userinfo.crossRegionFallback.stsRoleArn | quote }}
+          {{- end }}
       secret:
         k8s:
           name: {{ .Values.application.k8s.secretName | quote }}
           namespace: {{ .Values.application.k8s.namespace | quote }}
       token-exchange:
         idp: {{ .Values.oidc.provider }}
+        athenz-token-exchange:
+          audience: {{ .Values.application.tokenExchange.athenzTokenExchange.audience | default "sys.auth.gcp" | quote }}
+        google-workforce:
+          sts-token-url: {{ .Values.application.tokenExchange.googleWorkforce.stsTokenUrl | quote }}
+          audience: {{ .Values.application.tokenExchange.googleWorkforce.audience | quote }}
+          scopes:
+            google-monitoring:
+            {{- range .Values.application.tokenExchange.googleWorkforce.scopes.googleMonitoring }}
+              - {{ . | quote }}
+            {{- end }}
+            google-logging:
+            {{- range .Values.application.tokenExchange.googleWorkforce.scopes.googleLogging }}
+              - {{ . | quote }}
+            {{- end }}
         oktaServiceTypeApp:
           auth-server-url: {{ .Values.application.oktaServiceTypeApp.endpoint | quote }}
           client-id: {{ .Values.application.oktaServiceTypeApp.clientId | quote }}

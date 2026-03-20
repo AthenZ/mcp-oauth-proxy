@@ -16,7 +16,6 @@
 package io.athenz.mop.store.impl.aws;
 
 import io.athenz.mop.model.TokenWrapper;
-import io.athenz.mop.store.impl.aws.TokenTableAttribute;
 import io.athenz.mop.util.JwtUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

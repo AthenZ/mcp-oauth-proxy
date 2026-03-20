@@ -15,8 +15,11 @@
  */
 package io.athenz.mop.service;
 
+import io.athenz.mop.model.RefreshTokenLockKey;
 import io.athenz.mop.model.RefreshTokenRotateResult;
 import io.athenz.mop.model.RefreshTokenValidationResult;
+
+import java.util.Optional;
 
 /**
  * Service for MOP-minted opaque refresh tokens: generation, hashing, storage,
@@ -48,6 +51,13 @@ public interface RefreshTokenService {
      */
     String store(String userId, String clientId, String provider, String providerSubject,
                  String upstreamRefreshToken);
+
+    /**
+     * Look up (userId, provider) for the given refresh token and clientId for distributed lock key.
+     * Used to acquire the per-(userId, provider) lock before full validation.
+     * Returns empty if token not found or clientId does not match.
+     */
+    Optional<RefreshTokenLockKey> lookupUserIdAndProviderForLock(String refreshToken, String clientId);
 
     /**
      * Validate refresh token and resolve replay/active.
@@ -106,4 +116,15 @@ public interface RefreshTokenService {
      * @param newUpstreamRefresh the new upstream refresh token from the IDP (only updated if non-null and non-empty)
      */
     void updateUpstreamRefreshForToken(String refreshTokenId, String providerUserId, String newUpstreamRefresh);
+
+    /**
+     * Update the upstream (IDP) refresh token for all rows with the given (user_id, provider).
+     * Used after Okta refresh when the IDP returns a new refresh token: every MOP refresh token
+     * for this user+provider (e.g. Glean and Google Monitoring clients) must see the same upstream.
+     *
+     * @param userId             internal user id
+     * @param provider           upstream IDP (e.g. okta)
+     * @param newUpstreamRefresh the new upstream refresh token from the IDP (only applied if non-null and non-empty)
+     */
+    void updateUpstreamRefreshForAllRowsWithUserAndProvider(String userId, String provider, String newUpstreamRefresh);
 }

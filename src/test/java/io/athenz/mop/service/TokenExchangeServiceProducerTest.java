@@ -82,7 +82,7 @@ class TokenExchangeServiceProducerTest {
     @Test
     void testGetTokenExchangeServiceImplementation_Okta() {
         // When
-        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta");
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA);
 
         // Then
         assertNotNull(result);
@@ -199,8 +199,8 @@ class TokenExchangeServiceProducerTest {
     @Test
     void testGetTokenExchangeServiceImplementation_MultipleCallsSameType() {
         // When - Call multiple times with the same type
-        TokenExchangeService result1 = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta");
-        TokenExchangeService result2 = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta");
+        TokenExchangeService result1 = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA);
+        TokenExchangeService result2 = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA);
 
         // Then - Should return the same instance each time
         assertSame(result1, result2);
@@ -214,7 +214,7 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService atlassian = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("atlassian");
         TokenExchangeService github = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("github");
         TokenExchangeService google = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google");
-        TokenExchangeService okta = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta");
+        TokenExchangeService okta = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA);
         TokenExchangeService athenz = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("athenz");
 
         // Then - All should be different instances

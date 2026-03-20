@@ -108,10 +108,23 @@ application:
     tableName: mcp-oauth-proxy-refresh-tokens
     expirySeconds: 7776000
     ttlBufferDays: 7
+  refreshLock:
+    tableName: mcp-oauth-proxy-refresh-locks
+    ttlSeconds: 8
+    instanceId: ""
+    maxRetries: 5
+    initialBackoffMs: 50
+  upstreamToken:
+    tableName: mcp-oauth-proxy-upstream-tokens
+    expirySeconds: 7776000
+    ttlBufferDays: 7
   userinfo:
-    retry:
-      delayMs: 200
-      maxAttempts: 10
+    crossRegionFallback:
+      enabled: false
+      region: ""
+      tableName: ""
+      kmsKeyId: ""
+      stsRoleArn: ""
   aws:
     dynamoDbTable:
     kmsKeyId:

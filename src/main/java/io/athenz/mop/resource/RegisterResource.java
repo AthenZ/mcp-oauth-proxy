@@ -54,7 +54,7 @@ public class RegisterResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public Response register(@Valid RegisterRequest request) {
-        log.info("register call for client: {} and token subject: {} ", request.clientName(), jwt.getSubject());
+        log.info("register call for client: {} and token subject: {}", request.clientName(), jwt.getSubject());
         if (request.redirectUris() == null || request.redirectUris().isEmpty()) {
             return Response.status(Response.Status.BAD_REQUEST).entity("redirect_uris is required").build();
         }

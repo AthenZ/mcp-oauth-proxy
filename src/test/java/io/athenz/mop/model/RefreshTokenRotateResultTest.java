@@ -15,6 +15,7 @@
  */
 package io.athenz.mop.model;
 
+import io.athenz.mop.service.AudienceConstants;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -26,13 +27,13 @@ class RefreshTokenRotateResultTest {
         RefreshTokenRotateResult result = new RefreshTokenRotateResult(
                 "rt_newRawToken",
                 "new-refresh-token-id",
-                "okta#user1"
+                AudienceConstants.PROVIDER_OKTA + "#user1"
         );
 
         assertNotNull(result);
         assertEquals("rt_newRawToken", result.rawToken());
         assertEquals("new-refresh-token-id", result.refreshTokenId());
-        assertEquals("okta#user1", result.providerUserId());
+        assertEquals(AudienceConstants.PROVIDER_OKTA + "#user1", result.providerUserId());
     }
 
     @Test

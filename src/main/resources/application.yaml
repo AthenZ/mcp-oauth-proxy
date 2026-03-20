@@ -153,10 +153,25 @@ server:
     table-name: ${MOP_REFRESH_TOKEN_TABLE_NAME:mcp-oauth-proxy-refresh-tokens}
     expiry-seconds: ${MOP_REFRESH_EXPIRY_SECONDS:7776000}
     ttl-buffer-days: ${MOP_REFRESH_TTL_BUFFER_DAYS:7}
+  refresh-lock:
+    table-name: ${MOP_REFRESH_LOCK_TABLE_NAME:mcp-oauth-proxy-refresh-locks}
+    ttl-seconds: ${MOP_REFRESH_LOCK_TTL_SECONDS:8}
+    instance-id: ${HOSTNAME:${MOP_REFRESH_LOCK_INSTANCE_ID:default}}
+    max-retries: ${MOP_REFRESH_LOCK_MAX_RETRIES:5}
+    initial-backoff-ms: ${MOP_REFRESH_LOCK_INITIAL_BACKOFF_MS:50}
+  upstream-token:
+    table-name: ${MOP_UPSTREAM_TOKEN_TABLE_NAME:mcp-oauth-proxy-upstream-tokens}
+    expiry-seconds: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS:7776000}
+    ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:7}
   userinfo:
-    retry:
-      delay-ms: ${MOP_USERINFO_RETRY_DELAY_MS:200}
-      max-attempts: ${MOP_USERINFO_RETRY_MAX_ATTEMPTS:10}
+    cross-region-fallback:
+      enabled: ${MOP_USERINFO_CROSS_REGION_FALLBACK_ENABLED:false}
+      region: ${MOP_USERINFO_CROSS_REGION_FALLBACK_REGION:}
+      table-name: ${MOP_USERINFO_CROSS_REGION_FALLBACK_TABLE_NAME:}
+      kms:
+        key-id: ${MOP_USERINFO_CROSS_REGION_FALLBACK_KMS_KEY_ID:}
+      sts:
+        role-arn: ${MOP_USERINFO_CROSS_REGION_FALLBACK_STS_ROLE_ARN:}
   secret:
     k8s:
       name:
