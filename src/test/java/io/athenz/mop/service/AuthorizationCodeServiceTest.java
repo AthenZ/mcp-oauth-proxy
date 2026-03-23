@@ -44,7 +44,7 @@ class AuthorizationCodeServiceTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        authorizationCodeService.providerDefault = "okta";
+        authorizationCodeService.providerDefault = AudienceConstants.PROVIDER_OKTA;
     }
 
     @Test
@@ -72,7 +72,7 @@ class AuthorizationCodeServiceTest {
 
         // Verify that the code was stored
         ArgumentCaptor<AuthorizationCode> authCodeCaptor = ArgumentCaptor.forClass(AuthorizationCode.class);
-        verify(authCodeStore).storeAuthCode(eq(code), eq("okta"), authCodeCaptor.capture());
+        verify(authCodeStore).storeAuthCode(eq(code), eq(AudienceConstants.PROVIDER_OKTA), authCodeCaptor.capture());
 
         AuthorizationCode capturedAuthCode = authCodeCaptor.getValue();
         assertEquals(code, capturedAuthCode.getCode());
@@ -112,7 +112,7 @@ class AuthorizationCodeServiceTest {
 
         // Verify that default scope was set
         ArgumentCaptor<AuthorizationCode> authCodeCaptor = ArgumentCaptor.forClass(AuthorizationCode.class);
-        verify(authCodeStore).storeAuthCode(eq(code), eq("okta"), authCodeCaptor.capture());
+        verify(authCodeStore).storeAuthCode(eq(code), eq(AudienceConstants.PROVIDER_OKTA), authCodeCaptor.capture());
 
         AuthorizationCode capturedAuthCode = authCodeCaptor.getValue();
         assertEquals("default", capturedAuthCode.getScope());
@@ -141,7 +141,7 @@ class AuthorizationCodeServiceTest {
 
         // Verify that default scope was set
         ArgumentCaptor<AuthorizationCode> authCodeCaptor = ArgumentCaptor.forClass(AuthorizationCode.class);
-        verify(authCodeStore).storeAuthCode(eq(code), eq("okta"), authCodeCaptor.capture());
+        verify(authCodeStore).storeAuthCode(eq(code), eq(AudienceConstants.PROVIDER_OKTA), authCodeCaptor.capture());
 
         AuthorizationCode capturedAuthCode = authCodeCaptor.getValue();
         assertEquals("default", capturedAuthCode.getScope());
@@ -194,7 +194,7 @@ class AuthorizationCodeServiceTest {
                 codeChallenge, "S256", Instant.now().plusSeconds(600), "test-state"
         );
 
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(authCode);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(authCode);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -209,7 +209,7 @@ class AuthorizationCodeServiceTest {
         assertTrue(result.isUsed());
 
         // Verify code was deleted from store
-        verify(authCodeStore).deleteAuthCode(code, "okta");
+        verify(authCodeStore).deleteAuthCode(code, AudienceConstants.PROVIDER_OKTA);
     }
 
     @Test
@@ -240,7 +240,7 @@ class AuthorizationCodeServiceTest {
     void testValidateAndConsume_CodeNotFound() {
         // Given
         String code = "non-existent-code";
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(null);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(null);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -249,7 +249,7 @@ class AuthorizationCodeServiceTest {
 
         // Then
         assertNull(result);
-        verify(authCodeStore).getAuthCode(code, "okta");
+        verify(authCodeStore).getAuthCode(code, AudienceConstants.PROVIDER_OKTA);
         verify(authCodeStore, never()).deleteAuthCode(anyString(), anyString());
     }
 
@@ -266,7 +266,7 @@ class AuthorizationCodeServiceTest {
         );
         authCode.markAsUsed();
 
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(authCode);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(authCode);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -275,7 +275,7 @@ class AuthorizationCodeServiceTest {
 
         // Then
         assertNull(result);
-        verify(authCodeStore).deleteAuthCode(code, "okta");
+        verify(authCodeStore).deleteAuthCode(code, AudienceConstants.PROVIDER_OKTA);
     }
 
     @Test
@@ -290,7 +290,7 @@ class AuthorizationCodeServiceTest {
                 "challenge", "S256", Instant.now().minusSeconds(600), "state"
         );
 
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(authCode);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(authCode);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -299,7 +299,7 @@ class AuthorizationCodeServiceTest {
 
         // Then
         assertNull(result);
-        verify(authCodeStore).deleteAuthCode(code, "okta");
+        verify(authCodeStore).deleteAuthCode(code, AudienceConstants.PROVIDER_OKTA);
     }
 
     @Test
@@ -320,7 +320,7 @@ class AuthorizationCodeServiceTest {
                 codeChallenge, "S256", Instant.now().plusSeconds(600), "state"
         );
 
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(authCode);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(authCode);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -350,7 +350,7 @@ class AuthorizationCodeServiceTest {
                 codeChallenge, "S256", Instant.now().plusSeconds(600), "state"
         );
 
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(authCode);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(authCode);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -376,7 +376,7 @@ class AuthorizationCodeServiceTest {
                 codeChallenge, "S256", Instant.now().plusSeconds(600), "state"
         );
 
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(authCode);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(authCode);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -401,7 +401,7 @@ class AuthorizationCodeServiceTest {
                 null, "S256", Instant.now().plusSeconds(600), "state"
         );
 
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(authCode);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(authCode);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -430,7 +430,7 @@ class AuthorizationCodeServiceTest {
                 codeChallenge, "S256", Instant.now().plusSeconds(600), "state"
         );
 
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(authCode);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(authCode);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -459,7 +459,7 @@ class AuthorizationCodeServiceTest {
                 codeChallenge, "plain", Instant.now().plusSeconds(600), "state"
         );
 
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(authCode);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(authCode);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -475,7 +475,7 @@ class AuthorizationCodeServiceTest {
     void testValidateAndConsume_ShortCode() {
         // Given
         String code = "short";
-        when(authCodeStore.getAuthCode(code, "okta")).thenReturn(null);
+        when(authCodeStore.getAuthCode(code, AudienceConstants.PROVIDER_OKTA)).thenReturn(null);
 
         // When
         AuthorizationCode result = authorizationCodeService.validateAndConsume(
@@ -484,6 +484,6 @@ class AuthorizationCodeServiceTest {
 
         // Then
         assertNull(result);
-        verify(authCodeStore).getAuthCode(code, "okta");
+        verify(authCodeStore).getAuthCode(code, AudienceConstants.PROVIDER_OKTA);
     }
 }

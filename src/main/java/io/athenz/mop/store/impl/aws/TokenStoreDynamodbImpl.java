@@ -97,28 +97,18 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
 
     @Override
     public TokenWrapper getUserToken(String user, String provider) {
+        return getUserToken(dynamoDbClient, tableName, user, provider);
+    }
 
-        final GetItemResponse getResponse = queryTable(user, provider);
+    /**
+     * Look up user token by partition and sort key using the given client and table.
+     * Used by the primary store and by cross-region fallback with an alternate client/table.
+     */
+    public TokenWrapper getUserToken(DynamoDbClient client, String table, String user, String provider) {
+        final GetItemResponse getResponse = queryTable(client, table, user, provider);
         log.info("getUserToken: key={}, provider={} HTTPStatusCode={}", user, provider, getResponse.sdkHttpResponse().statusCode());
-
-        final Map<String, AttributeValue> returnedItem = getResponse.item();
-        TokenWrapper token = null;
-        if (returnedItem != null && !returnedItem.isEmpty()) {
-            String idToken = null;
-            if (returnedItem.containsKey(TokenTableAttribute.ID_TOKEN.attr())) {
-                idToken = returnedItem.get(TokenTableAttribute.ID_TOKEN.attr()).s();
-            }
-
-            String refreshToken = null;
-            if (returnedItem.containsKey(TokenTableAttribute.REFRESH_TOKEN.attr())) {
-                refreshToken = returnedItem.get(TokenTableAttribute.REFRESH_TOKEN.attr()).s();
-            }
-
-            token = new TokenWrapper(user, provider,
-                    idToken,
-                    returnedItem.get(TokenTableAttribute.ACCESS_TOKEN.attr()).s(),
-                    refreshToken,
-                    Long.parseLong(returnedItem.get(TokenTableAttribute.TTL.attr()).n()));
+        TokenWrapper token = mapItemToTokenWrapper(getResponse.item(), user, provider);
+        if (token != null) {
             log.info("fetched token for lookupKey: {} user: {}, provider: {} with ttl: {}", user, user, provider, token.ttl());
         }
         return token;
@@ -188,25 +178,29 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
     }
 
     private GetItemResponse queryTable(String code, String provider) {
-        final HashMap<String, AttributeValue> codeKey = new HashMap<>();
-        codeKey.put(TokenTableAttribute.USER.attr(), AttributeValue.builder().s(code).build());
-        codeKey.put(TokenTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(provider).build());
+        return queryTable(dynamoDbClient, tableName, code, provider);
+    }
 
-        final GetItemRequest getRequest = GetItemRequest
-                .builder()
-                .key(codeKey)
-                .tableName(tableName)
-                .build();
-
-        return dynamoDbClient.getItem(getRequest);
+    private GetItemResponse queryTable(DynamoDbClient client, String table, String partitionKey, String sortKey) {
+        final HashMap<String, AttributeValue> key = new HashMap<>();
+        key.put(TokenTableAttribute.USER.attr(), AttributeValue.builder().s(partitionKey).build());
+        key.put(TokenTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(sortKey).build());
+        return client.getItem(GetItemRequest.builder().key(key).tableName(table).build());
     }
 
     @Override
     public TokenWrapper getUserTokenByAccessTokenHash(String accessTokenHash) {
-        log.info("Looking up token by access token hash");
-        // Query GSI using access_token_hash
+        return getUserTokenByAccessTokenHash(dynamoDbClient, tableName, accessTokenHash);
+    }
+
+    /**
+     * Look up token by access token hash (GSI) using the given client and table.
+     * Used by the primary store and by cross-region fallback with an alternate client/table.
+     */
+    public TokenWrapper getUserTokenByAccessTokenHash(DynamoDbClient client, String table, String accessTokenHash) {
+        log.info("Looking up user token by bearer credential (hash not logged)");
         QueryRequest queryRequest = QueryRequest.builder()
-                .tableName(tableName)
+                .tableName(table)
                 .indexName("access-token-hash-index")
                 .keyConditionExpression("access_token_hash = :hash")
                 .expressionAttributeValues(Map.of(
@@ -214,34 +208,37 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
                 ))
                 .build();
 
-        QueryResponse queryResponse = dynamoDbClient.query(queryRequest);
-        log.info("getUserTokenByAccessTokenHash: hash={} HTTPStatusCode={}", accessTokenHash.substring(0, Math.min(8, accessTokenHash.length())), queryResponse.sdkHttpResponse().statusCode());
+        QueryResponse queryResponse = client.query(queryRequest);
+        log.debug("getUserTokenByAccessTokenHash: HTTPStatusCode={} (access_token_hash redacted)",
+                queryResponse.sdkHttpResponse().statusCode());
         if (queryResponse.items() != null && !queryResponse.items().isEmpty()) {
             Map<String, AttributeValue> item = queryResponse.items().get(0);
             String user = item.get(TokenTableAttribute.USER.attr()).s();
             String provider = item.get(TokenTableAttribute.PROVIDER.attr()).s();
-            String idToken = null;
-            if (item.containsKey(TokenTableAttribute.ID_TOKEN.attr())) {
-                idToken = item.get(TokenTableAttribute.ID_TOKEN.attr()).s();
+            TokenWrapper token = mapItemToTokenWrapper(item, user, provider);
+            if (token != null) {
+                log.info("Found token for user: {}, provider: {} with ttl: {}", user, provider, token.ttl());
             }
-
-            String refreshToken = null;
-            if (item.containsKey(TokenTableAttribute.REFRESH_TOKEN.attr())) {
-                refreshToken = item.get(TokenTableAttribute.REFRESH_TOKEN.attr()).s();
-            }
-
-            TokenWrapper token = new TokenWrapper(
-                    user,
-                    provider,
-                    idToken,
-                    item.get(TokenTableAttribute.ACCESS_TOKEN.attr()).s(),
-                    refreshToken,
-                    Long.parseLong(item.get(TokenTableAttribute.TTL.attr()).n())
-            );
-            log.info("Found token for user: {}, provider: {} with ttl: {}", user, provider, token.ttl());
             return token;
         }
-        log.info("No token found for access token hash");
+        log.info("No token found for bearer credential lookup");
         return null;
+    }
+
+    private static TokenWrapper mapItemToTokenWrapper(Map<String, AttributeValue> item, String user, String provider) {
+        if (item == null || item.isEmpty()) {
+            return null;
+        }
+        String idToken = item.containsKey(TokenTableAttribute.ID_TOKEN.attr())
+                ? item.get(TokenTableAttribute.ID_TOKEN.attr()).s()
+                : null;
+        String refreshToken = item.containsKey(TokenTableAttribute.REFRESH_TOKEN.attr())
+                ? item.get(TokenTableAttribute.REFRESH_TOKEN.attr()).s()
+                : null;
+        return new TokenWrapper(user, provider,
+                idToken,
+                item.get(TokenTableAttribute.ACCESS_TOKEN.attr()).s(),
+                refreshToken,
+                Long.parseLong(item.get(TokenTableAttribute.TTL.attr()).n()));
     }
 }

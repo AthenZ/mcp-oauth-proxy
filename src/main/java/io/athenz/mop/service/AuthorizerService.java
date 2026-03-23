@@ -34,7 +34,6 @@ public class AuthorizerService {
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
     private static final String TOKEN_TYPE = "Bearer";
-    private static final String PROVIDER_GLEAN = "glean";
     /** Grace period (seconds) added to token expiry when storing in the token store so the record is not evicted right away. */
     private static final long TOKEN_STORE_TTL_GRACE_SECONDS = 300L; // 5 minutes
 
@@ -173,7 +172,7 @@ public class AuthorizerService {
 
             log.info("non token-exchange response: ttl: {}", atDO.token().ttl());
 
-            storeGleanTokenIfNeeded(resource, token, atDO.token());
+            storeExchangedTokenByAudienceIfNeeded(resource, token, atDO.token());
 
             tokenResponse = new TokenResponse(
                     atDO.token().accessToken(),
@@ -186,35 +185,41 @@ public class AuthorizerService {
     }
 
     /**
-     * Store Glean token in DynamoDB after successful token exchange.
-     * This method checks if the resource is Glean and stores the exchanged token
-     * with provider="glean" using the same subject/user from the Okta token.
+     * Store exchanged token in DynamoDB when the resource has an audience that uses a dedicated provider
+     * (Glean, Gcp Monitoring, Gcp Logging). Stores with provider = audience so /userinfo can resolve by token.
      *
      * @param resource The resource URI being accessed
      * @param oktaToken The original Okta token containing the user/subject
      * @param exchangedToken The token obtained from token exchange
      */
-    private void storeGleanTokenIfNeeded(String resource, TokenWrapper oktaToken, TokenWrapper exchangedToken) {
+    private void storeExchangedTokenByAudienceIfNeeded(String resource, TokenWrapper oktaToken, TokenWrapper exchangedToken) {
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
-        if (resourceMeta == null || resourceMeta.audience() == null || !PROVIDER_GLEAN.equals(resourceMeta.audience())) {
+        if (resourceMeta == null || resourceMeta.audience() == null) {
             return;
         }
-        log.info("Storing Glean token for user: {}", oktaToken.key());
+        String audience = resourceMeta.audience();
+        boolean storeByAudience = AudienceConstants.PROVIDER_GLEAN.equals(audience)
+                || AudienceConstants.PROVIDER_GOOGLE_MONITORING.equals(audience)
+                || AudienceConstants.PROVIDER_GOOGLE_LOGGING.equals(audience);
+        if (!storeByAudience) {
+            return;
+        }
+        log.info("Storing exchanged token for user: {} audience: {}", oktaToken.key(), audience);
 
         long nowSeconds = Instant.now().getEpochSecond();
-        long absoluteTtl = nowSeconds + exchangedToken.ttl() + TOKEN_STORE_TTL_GRACE_SECONDS;
+        long absoluteTtl = nowSeconds + (exchangedToken.ttl() != null ? exchangedToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
 
-        TokenWrapper gleanToken = new TokenWrapper(
+        TokenWrapper toStore = new TokenWrapper(
                 oktaToken.key(),
-                PROVIDER_GLEAN,
+                audience,
                 null,
                 exchangedToken.accessToken(),
                 null,
                 absoluteTtl
         );
 
-        tokenStore.storeUserToken(oktaToken.key(), PROVIDER_GLEAN, gleanToken);
-        log.info("Successfully stored Glean token for user: {} with ttl: {}", oktaToken.key(), gleanToken.ttl());
+        tokenStore.storeUserToken(oktaToken.key(), audience, toStore);
+        log.info("Successfully stored token for user: {} provider: {} with ttl: {}", oktaToken.key(), audience, toStore.ttl());
     }
 
     /**
@@ -233,9 +238,13 @@ public class AuthorizerService {
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
         String storeProvider;
         TokenWrapper toStore;
-        if (resourceMeta != null && resourceMeta.audience() != null && PROVIDER_GLEAN.equals(resourceMeta.audience())) {
-            storeProvider = PROVIDER_GLEAN;
-            long absoluteTtl = Instant.now().getEpochSecond() + returnedToken.ttl() + TOKEN_STORE_TTL_GRACE_SECONDS;
+        String audience = resourceMeta != null ? resourceMeta.audience() : null;
+        boolean storeByAudience = audience != null && (AudienceConstants.PROVIDER_GLEAN.equals(audience)
+                || AudienceConstants.PROVIDER_GOOGLE_MONITORING.equals(audience)
+                || AudienceConstants.PROVIDER_GOOGLE_LOGGING.equals(audience));
+        if (resourceMeta != null && storeByAudience) {
+            storeProvider = audience;
+            long absoluteTtl = Instant.now().getEpochSecond() + (returnedToken.ttl() != null ? returnedToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
             toStore = new TokenWrapper(
                     userId,
                     storeProvider,
@@ -244,7 +253,7 @@ public class AuthorizerService {
                     null,
                     absoluteTtl
             );
-            log.info("Storing exchanged Glean token for user: {} so /userinfo can resolve it", userId);
+            log.info("Storing exchanged token for subject: {} provider: {} so /userinfo can resolve it", userId, storeProvider);
         } else {
             storeProvider = provider;
             // returnedToken is the same as the token we already stored with grace in refreshUpstreamAndGetToken
@@ -256,7 +265,7 @@ public class AuthorizerService {
                     returnedToken.refreshToken(),
                     returnedToken.ttl()
             );
-            log.info("Storing returned token for user: {} provider: {} so /userinfo can resolve it", userId, storeProvider);
+            log.info("Storing returned token for subject: {} provider: {} so /userinfo can resolve it", userId, storeProvider);
         }
         tokenStore.storeUserToken(userId, storeProvider, toStore);
     }
@@ -283,7 +292,8 @@ public class AuthorizerService {
         TokenExchangeService exchangeService = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
         TokenWrapper newToken = exchangeService.refreshWithUpstreamToken(upstreamRefreshToken);
         if (newToken == null) {
-            log.warn("refreshUpstreamAndGetToken: upstream IDP refresh failed (refreshWithUpstreamToken returned null) for user {} provider {}", userId, provider);
+            log.warn("refreshUpstreamAndGetToken: upstream IDP refresh failed (refreshWithUpstreamToken returned null) for user {} provider {}",
+                    userId, provider);
             return null;
         }
         long nowSeconds = Instant.now().getEpochSecond();
@@ -326,6 +336,54 @@ public class AuthorizerService {
                 scopeStr
         );
         return new RefreshAndTokenResult(tokenResponse, newUpstreamRefresh);
+    }
+
+    /**
+     * After centralized Okta refresh, store Okta tokens and run resource token exchange (Glean, GCP, etc.).
+     * Does not return a new upstream refresh for per-row refresh table updates — upstream is only in the
+     * centralized store.
+     */
+    public RefreshAndTokenResult completeRefreshWithOktaTokens(String userId, String provider, String resource, OktaTokens oktaTokens) {
+        if (oktaTokens == null) {
+            return null;
+        }
+        long ttlSec = oktaTokens.expiresIn() > 0 ? oktaTokens.expiresIn() : 3600L;
+        long nowSeconds = Instant.now().getEpochSecond();
+        long absoluteTtl = nowSeconds + ttlSec + TOKEN_STORE_TTL_GRACE_SECONDS;
+        TokenWrapper toStore = new TokenWrapper(
+                userId,
+                provider,
+                oktaTokens.idToken(),
+                oktaTokens.accessToken(),
+                oktaTokens.refreshToken(),
+                absoluteTtl
+        );
+        tokenStore.storeUserToken(userId, provider, toStore);
+
+        ResourceMeta resourceMeta = configService.getResourceMeta(resource);
+        String scopeStr = resourceMeta != null ? resourceMeta.scopes().toString() : "";
+        TokenExchangeService accessTokenIssuer = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(
+                resourceMeta != null ? resourceMeta.authorizationServer() : provider);
+        TokenExchangeDO accessTokenRequestDO = new TokenExchangeDO(
+                resourceMeta != null ? resourceMeta.scopes() : null,
+                resource,
+                resourceMeta != null ? resourceMeta.domain() : null,
+                resourceMeta != null ? configService.getRemoteServerEndpoint(resourceMeta.authorizationServer()) : null,
+                toStore
+        );
+        AuthorizationResultDO atDO = accessTokenIssuer.getAccessTokenFromResourceAuthorizationServer(accessTokenRequestDO);
+        if (atDO == null || atDO.token() == null || atDO.authResult() != AuthResult.AUTHORIZED) {
+            log.warn("Token exchange after centralized Okta refresh failed for user {} resource {}", userId, resource);
+            return null;
+        }
+        storeRefreshedAccessToken(resource, userId, provider, toStore, atDO.token());
+        TokenResponse tokenResponse = new TokenResponse(
+                atDO.token().accessToken(),
+                TOKEN_TYPE,
+                atDO.token().ttl(),
+                scopeStr
+        );
+        return new RefreshAndTokenResult(tokenResponse, null);
     }
 
 }

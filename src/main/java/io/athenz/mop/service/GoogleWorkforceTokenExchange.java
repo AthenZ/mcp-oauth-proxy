@@ -1,0 +1,107 @@
+/*
+ * Copyright The Athenz Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.athenz.mop.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.athenz.mop.config.GoogleWorkforceTokenExchangeConfig;
+import io.athenz.mop.model.GcpExchangeTokenRequest;
+import io.athenz.mop.model.GcpExchangeTokenResponse;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import java.lang.invoke.MethodHandles;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Exchanges Athenz id_token for Google STS access token via Workforce Pools.
+ * STS only; no IAM Credentials API and no service account.
+ * Uses the same request/response shape as ZTS GcpTokenProvider.getExchangeToken().
+ */
+@ApplicationScoped
+public class GoogleWorkforceTokenExchange {
+
+    private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
+    private static final String GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange";
+    private static final String SUBJECT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt";
+    private static final String REQUESTED_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token";
+    private static final String DEFAULT_BILLIGN_PROJECT = "core-mcpworkspace-p";
+
+    @Inject
+    GoogleWorkforceTokenExchangeConfig config;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /**
+     * Exchange Athenz id_token for Google STS access token.
+     *
+     * @param athenzIdToken raw Athenz ID token (JWT)
+     * @param audience      resource audience: {@link AudienceConstants#PROVIDER_GOOGLE_MONITORING} or {@link AudienceConstants#PROVIDER_GOOGLE_LOGGING} (selects scopes from config)
+     * @return STS access token string, or null on failure
+     */
+    public String exchange(String athenzIdToken, String audience) {
+        if (athenzIdToken == null || athenzIdToken.isBlank() || audience == null || audience.isBlank()) {
+            return null;
+        }
+        List<String> scopeList = AudienceConstants.PROVIDER_GOOGLE_MONITORING.equals(audience)
+                ? config.scopesGoogleMonitoring()
+                : config.scopesGoogleLogging();
+        if (scopeList == null || scopeList.isEmpty()) {
+            log.warn("No scopes configured for audience: {}", audience);
+            return null;
+        }
+        String scope = String.join(" ", scopeList);
+        try {
+            GcpExchangeTokenRequest exchangeTokenRequest = new GcpExchangeTokenRequest();
+            exchangeTokenRequest.setGrantType(GRANT_TYPE);
+            exchangeTokenRequest.setAudience(config.audience());
+            exchangeTokenRequest.setScope(scope);
+            exchangeTokenRequest.setRequestedTokenType(REQUESTED_TOKEN_TYPE);
+            exchangeTokenRequest.setSubjectToken(athenzIdToken);
+            exchangeTokenRequest.setSubjectTokenType(SUBJECT_TOKEN_TYPE);
+            exchangeTokenRequest.setOptions("{\"userProject\": \"" + DEFAULT_BILLIGN_PROJECT + "\"}");
+
+            String json = objectMapper.writeValueAsString(exchangeTokenRequest);
+
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(config.stsTokenUrl()))
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+            if (response.statusCode() != 200) {
+                log.warn("Google STS token-exchange failed: status={} body={}", response.statusCode(), response.body());
+                return null;
+            }
+
+            GcpExchangeTokenResponse exchangeTokenResponse = objectMapper.readValue(response.body(), GcpExchangeTokenResponse.class);
+            return exchangeTokenResponse != null ? exchangeTokenResponse.getAccessToken() : null;
+        } catch (Exception e) {
+            log.warn("Google STS token-exchange error: {}", e.getMessage());
+            return null;
+        }
+    }
+}

@@ -78,7 +78,7 @@ class AuthorizerServiceTest {
     void testStoreTokens_WithAllTokens() {
         // Given
         String lookupKey = "test-lookup-key";
-        String provider = "okta";
+        String provider = AudienceConstants.PROVIDER_OKTA;
         String username = "testuser";
         String idTokenRaw = "id-token-raw";
         String accessTokenRaw = "access-token-raw";
@@ -184,7 +184,7 @@ class AuthorizerServiceTest {
     void testGetUserToken() {
         // Given
         String lookupKey = "test-lookup-key";
-        String provider = "okta";
+        String provider = AudienceConstants.PROVIDER_OKTA;
         TokenWrapper expectedToken = new TokenWrapper(
                 "user.testuser", provider, "id-token", "access-token", "refresh-token",
                 Instant.now().getEpochSecond() + 300
@@ -207,7 +207,7 @@ class AuthorizerServiceTest {
         String subject = "test-subject";
         String scopes = "read write";
         String resource = "https://api.example.com";
-        String provider = "okta";
+        String provider = AudienceConstants.PROVIDER_OKTA;
 
         ResourceMeta resourceMeta = new ResourceMeta(
                 Arrays.asList("read", "write"), "domain1", provider, "as1", false, null,""
@@ -237,7 +237,7 @@ class AuthorizerServiceTest {
         String subject = "test-subject";
         String scopes = "read write";
         String resource = "https://api.example.com";
-        String provider = "okta";
+        String provider = AudienceConstants.PROVIDER_OKTA;
 
         ResourceMeta resourceMeta = new ResourceMeta(
                 Arrays.asList("read", "write"), "domain1", provider, "as1", false, null, ""
@@ -290,7 +290,7 @@ class AuthorizerServiceTest {
         String subject = "test-subject";
         String scopes = "read write";
         String resource = "api-resource";
-        String provider = "okta";
+        String provider = AudienceConstants.PROVIDER_OKTA;
 
         ResourceMeta resourceMeta = new ResourceMeta(
                 Arrays.asList("read", "write"), "domain1", provider, "as1", false, null, ""
@@ -336,7 +336,7 @@ class AuthorizerServiceTest {
         String subject = "test-subject";
         String scopes = "read write";
         String resource = "api-resource";
-        String provider = "okta";
+        String provider = AudienceConstants.PROVIDER_OKTA;
 
         ResourceMeta resourceMeta = new ResourceMeta(
                 Arrays.asList("read", "write"), "domain1", provider, "as1", false, null, ""
@@ -375,7 +375,7 @@ class AuthorizerServiceTest {
         String scopes = "read write";
         String resource = "https://api.example.com";
         TokenWrapper token = new TokenWrapper(
-                "user.testuser", "okta", "id-token", "access-token", "refresh-token",
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
                 Instant.now().getEpochSecond() + 300
         );
 
@@ -398,17 +398,17 @@ class AuthorizerServiceTest {
         String remoteEndpoint = "https://auth.example.com/token";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read", "write"), "domain1", "okta", authServer, false, null, ""
+                Arrays.asList("read", "write"), "domain1", AudienceConstants.PROVIDER_OKTA, authServer, false, null, ""
         );
 
         TokenWrapper inputToken = new TokenWrapper(
-                "user.testuser", "okta", "id-token", "access-token", "refresh-token",
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
                 Instant.now().getEpochSecond() + 300
         );
 
         long expectedTtl = Instant.now().getEpochSecond() + 600;
         TokenWrapper resultToken = new TokenWrapper(
-                "user.testuser", "okta", null, "new-access-token", null,
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, null, "new-access-token", null,
                 expectedTtl
         );
 
@@ -448,23 +448,23 @@ class AuthorizerServiceTest {
         String jagEndpoint = "https://jag.example.com/token";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read", "write"), "domain1", "okta", authServer, true, jagIssuer, ""
+                Arrays.asList("read", "write"), "domain1", AudienceConstants.PROVIDER_OKTA, authServer, true, jagIssuer, ""
         );
 
         TokenWrapper inputToken = new TokenWrapper(
-                "user.testuser", "okta", "id-token", "access-token", "refresh-token",
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
                 Instant.now().getEpochSecond() + 300
         );
 
         long expectedJagTtl = Instant.now().getEpochSecond() + 400;
         TokenWrapper jagToken = new TokenWrapper(
-                "user.testuser", "okta", null, "jag-token", null,
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, null, "jag-token", null,
                 expectedJagTtl
         );
 
         long expectedFinalTtl = Instant.now().getEpochSecond() + 500;
         TokenWrapper finalToken = new TokenWrapper(
-                "user.testuser", "okta", null, "final-access-token", null,
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, null, "final-access-token", null,
                 expectedFinalTtl
         );
 
@@ -512,21 +512,21 @@ class AuthorizerServiceTest {
         String jagEndpoint = "https://jag.example.com/token";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("custom-scope-1", "custom-scope-2"), "test-domain", "okta", authServer, true, jagIssuer, ""
+                Arrays.asList("custom-scope-1", "custom-scope-2"), "test-domain", AudienceConstants.PROVIDER_OKTA, authServer, true, jagIssuer, ""
         );
 
         TokenWrapper inputToken = new TokenWrapper(
-                "user.testuser", "okta", "id-token", "access-token", "refresh-token",
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
                 Instant.now().getEpochSecond() + 300
         );
 
         TokenWrapper jagToken = new TokenWrapper(
-                "user.testuser", "okta", null, "jag-token", null,
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, null, "jag-token", null,
                 Instant.now().getEpochSecond() + 400
         );
 
         TokenWrapper finalToken = new TokenWrapper(
-                "user.testuser", "okta", null, "final-access-token", null,
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, null, "final-access-token", null,
                 Instant.now().getEpochSecond() + 500
         );
 
@@ -583,16 +583,16 @@ class AuthorizerServiceTest {
         String remoteEndpoint = "https://auth.example.com/token";
 
         ResourceMeta resourceMeta = new ResourceMeta(
-                Collections.singletonList("admin"), "admin-domain", "okta", authServer, false, null, ""
+                Collections.singletonList("admin"), "admin-domain", AudienceConstants.PROVIDER_OKTA, authServer, false, null, ""
         );
 
         TokenWrapper inputToken = new TokenWrapper(
-                "user.admin", "okta", "id-token", "access-token", "refresh-token",
+                "user.admin", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
                 Instant.now().getEpochSecond() + 300
         );
 
         TokenWrapper resultToken = new TokenWrapper(
-                "user.admin", "okta", null, "new-access-token", null,
+                "user.admin", AudienceConstants.PROVIDER_OKTA, null, "new-access-token", null,
                 Instant.now().getEpochSecond() + 600
         );
 
@@ -622,22 +622,22 @@ class AuthorizerServiceTest {
 
     @Test
     void testRefreshUpstreamAndGetToken_returnsNullWhenUpstreamRefreshTokenNull() {
-        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", "okta", "https://resource.example.com", null);
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", AudienceConstants.PROVIDER_OKTA, "https://resource.example.com", null);
         assertNull(result);
     }
 
     @Test
     void testRefreshUpstreamAndGetToken_returnsNullWhenUpstreamRefreshTokenEmpty() {
-        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", "okta", "https://resource.example.com", "");
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", AudienceConstants.PROVIDER_OKTA, "https://resource.example.com", "");
         assertNull(result);
     }
 
     @Test
     void testRefreshUpstreamAndGetToken_returnsNullWhenExchangeReturnsNull() {
-        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta")).thenReturn(tokenExchangeService);
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA)).thenReturn(tokenExchangeService);
         when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(null);
 
-        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", "okta", "https://resource.example.com", "upstream-refresh-token");
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", AudienceConstants.PROVIDER_OKTA, "https://resource.example.com", "upstream-refresh-token");
 
         assertNull(result);
     }
@@ -646,10 +646,10 @@ class AuthorizerServiceTest {
     void testRefreshUpstreamAndGetToken_success_returnsRefreshAndTokenResultWithNewUpstreamRefresh() {
         String resource = "https://resource.example.com";
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read"), "domain1", "okta", "okta", false, null, ""
+                Arrays.asList("read"), "domain1", AudienceConstants.PROVIDER_OKTA, AudienceConstants.PROVIDER_OKTA, false, null, ""
         );
         TokenWrapper newToken = new TokenWrapper(
-                "user1", "okta", "new-id-token", "new-access-token", "new-upstream-refresh",
+                "user1", AudienceConstants.PROVIDER_OKTA, "new-id-token", "new-access-token", "new-upstream-refresh",
                 Instant.now().getEpochSecond() + 3600
         );
         TokenWrapper exchangedToken = new TokenWrapper(
@@ -657,32 +657,32 @@ class AuthorizerServiceTest {
         );
         AuthorizationResultDO atDO = new AuthorizationResultDO(AuthResult.AUTHORIZED, exchangedToken);
 
-        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta")).thenReturn(tokenExchangeService);
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA)).thenReturn(tokenExchangeService);
         when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(newToken);
         when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
-        when(configService.getRemoteServerEndpoint("okta")).thenReturn("https://okta.example.com");
-        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta")).thenReturn(tokenExchangeService);
+        when(configService.getRemoteServerEndpoint(AudienceConstants.PROVIDER_OKTA)).thenReturn("https://okta.example.com");
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA)).thenReturn(tokenExchangeService);
         when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class))).thenReturn(atDO);
 
-        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", "okta", resource, "upstream-refresh-token");
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", AudienceConstants.PROVIDER_OKTA, resource, "upstream-refresh-token");
 
         assertNotNull(result);
         assertNotNull(result.tokenResponse());
         assertEquals("exchanged-access-token", result.tokenResponse().accessToken());
         assertEquals("new-upstream-refresh", result.newUpstreamRefreshToken());
         // Two stores: upstream token, then storeRefreshedAccessToken (non-Glean)
-        verify(tokenStore, times(2)).storeUserToken(eq("user1"), eq("okta"), any(TokenWrapper.class));
+        verify(tokenStore, times(2)).storeUserToken(eq("user1"), eq(AudienceConstants.PROVIDER_OKTA), any(TokenWrapper.class));
     }
 
     @Test
     void testRefreshUpstreamAndGetToken_storeRefreshedAccessToken_Glean_storesExchangedTokenUnderGlean() {
         String resource = "https://glean.resource.example.com";
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read"), "domain1", "okta", "okta", false, null, "glean"
+                Arrays.asList("read"), "domain1", AudienceConstants.PROVIDER_OKTA, AudienceConstants.PROVIDER_OKTA, false, null, "glean"
         );
         long tokenTtl = 3600L;
         TokenWrapper newToken = new TokenWrapper(
-                "user1", "okta", "new-id-token", "new-access-token", "new-upstream-refresh",
+                "user1", AudienceConstants.PROVIDER_OKTA, "new-id-token", "new-access-token", "new-upstream-refresh",
                 Instant.now().getEpochSecond() + tokenTtl
         );
         TokenWrapper exchangedToken = new TokenWrapper(
@@ -690,13 +690,13 @@ class AuthorizerServiceTest {
         );
         AuthorizationResultDO atDO = new AuthorizationResultDO(AuthResult.AUTHORIZED, exchangedToken);
 
-        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta")).thenReturn(tokenExchangeService);
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA)).thenReturn(tokenExchangeService);
         when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(newToken);
         when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
-        when(configService.getRemoteServerEndpoint("okta")).thenReturn("https://okta.example.com");
+        when(configService.getRemoteServerEndpoint(AudienceConstants.PROVIDER_OKTA)).thenReturn("https://okta.example.com");
         when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class))).thenReturn(atDO);
 
-        authorizerService.refreshUpstreamAndGetToken("user1", "okta", resource, "upstream-refresh-token");
+        authorizerService.refreshUpstreamAndGetToken("user1", AudienceConstants.PROVIDER_OKTA, resource, "upstream-refresh-token");
 
         ArgumentCaptor<String> userCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> providerCaptor = ArgumentCaptor.forClass(String.class);
@@ -760,21 +760,46 @@ class AuthorizerServiceTest {
     void testRefreshUpstreamAndGetToken_returnsNullWhenTokenExchangeFails() {
         String resource = "https://resource.example.com";
         ResourceMeta resourceMeta = new ResourceMeta(
-                Arrays.asList("read"), "domain1", "okta", "okta", false, null, ""
+                Arrays.asList("read"), "domain1", AudienceConstants.PROVIDER_OKTA, AudienceConstants.PROVIDER_OKTA, false, null, ""
         );
         TokenWrapper newToken = new TokenWrapper(
-                "user1", "okta", "id", "access", "refresh", Instant.now().getEpochSecond() + 3600
+                "user1", AudienceConstants.PROVIDER_OKTA, "id", "access", "refresh", Instant.now().getEpochSecond() + 3600
         );
 
-        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("okta")).thenReturn(tokenExchangeService);
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA)).thenReturn(tokenExchangeService);
         when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(newToken);
         when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
-        when(configService.getRemoteServerEndpoint("okta")).thenReturn("https://okta.example.com");
+        when(configService.getRemoteServerEndpoint(AudienceConstants.PROVIDER_OKTA)).thenReturn("https://okta.example.com");
         when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class)))
                 .thenReturn(new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null));
 
-        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", "okta", resource, "upstream-refresh-token");
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", AudienceConstants.PROVIDER_OKTA, resource, "upstream-refresh-token");
 
         assertNull(result);
+    }
+
+    @Test
+    void testCompleteRefreshWithOktaTokens_success_returnsResultWithNullNewUpstream() {
+        String resource = "https://resource.example.com";
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read"), "domain1", AudienceConstants.PROVIDER_OKTA, AudienceConstants.PROVIDER_OKTA, false, null, ""
+        );
+        TokenWrapper exchangedToken = new TokenWrapper(
+                null, null, null, "exchanged-access-token", null, 3600L
+        );
+        AuthorizationResultDO atDO = new AuthorizationResultDO(AuthResult.AUTHORIZED, exchangedToken);
+        OktaTokens oktaTokens = new OktaTokens("new-access", "new-refresh", "new-id", 3600);
+
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        when(configService.getRemoteServerEndpoint(AudienceConstants.PROVIDER_OKTA)).thenReturn("https://okta.example.com");
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA)).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class))).thenReturn(atDO);
+
+        RefreshAndTokenResult result = authorizerService.completeRefreshWithOktaTokens("user1", AudienceConstants.PROVIDER_OKTA, resource, oktaTokens);
+
+        assertNotNull(result);
+        assertEquals("exchanged-access-token", result.tokenResponse().accessToken());
+        assertNull(result.newUpstreamRefreshToken());
+        verify(tokenStore, times(2)).storeUserToken(eq("user1"), eq(AudienceConstants.PROVIDER_OKTA), any(TokenWrapper.class));
     }
 }

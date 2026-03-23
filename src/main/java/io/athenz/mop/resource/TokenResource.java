@@ -17,10 +17,13 @@ package io.athenz.mop.resource;
 
 import com.yahoo.athenz.auth.util.Crypto;
 import io.athenz.mop.model.*;
+import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.service.AuthorizationCodeService;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RefreshTokenService;
+import io.athenz.mop.service.UpstreamRefreshException;
+import io.athenz.mop.service.UpstreamRefreshService;
 import io.quarkus.security.credential.CertificateCredential;
 import io.quarkus.security.credential.Credential;
 import io.quarkus.security.identity.SecurityIdentity;
@@ -32,6 +35,9 @@ import jakarta.ws.rs.core.Response;
 import java.lang.invoke.MethodHandles;
 import java.security.Security;
 import java.security.cert.X509Certificate;
+import java.util.Optional;
+import java.util.function.Supplier;
+
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
@@ -62,6 +68,9 @@ public class TokenResource {
 
     @Inject
     RefreshTokenService refreshTokenService;
+
+    @Inject
+    UpstreamRefreshService upstreamRefreshService;
 
     @Inject
     SecurityIdentity securityIdentity;
@@ -188,17 +197,31 @@ public class TokenResource {
         try {
             ResourceMeta resourceMeta = resource != null ? configService.getResourceMeta(resource) : null;
             String provider = resourceMeta != null ? resourceMeta.idpServer() : configService.getDefaultIDP();
-            TokenWrapper tokenWrapper = authorizerService.getUserToken(authCode.getSubject(), provider);
-            String upstreamRefresh = (tokenWrapper != null && tokenWrapper.refreshToken() != null) ? tokenWrapper.refreshToken() : null;
-            if (upstreamRefresh == null) {
-                upstreamRefresh = refreshTokenService.getUpstreamRefreshToken(authCode.getSubject(), provider);
+            String providerUserId = provider + "#" + authCode.getSubject();
+            String subject = authCode.getSubject();
+
+            String upstreamRefresh = firstNonEmpty(
+                () -> AudienceConstants.PROVIDER_OKTA.equals(provider)
+                        ? upstreamRefreshService.getCurrentUpstream(providerUserId)
+                                .map(rec -> rec.encryptedOktaRefreshToken())
+                                .filter(rt -> rt != null && !rt.isEmpty())
+                                .orElse(null)
+                        : null,
+                () -> Optional.ofNullable(authorizerService.getUserToken(subject, provider))
+                                .map(TokenWrapper::refreshToken)
+                                .orElse(null),
+                () -> refreshTokenService.getUpstreamRefreshToken(subject, provider)
+            );
+
+            if (AudienceConstants.PROVIDER_OKTA.equals(provider) && upstreamRefresh != null && !upstreamRefresh.isEmpty()) {
+                upstreamRefreshService.storeInitialUpstreamToken(providerUserId, upstreamRefresh);
             }
             String mopRefresh = refreshTokenService.store(
                     authCode.getSubject(),
                     request.getClientId(),
                     provider,
                     authCode.getSubject(),
-                    upstreamRefresh
+                    AudienceConstants.PROVIDER_OKTA.equals(provider) ? null : upstreamRefresh
             );
             if (mopRefresh == null) {
                 log.warn("RefreshTokenService.store returned null; returning token response without refresh");
@@ -268,7 +291,9 @@ public class TokenResource {
     }
 
     /**
-     * Handle refresh_token grant (OAuth 2.0 BCP): validate, rotate on ACTIVE, return new tokens.
+     * Handle refresh_token grant (OAuth 2.0 BCP): validate, rotate on ACTIVE, upstream refresh, return new tokens.
+     * The per-(userId, provider) grant lock was removed; restore steps live in
+     * {@code .cursor/plans/refresh_grant_user_provider_lock.plan.md}.
      */
     private Response handleRefreshTokenGrant(OAuth2TokenRequest request) {
         log.info("Processing refresh_token grant");
@@ -283,8 +308,15 @@ public class TokenResource {
             return invalidGrant("Missing required parameter: resource");
         }
 
-        RefreshTokenValidationResult result = refreshTokenService.validate(request.getRefreshToken(), request.getClientId());
+        // 1. Resolve (userId, provider) from presented refresh token (for grant flow and logging).
+        var lockKeyOpt = refreshTokenService.lookupUserIdAndProviderForLock(request.getRefreshToken(), request.getClientId());
+        if (lockKeyOpt.isEmpty()) {
+            return invalidGrant("Invalid or expired refresh token");
+        }
+        String userId = lockKeyOpt.get().userId();
+        String provider = lockKeyOpt.get().provider();
 
+        RefreshTokenValidationResult result = refreshTokenService.validate(request.getRefreshToken(), request.getClientId());
         switch (result.status()) {
             case INVALID:
             case REVOKED:
@@ -296,30 +328,50 @@ public class TokenResource {
                 if (result.record() == null) {
                     return invalidGrant("Invalid or expired refresh token");
                 }
-                // --- NEW: rotate returns RotateResult; update upstream by primary key (avoids GSI eventual consistency) ---
                 RefreshTokenRotateResult rotateResult = refreshTokenService.rotate(request.getRefreshToken(), request.getClientId());
                 if (rotateResult == null) {
-                    log.warn("refresh_token grant failed: rotate() returned null for userId={} provider={}", result.record().userId(), result.record().provider());
+                    log.warn("refresh_token grant failed: rotate() returned null for userId={} provider={}", userId, provider);
                     return invalidGrant("Invalid or expired refresh token");
                 }
-                // Refresh upstream IDP tokens and get new access token
-                RefreshAndTokenResult refreshResult = authorizerService.refreshUpstreamAndGetToken(
-                        result.record().userId(),
-                        result.record().provider(),
-                        request.getResource(),
-                        result.record().encryptedUpstreamRefreshToken()
-                );
+                String providerUserId = result.record().providerUserId();
+                RefreshAndTokenResult refreshResult;
+                if (providerUserId != null && providerUserId.startsWith(AudienceConstants.PROVIDER_OKTA + "#")) {
+                    upstreamRefreshService.ensureMigratedFromLegacyIfNeeded(providerUserId, result.record());
+                    try {
+                        var oktaTokens = upstreamRefreshService.refreshUpstream(providerUserId);
+                        refreshResult = authorizerService.completeRefreshWithOktaTokens(
+                                userId, provider, request.getResource(), oktaTokens);
+                    } catch (IllegalStateException e) {
+                        log.warn("refresh_token grant: upstream refresh lock not acquired: {}", e.getMessage());
+                        return Response.status(Response.Status.SERVICE_UNAVAILABLE)
+                                .entity(OAuth2ErrorResponse.of(OAuth2ErrorResponse.ErrorCode.SERVER_ERROR,
+                                        "Temporarily unavailable; please retry"))
+                                .build();
+                    } catch (UpstreamRefreshException e) {
+                        log.warn("refresh_token grant failed: centralized upstream refresh: {}", e.getMessage());
+                        refreshTokenService.revokeFamily(result.record().tokenFamilyId());
+                        return invalidGrant("Invalid or expired refresh token");
+                    }
+                } else {
+                    refreshResult = authorizerService.refreshUpstreamAndGetToken(
+                            userId,
+                            provider,
+                            request.getResource(),
+                            result.record().encryptedUpstreamRefreshToken()
+                    );
+                    if (refreshResult != null && refreshResult.newUpstreamRefreshToken() != null
+                            && !refreshResult.newUpstreamRefreshToken().isEmpty()) {
+                        refreshTokenService.updateUpstreamRefreshForAllRowsWithUserAndProvider(
+                                userId,
+                                provider,
+                                refreshResult.newUpstreamRefreshToken());
+                    }
+                }
                 if (refreshResult == null) {
-                    log.warn("refresh_token grant failed: upstream refresh failed; revoking token family for userId={} provider={} resource={} tokenFamilyId={}", result.record().userId(), result.record().provider(), request.getResource(), result.record().tokenFamilyId());
+                    log.warn("refresh_token grant failed: upstream refresh failed; revoking token family for userId={} provider={} resource={} tokenFamilyId={}",
+                            userId, provider, request.getResource(), result.record().tokenFamilyId());
                     refreshTokenService.revokeFamily(result.record().tokenFamilyId());
                     return invalidGrant("Invalid or expired refresh token");
-                }
-                // Update the new row's upstream token by primary key (avoids GSI eventual consistency right after rotate)
-                if (refreshResult.newUpstreamRefreshToken() != null && !refreshResult.newUpstreamRefreshToken().isEmpty()) {
-                    refreshTokenService.updateUpstreamRefreshForToken(
-                            rotateResult.refreshTokenId(),
-                            rotateResult.providerUserId(),
-                            refreshResult.newUpstreamRefreshToken());
                 }
                 TokenResponse withNewRefresh = new TokenResponse(
                         refreshResult.tokenResponse().accessToken(),
@@ -391,6 +443,17 @@ public class TokenResource {
                 if (credential instanceof CertificateCredential certificateCredential) {
                     return certificateCredential.getCertificate();
                 }
+            }
+        }
+        return null;
+    }
+
+    @SafeVarargs
+    private String firstNonEmpty(Supplier<String>... suppliers) {
+        for (Supplier<String> supplier : suppliers) {
+            String value = supplier.get();
+            if (value != null && !value.isEmpty()) {
+                return value;
             }
         }
         return null;

@@ -40,6 +40,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 class TokenExchangeServiceOktaImplTest {
@@ -53,6 +54,9 @@ class TokenExchangeServiceOktaImplTest {
     @Mock
     private TokenClient tokenClient;
 
+    @Mock
+    private OktaTokenClient oktaTokenClient;
+
     @InjectMocks
     private TokenExchangeServiceOktaImpl tokenExchangeService;
 
@@ -62,8 +66,6 @@ class TokenExchangeServiceOktaImplTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        tokenExchangeService.oidcClientId = "test-oidc-client-id";
-        tokenExchangeService.oidcClientSecretKey = "okta-client-secret";
 
         // Setup common test data
         tokenWrapper = new TokenWrapper(
@@ -305,36 +307,27 @@ class TokenExchangeServiceOktaImplTest {
     }
 
     @Test
-    void testRefreshWithUpstreamToken_returnsNullWhenOidcClientSecretKeyNotConfigured() {
-        tokenExchangeService.oidcClientSecretKey = "";
+    void testRefreshWithUpstreamToken_returnsNullWhenOktaClientThrowsRefreshException() {
+        when(oktaTokenClient.refreshToken(anyString())).thenThrow(new OktaTokenRefreshException("OIDC client secret key not configured"));
         assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
     }
 
     @Test
     void testRefreshWithUpstreamToken_returnsNullWhenCredentialsNull() {
-        when(k8SSecretsProvider.getCredentials(null)).thenReturn(null);
+        when(oktaTokenClient.refreshToken(anyString())).thenThrow(new OktaTokenRefreshException("no credentials"));
         assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
     }
 
     @Test
     void testRefreshWithUpstreamToken_returnsNullWhenSecretMissingForKey() {
-        when(k8SSecretsProvider.getCredentials(null)).thenReturn(new HashMap<>());
+        when(oktaTokenClient.refreshToken(anyString())).thenThrow(new OktaTokenRefreshException("secret missing"));
         assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
     }
 
     @Test
-    void testRefreshWithUpstreamToken_success_returnsTokenWrapper() throws ParseException, IOException {
-        Map<String, String> credentials = new HashMap<>();
-        credentials.put("okta-client-secret", "secret-value");
-        when(k8SSecretsProvider.getCredentials(null)).thenReturn(credentials);
-        when(oktaTokenExchangeConfig.authServerUrl()).thenReturn("https://test-okta.example.com/oauth2/default");
-
-        String jsonSuccess = "{\"access_token\":\"new-access-token\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"new-refresh-token\"}";
-        HTTPResponse mockHttpResponse = new HTTPResponse(200);
-        mockHttpResponse.setContentType("application/json");
-        mockHttpResponse.setBody(jsonSuccess);
-        TokenResponse mockTokenResponse = TokenResponse.parse(mockHttpResponse);
-        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(mockTokenResponse);
+    void testRefreshWithUpstreamToken_success_returnsTokenWrapper() {
+        when(oktaTokenClient.refreshToken("upstream-refresh-token")).thenReturn(
+                new OktaTokens("new-access-token", "new-refresh-token", null, 3600));
 
         TokenWrapper result = tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token");
 
@@ -342,27 +335,18 @@ class TokenExchangeServiceOktaImplTest {
         assertEquals("new-access-token", result.accessToken());
         assertEquals("new-refresh-token", result.refreshToken());
         assertEquals(3600L, result.ttl());
-        verify(tokenClient, times(1)).execute(any(TokenRequest.class));
+        verify(oktaTokenClient, times(1)).refreshToken("upstream-refresh-token");
     }
 
     @Test
-    void testRefreshWithUpstreamToken_errorResponse_returnsNull() throws ParseException, IOException {
-        Map<String, String> credentials = new HashMap<>();
-        credentials.put("okta-client-secret", "secret-value");
-        when(k8SSecretsProvider.getCredentials(null)).thenReturn(credentials);
-        when(oktaTokenExchangeConfig.authServerUrl()).thenReturn("https://test-okta.example.com/oauth2/default");
-
-        String jsonError = "{\"error\":\"invalid_grant\",\"error_description\":\"Refresh token expired\"}";
-        HTTPResponse mockHttpResponse = new HTTPResponse(400);
-        mockHttpResponse.setContentType("application/json");
-        mockHttpResponse.setBody(jsonError);
-        TokenResponse mockTokenResponse = TokenResponse.parse(mockHttpResponse);
-        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(mockTokenResponse);
+    void testRefreshWithUpstreamToken_errorResponse_returnsNull() {
+        when(oktaTokenClient.refreshToken("upstream-refresh-token")).thenThrow(
+                new OktaTokenRevokedException("Refresh token expired"));
 
         TokenWrapper result = tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token");
 
         assertNull(result);
-        verify(tokenClient, times(1)).execute(any(TokenRequest.class));
+        verify(oktaTokenClient, times(1)).refreshToken("upstream-refresh-token");
     }
 
     @Test

@@ -122,24 +122,24 @@ public class TokenStoreInMemoryImpl implements TokenStore, AuthCodeStore, TokenS
 
     @Override
     public TokenWrapper getUserTokenByAccessTokenHash(String accessTokenHash) {
-        log.info("Looking up token by access token hash in memory cache");
+        log.info("Looking up user token by bearer credential in memory cache (hash not logged)");
         String user = hashToUserMap.get(accessTokenHash);
         if (user == null) {
-            log.info("No token found for access token hash in memory cache");
+            log.info("No token found for bearer credential lookup in memory cache");
             return null;
         }
         CompletableFuture<TokenWrapper> cachedTokenValue = tokenCache.as(CaffeineCache.class).getIfPresent(user);
         if (cachedTokenValue != null) {
             try {
                 TokenWrapper token = cachedTokenValue.get();
-                log.info("Found token for hash in memory cache");
+                log.info("Found token in memory cache for bearer lookup");
                 return token;
             } catch (Exception ex) {
                 log.error("Unable to retrieve token from cache", ex);
                 return null;
             }
         }
-        log.info("No token found for access token hash in memory cache");
+        log.info("No token found for bearer credential lookup in memory cache");
         return null;
     }
 }
