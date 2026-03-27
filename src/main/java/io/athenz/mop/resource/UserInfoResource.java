@@ -3,7 +3,7 @@ package io.athenz.mop.resource;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.store.TokenStore;
-import io.athenz.mop.store.impl.aws.UserInfoCrossRegionFallback;
+import io.athenz.mop.store.impl.aws.CrossRegionTokenStoreFallback;
 import io.athenz.mop.util.JwtUtils;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
@@ -27,7 +27,7 @@ public class UserInfoResource {
     TokenStore tokenStore;
 
     @Inject
-    UserInfoCrossRegionFallback crossRegionFallback;
+    CrossRegionTokenStoreFallback crossRegionFallback;
 
     @GET
     @Path("/")

@@ -118,13 +118,12 @@ application:
     tableName: mcp-oauth-proxy-upstream-tokens
     expirySeconds: 7776000
     ttlBufferDays: 7
-  userinfo:
-    crossRegionFallback:
-      enabled: false
-      region: ""
-      tableName: ""
-      kmsKeyId: ""
-      stsRoleArn: ""
+  crossRegionFallback:
+    enabled: false
+    region: ""
+    tableName: ""
+    kmsKeyId: ""
+    stsRoleArn: ""
   aws:
     dynamoDbTable:
     kmsKeyId:

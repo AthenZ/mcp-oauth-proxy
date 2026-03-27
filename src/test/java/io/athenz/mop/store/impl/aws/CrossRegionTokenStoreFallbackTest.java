@@ -15,6 +15,7 @@
  */
 package io.athenz.mop.store.impl.aws;
 
+import io.athenz.mop.model.AuthorizationCode;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +26,7 @@ import org.mockito.MockitoAnnotations;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 
 import java.lang.reflect.Field;
+import java.time.Instant;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -32,7 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-class UserInfoCrossRegionFallbackTest {
+class CrossRegionTokenStoreFallbackTest {
 
     @Mock
     private DynamodbClientProvider dynamodbClientProvider;
@@ -44,14 +46,16 @@ class UserInfoCrossRegionFallbackTest {
     private DynamoDbClient fallbackClient;
 
     @InjectMocks
-    private UserInfoCrossRegionFallback fallback;
+    private CrossRegionTokenStoreFallback fallback;
 
     @BeforeEach
     void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
         setField(fallback, "fallbackTableName", Optional.of("fallback-table"));
         setField(fallback, "fallbackTableNameResolved", "fallback-table");
-        // leave fallbackClient as null by default (fallback disabled)
+        // Same @InjectMocks instance across tests: reset peer client and mock invocations
+        setField(fallback, "fallbackClient", null);
+        clearInvocations(tokenStoreDynamodb, dynamodbClientProvider, fallbackClient);
     }
 
     private void setFallbackClient(DynamoDbClient client) throws Exception {
@@ -139,5 +143,38 @@ class UserInfoCrossRegionFallbackTest {
                 .thenThrow(new RuntimeException("DynamoDB error"));
 
         assertNull(fallback.getUserToken("user1", AudienceConstants.PROVIDER_OKTA));
+    }
+
+    @Test
+    void testGetAuthCode_WhenFallbackClientNull_ReturnsNull() {
+        assertNull(fallback.getAuthCode("code1", AudienceConstants.PROVIDER_OKTA));
+    }
+
+    @Test
+    void testGetAuthCode_WhenFallbackClientSet_Delegates() throws Exception {
+        setFallbackClient(fallbackClient);
+        AuthorizationCode expected = new AuthorizationCode(
+                "c1", "cid", "sub", "https://r/cb", "s", "res", "ch", "S256",
+                Instant.now().plusSeconds(600), "st");
+        when(tokenStoreDynamodb.getAuthCode(eq(fallbackClient), eq("fallback-table"), eq("c1"), eq(AudienceConstants.PROVIDER_OKTA)))
+                .thenReturn(expected);
+
+        AuthorizationCode result = fallback.getAuthCode("c1", AudienceConstants.PROVIDER_OKTA);
+
+        assertSame(expected, result);
+        verify(tokenStoreDynamodb).getAuthCode(fallbackClient, "fallback-table", "c1", AudienceConstants.PROVIDER_OKTA);
+    }
+
+    @Test
+    void testDeleteAuthCode_WhenFallbackClientNull_NoOp() {
+        fallback.deleteAuthCode("c1", AudienceConstants.PROVIDER_OKTA);
+        verify(tokenStoreDynamodb, never()).deleteAuthCode(any(), any(), any(), any());
+    }
+
+    @Test
+    void testDeleteAuthCode_WhenFallbackClientSet_Delegates() throws Exception {
+        setFallbackClient(fallbackClient);
+        fallback.deleteAuthCode("c1", AudienceConstants.PROVIDER_OKTA);
+        verify(tokenStoreDynamodb).deleteAuthCode(fallbackClient, "fallback-table", "c1", AudienceConstants.PROVIDER_OKTA);
     }
 }

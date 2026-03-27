@@ -143,8 +143,15 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
 
     @Override
     public AuthorizationCode getAuthCode(String code, String provider) {
+        return getAuthCode(dynamoDbClient, tableName, code, provider);
+    }
+
+    /**
+     * Look up authorization code using the given client and table (primary store or cross-region fallback).
+     */
+    public AuthorizationCode getAuthCode(DynamoDbClient client, String table, String code, String provider) {
         String codePrefixForLog = code.substring(0, Math.min(8, code.length()));
-        final GetItemResponse getResponse = queryTable(code, provider);
+        final GetItemResponse getResponse = queryTable(client, table, code, provider);
         log.info("getAuthCode: code={}, provider={} HTTPStatusCode={}", codePrefixForLog, provider, getResponse.sdkHttpResponse().statusCode());
 
         final Map<String, AttributeValue> returnedItem = getResponse.item();
@@ -164,6 +171,13 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
 
     @Override
     public void deleteAuthCode(String code, String provider) {
+        deleteAuthCode(dynamoDbClient, tableName, code, provider);
+    }
+
+    /**
+     * Delete authorization code using the given client and table (primary store or cross-region fallback).
+     */
+    public void deleteAuthCode(DynamoDbClient client, String table, String code, String provider) {
         String codePrefixForLog = code.substring(0, Math.min(8, code.length()));
         final HashMap<String, AttributeValue> codeKey = new HashMap<>();
         codeKey.put(TokenTableAttribute.USER.attr(), AttributeValue.builder().s(code).build());
@@ -171,14 +185,10 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
         final DeleteItemRequest deleteRequest = DeleteItemRequest
                 .builder()
                 .key(codeKey)
-                .tableName(tableName)
+                .tableName(table)
                 .build();
-        final DeleteItemResponse deleteResponse = dynamoDbClient.deleteItem(deleteRequest);
+        final DeleteItemResponse deleteResponse = client.deleteItem(deleteRequest);
         log.info("deleteAuthCode: code={} resource={} HTTPStatusCode={}", codePrefixForLog, provider, deleteResponse.sdkHttpResponse().statusCode());
-    }
-
-    private GetItemResponse queryTable(String code, String provider) {
-        return queryTable(dynamoDbClient, tableName, code, provider);
     }
 
     private GetItemResponse queryTable(DynamoDbClient client, String table, String partitionKey, String sortKey) {

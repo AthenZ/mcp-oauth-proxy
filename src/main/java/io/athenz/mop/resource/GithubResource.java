@@ -17,9 +17,9 @@ package io.athenz.mop.resource;
 
 import io.athenz.mop.model.AuthorizationCode;
 import io.athenz.mop.model.TokenWrapper;
+import io.athenz.mop.service.AuthCodeRegionResolver;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
-import io.athenz.mop.store.AuthCodeStore;
 import io.quarkus.oidc.AccessTokenCredential;
 import io.quarkus.oidc.OidcSession;
 import io.quarkus.oidc.UserInfo;
@@ -32,6 +32,7 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.lang.invoke.MethodHandles;
+import java.util.Map;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,7 +54,7 @@ public class GithubResource extends BaseResource {
     AccessTokenCredential accessTokenCredential;
 
     @Inject
-    AuthCodeStore authCodeStore;
+    AuthCodeRegionResolver authCodeRegionResolver;
 
     @ConfigProperty(name = "server.token-exchange.idp")
     String providerDefault;
@@ -76,29 +77,43 @@ public class GithubResource extends BaseResource {
     @Authenticated
     @Produces(MediaType.TEXT_HTML)
     public Response authorize(@QueryParam("state") String state) {
-        if (state != null) {
-            log.info("Github request to store tokens for user: {}", userInfo.get("login"));
-            AuthorizationCode authorizationCode = authCodeStore.getAuthCode(state, providerDefault);
-            // Use same lookup key as used to obtain record from old table (username from userInfo + provider claim)
-            String lookupKey = getUsername(userInfo, configService.getRemoteServerUsernameClaim(PROVIDER), null);
-            String refreshToStore = null;
-            if (accessTokenCredential.getRefreshToken() != null) {
-                refreshToStore = accessTokenCredential.getRefreshToken().getToken();
-            }
-            if (refreshToStore == null || refreshToStore.isEmpty()) {
-                TokenWrapper existing = authorizerService.getUserToken(lookupKey, PROVIDER);
-                refreshToStore = (existing != null && existing.refreshToken() != null) ? existing.refreshToken() : null;
-            }
-            authorizerService.storeTokens(
-                    lookupKey,
-                    authorizationCode.getSubject(),
-                    accessTokenCredential.getToken(),
-                    accessTokenCredential.getToken(),
-                    refreshToStore,
-                    PROVIDER);
-            logoutFromProvider(PROVIDER, oidcSession);
-            return buildSuccessRedirect(authorizationCode.getRedirectUri(), state, authorizationCode.getState());
+        if (state == null || state.isEmpty()) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of(
+                            "error", "invalid_request",
+                            "error_description", "Missing state parameter"))
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
         }
-        return Response.status(Response.Status.CREATED).build();
+        log.info("Github request to store tokens for user: {}", userInfo.get("login"));
+        AuthorizationCode authorizationCode = authCodeRegionResolver.resolve(state, providerDefault).authorizationCode();
+        if (authorizationCode == null) {
+            log.warn("Github callback: authorization code not found for state (local or cross-region)");
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of(
+                            "error", "invalid_grant",
+                            "error_description", "Authorization code not found or expired"))
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
+        }
+        // Use same lookup key as used to obtain record from old table (username from userInfo + provider claim)
+        String lookupKey = getUsername(userInfo, configService.getRemoteServerUsernameClaim(PROVIDER), null);
+        String refreshToStore = null;
+        if (accessTokenCredential.getRefreshToken() != null) {
+            refreshToStore = accessTokenCredential.getRefreshToken().getToken();
+        }
+        if (refreshToStore == null || refreshToStore.isEmpty()) {
+            TokenWrapper existing = authorizerService.getUserToken(lookupKey, PROVIDER);
+            refreshToStore = (existing != null && existing.refreshToken() != null) ? existing.refreshToken() : null;
+        }
+        authorizerService.storeTokens(
+                lookupKey,
+                authorizationCode.getSubject(),
+                accessTokenCredential.getToken(),
+                accessTokenCredential.getToken(),
+                refreshToStore,
+                PROVIDER);
+        logoutFromProvider(PROVIDER, oidcSession);
+        return buildSuccessRedirect(authorizationCode.getRedirectUri(), state, authorizationCode.getState());
     }
 }
