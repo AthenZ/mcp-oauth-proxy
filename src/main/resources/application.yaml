@@ -163,15 +163,14 @@ server:
     table-name: ${MOP_UPSTREAM_TOKEN_TABLE_NAME:mcp-oauth-proxy-upstream-tokens}
     expiry-seconds: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS:7776000}
     ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:7}
-  userinfo:
-    cross-region-fallback:
-      enabled: ${MOP_USERINFO_CROSS_REGION_FALLBACK_ENABLED:false}
-      region: ${MOP_USERINFO_CROSS_REGION_FALLBACK_REGION:}
-      table-name: ${MOP_USERINFO_CROSS_REGION_FALLBACK_TABLE_NAME:}
-      kms:
-        key-id: ${MOP_USERINFO_CROSS_REGION_FALLBACK_KMS_KEY_ID:}
-      sts:
-        role-arn: ${MOP_USERINFO_CROSS_REGION_FALLBACK_STS_ROLE_ARN:}
+  cross-region-fallback:
+    enabled: ${MOP_CROSS_REGION_FALLBACK_ENABLED:false}
+    region: ${MOP_CROSS_REGION_FALLBACK_REGION:}
+    table-name: ${MOP_CROSS_REGION_FALLBACK_TABLE_NAME:}
+    kms:
+      key-id: ${MOP_CROSS_REGION_FALLBACK_KMS_KEY_ID:}
+    sts:
+      role-arn: ${MOP_CROSS_REGION_FALLBACK_STS_ROLE_ARN:}
   secret:
     k8s:
       name:

@@ -202,17 +202,16 @@ data:
         table-name: {{ .Values.application.upstreamToken.tableName | quote }}
         expiry-seconds: {{ .Values.application.upstreamToken.expirySeconds }}
         ttl-buffer-days: {{ .Values.application.upstreamToken.ttlBufferDays }}
-      userinfo:
-        cross-region-fallback:
-          enabled: {{ .Values.application.userinfo.crossRegionFallback.enabled | default false }}
-          {{- if .Values.application.userinfo.crossRegionFallback.enabled }}
-          region: {{ .Values.application.userinfo.crossRegionFallback.region | quote }}
-          table-name: {{ .Values.application.userinfo.crossRegionFallback.tableName | quote }}
-          kms:
-            key-id: {{ .Values.application.userinfo.crossRegionFallback.kmsKeyId | quote }}
-          sts:
-            role-arn: {{ .Values.application.userinfo.crossRegionFallback.stsRoleArn | quote }}
-          {{- end }}
+      cross-region-fallback:
+        enabled: {{ .Values.application.crossRegionFallback.enabled | default false }}
+        {{- if .Values.application.crossRegionFallback.enabled }}
+        region: {{ .Values.application.crossRegionFallback.region | quote }}
+        table-name: {{ .Values.application.crossRegionFallback.tableName | quote }}
+        kms:
+          key-id: {{ .Values.application.crossRegionFallback.kmsKeyId | quote }}
+        sts:
+          role-arn: {{ .Values.application.crossRegionFallback.stsRoleArn | quote }}
+        {{- end }}
       secret:
         k8s:
           name: {{ .Values.application.k8s.secretName | quote }}

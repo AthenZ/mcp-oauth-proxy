@@ -49,6 +49,9 @@ public class AuthorizationCodeService {
     @Inject
     AuthCodeStore authCodeStore;
 
+    @Inject
+    AuthCodeRegionResolver authCodeRegionResolver;
+
     @ConfigProperty(name = "server.token-exchange.idp")
     String providerDefault;
 
@@ -111,7 +114,9 @@ public class AuthorizationCodeService {
             return null;
         }
 
-        AuthorizationCode authCode = authCodeStore.getAuthCode(code, providerDefault);
+        AuthCodeResolution resolution = authCodeRegionResolver.resolve(code, providerDefault);
+        AuthorizationCode authCode = resolution.authorizationCode();
+        boolean fromFallback = resolution.resolvedFromFallback();
 
         String codePrefixForLog = code.substring(0, Math.min(8, code.length()));
         if (authCode == null) {
@@ -123,14 +128,14 @@ public class AuthorizationCodeService {
         if (authCode.isUsed()) {
             log.error("Authorization code already used: {}", codePrefixForLog);
             // RFC 6749 Section 4.1.2: If code is used twice, revoke all tokens issued with it
-            authCodeStore.deleteAuthCode(code, providerDefault);
+            authCodeRegionResolver.deleteAuthCode(code, providerDefault, fromFallback);
             return null;
         }
 
         // Check expiration
         if (authCode.isExpired()) {
             log.warn("Authorization code expired: {}", codePrefixForLog);
-            authCodeStore.deleteAuthCode(code, providerDefault);
+            authCodeRegionResolver.deleteAuthCode(code, providerDefault, fromFallback);
             return null;
         }
 
@@ -156,8 +161,7 @@ public class AuthorizationCodeService {
 
         // Mark as used (one-time use enforcement)
         authCode.markAsUsed();
-        // delete code from store
-        authCodeStore.deleteAuthCode(code, providerDefault);
+        authCodeRegionResolver.deleteAuthCode(code, providerDefault, fromFallback);
 
         log.info("Authorization code validated and consumed for client: {}, subject: {}",
                 clientId, authCode.getSubject());

@@ -17,9 +17,9 @@ package io.athenz.mop.resource;
 
 import io.athenz.mop.model.AuthorizationCode;
 import io.athenz.mop.model.TokenWrapper;
+import io.athenz.mop.service.AuthCodeRegionResolver;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
-import io.athenz.mop.store.AuthCodeStore;
 import io.quarkus.oidc.OidcSession;
 import io.quarkus.oidc.RefreshToken;
 import io.quarkus.oidc.UserInfo;
@@ -32,6 +32,7 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.lang.invoke.MethodHandles;
+import java.util.Map;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.slf4j.Logger;
@@ -56,7 +57,7 @@ public class AtlassianResource extends BaseResource {
     RefreshToken refreshToken;
 
     @Inject
-    AuthCodeStore authCodeStore;
+    AuthCodeRegionResolver authCodeRegionResolver;
 
     @ConfigProperty(name = "server.token-exchange.idp")
     String providerDefault;
@@ -80,7 +81,24 @@ public class AtlassianResource extends BaseResource {
     @Produces(MediaType.TEXT_HTML)
     public Response authorize(@QueryParam("state") String state) {
         log.info("Atlassian request to store tokens: ");
-        AuthorizationCode authorizationCode = authCodeStore.getAuthCode(state, providerDefault);
+        if (state == null || state.isEmpty()) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of(
+                            "error", "invalid_request",
+                            "error_description", "Missing state parameter"))
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
+        }
+        AuthorizationCode authorizationCode = authCodeRegionResolver.resolve(state, providerDefault).authorizationCode();
+        if (authorizationCode == null) {
+            log.warn("Atlassian callback: authorization code not found for state (local or cross-region)");
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of(
+                            "error", "invalid_grant",
+                            "error_description", "Authorization code not found or expired"))
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
+        }
         // Use same lookup key as used to obtain record from old table (username from userInfo + provider claim)
         String lookupKey = getUsername(userInfo, configService.getRemoteServerUsernameClaim(PROVIDER), null);
         String refreshToStore = (refreshToken != null) ? refreshToken.getToken() : null;

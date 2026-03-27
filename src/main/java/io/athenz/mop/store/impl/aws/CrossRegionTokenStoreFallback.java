@@ -15,6 +15,7 @@
  */
 package io.athenz.mop.store.impl.aws;
 
+import io.athenz.mop.model.AuthorizationCode;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.store.EnterpriseStoreQualifier;
 import jakarta.annotation.PostConstruct;
@@ -34,28 +35,28 @@ import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider
 import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
 
 /**
- * When enabled (e.g. in us-east-1 and us-west-2 production), allows /userinfo to look up
- * the token in the other region's DynamoDB table if not found in the local region.
- * Delegates actual lookup to {@link TokenStoreDynamodbImpl} with the fallback client/table.
+ * When enabled (e.g. in us-east-1 and us-west-2 production), allows reading from the peer region's
+ * DynamoDB tokens table if not found locally — used for /userinfo, MoP authorization code resolution
+ * (POST /token, IdP callbacks), etc. Delegates to {@link TokenStoreDynamodbImpl} with the fallback client/table.
  */
 @ApplicationScoped
-public class UserInfoCrossRegionFallback {
+public class CrossRegionTokenStoreFallback {
 
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-    @ConfigProperty(name = "server.userinfo.cross-region-fallback.enabled", defaultValue = "false")
+    @ConfigProperty(name = "server.cross-region-fallback.enabled", defaultValue = "false")
     boolean enabled;
 
-    @ConfigProperty(name = "server.userinfo.cross-region-fallback.region")
+    @ConfigProperty(name = "server.cross-region-fallback.region")
     Optional<String> fallbackRegion;
 
-    @ConfigProperty(name = "server.userinfo.cross-region-fallback.table-name")
+    @ConfigProperty(name = "server.cross-region-fallback.table-name")
     Optional<String> fallbackTableName;
 
-    @ConfigProperty(name = "server.userinfo.cross-region-fallback.kms.key-id")
+    @ConfigProperty(name = "server.cross-region-fallback.kms.key-id")
     Optional<String> fallbackKmsKeyId;
 
-    @ConfigProperty(name = "server.userinfo.cross-region-fallback.sts.role-arn")
+    @ConfigProperty(name = "server.cross-region-fallback.sts.role-arn")
     Optional<String> fallbackStsRoleArn;
 
     @Inject
@@ -75,7 +76,7 @@ public class UserInfoCrossRegionFallback {
         String kmsKeyId = fallbackKmsKeyId.map(String::trim).filter(s -> !s.isEmpty()).orElse(null);
         String stsRoleArn = fallbackStsRoleArn.map(String::trim).filter(s -> !s.isEmpty()).orElse(null);
         if (!enabled || region == null || tableName == null || kmsKeyId == null || stsRoleArn == null) {
-            log.info("Userinfo cross-region fallback disabled or incomplete config");
+            log.info("Cross-region DynamoDB fallback disabled or incomplete config");
             return;
         }
         try {
@@ -86,7 +87,7 @@ public class UserInfoCrossRegionFallback {
                     .stsClient(StsClient.builder().region(Region.of(region)).build())
                     .refreshRequest(AssumeRoleRequest.builder()
                             .roleArn(stsRoleArn)
-                            .roleSessionName("mcp-oauth-proxy-userinfo-fallback")
+                            .roleSessionName("mcp-oauth-proxy-cross-region-fallback")
                             .build())
                     .build();
 
@@ -102,9 +103,9 @@ public class UserInfoCrossRegionFallback {
                     )
                     .build();
             fallbackTableNameResolved = tableName;
-            log.info("Userinfo cross-region fallback enabled for region={} table={}", region, tableName);
+            log.info("Cross-region DynamoDB fallback enabled for region={} table={}", region, tableName);
         } catch (Exception e) {
-            log.warn("Failed to build userinfo cross-region fallback client: {}", e.getMessage());
+            log.warn("Failed to build cross-region DynamoDB fallback client: {}", e.getMessage());
         }
     }
 
@@ -142,6 +143,40 @@ public class UserInfoCrossRegionFallback {
         } catch (Exception e) {
             log.warn("Fallback region getUserToken failed for user={} provider={}: {}", user, provider, e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Look up MoP authorization code in the fallback region's tokens table.
+     */
+    public AuthorizationCode getAuthCode(String code, String provider) {
+        if (fallbackClient == null) {
+            return null;
+        }
+        try {
+            AuthorizationCode authCode = tokenStoreDynamodb.getAuthCode(fallbackClient, fallbackTableNameResolved, code, provider);
+            if (authCode != null) {
+                String regionLabel = fallbackRegion != null ? fallbackRegion.map(String::trim).orElse("") : "";
+                log.info("Found authorization code in fallback region {}", regionLabel);
+            }
+            return authCode;
+        } catch (Exception e) {
+            log.warn("Fallback region getAuthCode failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Delete MoP authorization code from the fallback region's table (after successful consume in /token).
+     */
+    public void deleteAuthCode(String code, String provider) {
+        if (fallbackClient == null) {
+            return;
+        }
+        try {
+            tokenStoreDynamodb.deleteAuthCode(fallbackClient, fallbackTableNameResolved, code, provider);
+        } catch (Exception e) {
+            log.warn("Fallback region deleteAuthCode failed: {}", e.getMessage());
         }
     }
 }

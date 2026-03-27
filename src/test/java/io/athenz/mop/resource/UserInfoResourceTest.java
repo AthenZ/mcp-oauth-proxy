@@ -26,7 +26,7 @@ import com.nimbusds.jwt.SignedJWT;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.store.TokenStore;
-import io.athenz.mop.store.impl.aws.UserInfoCrossRegionFallback;
+import io.athenz.mop.store.impl.aws.CrossRegionTokenStoreFallback;
 import jakarta.ws.rs.core.Response;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,7 +60,7 @@ class UserInfoResourceTest {
     private TokenStore tokenStore;
 
     @Mock
-    private UserInfoCrossRegionFallback crossRegionFallback;
+    private CrossRegionTokenStoreFallback crossRegionFallback;
 
     @InjectMocks
     private UserInfoResource userInfoResource;
