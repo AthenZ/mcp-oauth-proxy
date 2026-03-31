@@ -17,6 +17,7 @@ package io.athenz.mop.service;
 
 import io.athenz.mop.config.AthenzTokenExchangeConfig;
 import io.athenz.mop.model.AuthResult;
+import io.athenz.mop.model.GcpZmsPrincipalScope;
 import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.RequestedZtsTokenType;
 import io.athenz.mop.model.TokenExchangeDO;
@@ -94,8 +95,9 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
             log.warn("Google GCP exchange: missing short_id claim in Okta id_token");
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
-        String roleMember = "user." + shortId;;
-        String scopeStr = zmsServiceImpl.getScopeForPrincipal(roleMember, gcpRoleName);
+        String roleMember = "user." + shortId;
+        GcpZmsPrincipalScope zmsScope = zmsServiceImpl.getScopeForPrincipal(roleMember, gcpRoleName);
+        String scopeStr = zmsScope.scope();
         List<String> scopeList = (scopeStr != null && !scopeStr.isBlank())
                 ? Arrays.asList(scopeStr.split("\\s+"))
                 : List.of();
@@ -118,7 +120,8 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
 
-        String stsAccessToken = googleWorkforceTokenExchange.exchange(athenzIdToken, audience);
+        String stsAccessToken = googleWorkforceTokenExchange.exchange(
+                athenzIdToken, audience, zmsScope.defaultBillingProject());
         if (stsAccessToken == null || stsAccessToken.isBlank()) {
             log.warn("Google GCP exchange: Google STS exchange failed");
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
