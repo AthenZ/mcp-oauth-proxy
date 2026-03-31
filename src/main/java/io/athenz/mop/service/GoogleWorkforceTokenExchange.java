@@ -28,6 +28,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,7 +45,7 @@ public class GoogleWorkforceTokenExchange {
     private static final String GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange";
     private static final String SUBJECT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt";
     private static final String REQUESTED_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token";
-    private static final String DEFAULT_BILLIGN_PROJECT = "core-mcpworkspace-p";
+    private static final String FALLBACK_STS_USER_PROJECT = "core-mcpworkspace-p";
 
     @Inject
     GoogleWorkforceTokenExchangeConfig config;
@@ -59,6 +60,14 @@ public class GoogleWorkforceTokenExchange {
      * @return STS access token string, or null on failure
      */
     public String exchange(String athenzIdToken, String audience) {
+        return exchange(athenzIdToken, audience, null);
+    }
+
+    /**
+     * Same as {@link #exchange(String, String)}; {@code userProject} is sent as STS {@code userProject}
+     * when non-blank, otherwise the built-in fallback project id is used.
+     */
+    public String exchange(String athenzIdToken, String audience, String userProject) {
         if (athenzIdToken == null || athenzIdToken.isBlank() || audience == null || audience.isBlank()) {
             return null;
         }
@@ -78,7 +87,10 @@ public class GoogleWorkforceTokenExchange {
             exchangeTokenRequest.setRequestedTokenType(REQUESTED_TOKEN_TYPE);
             exchangeTokenRequest.setSubjectToken(athenzIdToken);
             exchangeTokenRequest.setSubjectTokenType(SUBJECT_TOKEN_TYPE);
-            exchangeTokenRequest.setOptions("{\"userProject\": \"" + DEFAULT_BILLIGN_PROJECT + "\"}");
+            String billingProject = (userProject != null && !userProject.isBlank())
+                    ? userProject
+                    : FALLBACK_STS_USER_PROJECT;
+            exchangeTokenRequest.setOptions(objectMapper.writeValueAsString(Map.of("userProject", billingProject)));
 
             String json = objectMapper.writeValueAsString(exchangeTokenRequest);
 
