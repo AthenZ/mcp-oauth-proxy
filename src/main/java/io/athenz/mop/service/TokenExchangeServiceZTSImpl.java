@@ -27,6 +27,11 @@ import io.athenz.mop.model.OAuth2ErrorResponse;
 import io.athenz.mop.model.RequestedZtsTokenType;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
+import io.athenz.mop.telemetry.ExchangeStep;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.WebApplicationException;
@@ -46,28 +51,47 @@ public class TokenExchangeServiceZTSImpl implements TokenExchangeService {
     @Inject
     AthenzTokenExchangeConfig athenzTokenExchangeConfig;
 
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
+    @Inject
+    TelemetryProviderResolver telemetryProviderResolver;
+
+    @Inject
+    TelemetryRequestContext telemetryRequestContext;
+
+    @Inject
+    MetricsRegionProvider metricsRegionProvider;
+
     @Override
     public AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO) {
+        long t0 = System.nanoTime();
         log.info("getJWTAuthorizationGrantFromIdentityProvider: domain: {} scopes: {}",
                 tokenExchangeDO.namespace(), tokenExchangeDO.scopes());
-        OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder
-                .newBuilder(OAuthTokenRequestBuilder.OAUTH_GRANT_TOKEN_EXCHANGE)
-                .requestedTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_JAG)
-                .audience(tokenExchangeDO.remoteServer())
-                .roleNames(tokenExchangeDO.scopes())
-                .subjectTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_ID)
-                .subjectToken(tokenExchangeDO.tokenWrapper().idToken())
-                .openIdIssuer(true);
-
-        ZTSClient ztsClient = ztsClientProducer.getZTSClient();
-        AccessTokenResponse tokenResponse;
         try {
-            tokenResponse = ztsClient.getJAGToken(builder);
-        } catch (ZTSClientException e) {
-            throw mapZtsException(e);
+            OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder
+                    .newBuilder(OAuthTokenRequestBuilder.OAUTH_GRANT_TOKEN_EXCHANGE)
+                    .requestedTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_JAG)
+                    .audience(tokenExchangeDO.remoteServer())
+                    .roleNames(tokenExchangeDO.scopes())
+                    .subjectTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_ID)
+                    .subjectToken(tokenExchangeDO.tokenWrapper().idToken())
+                    .openIdIssuer(true);
+
+            ZTSClient ztsClient = ztsClientProducer.getZTSClient();
+            AccessTokenResponse tokenResponse;
+            try {
+                tokenResponse = ztsClient.getJAGToken(builder);
+            } catch (ZTSClientException e) {
+                throw mapZtsException(e);
+            }
+            TokenWrapper jagToken = new TokenWrapper(tokenExchangeDO.tokenWrapper().key(), tokenExchangeDO.remoteServer(), tokenResponse.getAccess_token(), null, null, Long.valueOf(tokenResponse.getExpires_in()));
+            recordZtsStep(ExchangeStep.ZTS_JAG_GRANT, tokenExchangeDO.resource(), true, null, t0);
+            return new AuthorizationResultDO(AuthResult.AUTHORIZED, jagToken);
+        } catch (WebApplicationException e) {
+            recordZtsStep(ExchangeStep.ZTS_JAG_GRANT, tokenExchangeDO.resource(), false, "unauthorized", t0);
+            throw e;
         }
-        TokenWrapper jagToken = new TokenWrapper(tokenExchangeDO.tokenWrapper().key(), tokenExchangeDO.remoteServer(), tokenResponse.getAccess_token(), null, null, Long.valueOf(tokenResponse.getExpires_in()));
-         return new AuthorizationResultDO(AuthResult.AUTHORIZED, jagToken);
     }
 
     @Override
@@ -75,24 +99,31 @@ public class TokenExchangeServiceZTSImpl implements TokenExchangeService {
         if (tokenExchangeDO.requestedZtsTokenType() == RequestedZtsTokenType.ID_TOKEN) {
             return getAthenzIdTokenViaZts(tokenExchangeDO);
         }
+        long t0 = System.nanoTime();
         log.info("getAccessTokenFromResourceAuthorizationServer");
-        OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder
-                .newBuilder(OAuthTokenRequestBuilder.OAUTH_GRANT_JWT_BEARER)
-                .assertion(tokenExchangeDO.tokenWrapper().idToken())
-                .clientAssertionType(OAuthTokenRequestBuilder.OAUTH_ASSERTION_TYPE_JWT_BEARER)
-                .audience(tokenExchangeDO.namespace())
-                .roleNames(tokenExchangeDO.scopes())
-                .openIdIssuer(true);
-
-        ZTSClient ztsClient = ztsClientProducer.getZTSClient();
-        AccessTokenResponse tokenResponse;
         try {
-            tokenResponse = ztsClient.getJAGExchangeToken(builder);
-        } catch (ZTSClientException e) {
-            throw mapZtsException(e);
+            OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder
+                    .newBuilder(OAuthTokenRequestBuilder.OAUTH_GRANT_JWT_BEARER)
+                    .assertion(tokenExchangeDO.tokenWrapper().idToken())
+                    .clientAssertionType(OAuthTokenRequestBuilder.OAUTH_ASSERTION_TYPE_JWT_BEARER)
+                    .audience(tokenExchangeDO.namespace())
+                    .roleNames(tokenExchangeDO.scopes())
+                    .openIdIssuer(true);
+
+            ZTSClient ztsClient = ztsClientProducer.getZTSClient();
+            AccessTokenResponse tokenResponse;
+            try {
+                tokenResponse = ztsClient.getJAGExchangeToken(builder);
+            } catch (ZTSClientException e) {
+                throw mapZtsException(e);
+            }
+            TokenWrapper resourceAccessToken = new TokenWrapper(tokenExchangeDO.tokenWrapper().key(), tokenExchangeDO.remoteServer(), null, tokenResponse.getAccess_token(), null, Long.valueOf(tokenResponse.getExpires_in()));
+            recordZtsStep(ExchangeStep.ZTS_JAG_EXCHANGE, tokenExchangeDO.resource(), true, null, t0);
+            return new AuthorizationResultDO(AuthResult.AUTHORIZED, resourceAccessToken);
+        } catch (WebApplicationException e) {
+            recordZtsStep(ExchangeStep.ZTS_JAG_EXCHANGE, tokenExchangeDO.resource(), false, "unauthorized", t0);
+            throw e;
         }
-        TokenWrapper resourceAccessToken = new TokenWrapper(tokenExchangeDO.tokenWrapper().key(), tokenExchangeDO.remoteServer(), null, tokenResponse.getAccess_token(), null, Long.valueOf(tokenResponse.getExpires_in()));
-        return new AuthorizationResultDO(AuthResult.AUTHORIZED, resourceAccessToken);
     }
 
     /**
@@ -100,52 +131,75 @@ public class TokenExchangeServiceZTSImpl implements TokenExchangeService {
      * Uses getJAGToken which posts token-exchange request; ZTS returns AccessTokenResponse with id_token.
      */
     private AuthorizationResultDO getAthenzIdTokenViaZts(TokenExchangeDO tokenExchangeDO) {
+        long t0 = System.nanoTime();
         log.info("getAccessTokenFromResourceAuthorizationServer: token exchange for Athenz id_token");
-        OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder
-                .newBuilder(OAuthTokenRequestBuilder.OAUTH_GRANT_TOKEN_EXCHANGE)
-                .requestedTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_ID)
-                .audience(athenzTokenExchangeConfig.audience())
-                .roleNames(tokenExchangeDO.scopes())
-                .subjectTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_ID)
-                .subjectToken(tokenExchangeDO.tokenWrapper().idToken())
-                .openIdIssuer(true);
-
-        ZTSClient ztsClient = ztsClientProducer.getZTSClient();
-        AccessTokenResponse tokenResponse;
         try {
-            tokenResponse = ztsClient.getAccessToken(builder, true);
-        } catch (ZTSClientException e) {
-            throw mapZtsException(e);
+            OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder
+                    .newBuilder(OAuthTokenRequestBuilder.OAUTH_GRANT_TOKEN_EXCHANGE)
+                    .requestedTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_ID)
+                    .audience(athenzTokenExchangeConfig.audience())
+                    .roleNames(tokenExchangeDO.scopes())
+                    .subjectTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_ID)
+                    .subjectToken(tokenExchangeDO.tokenWrapper().idToken())
+                    .openIdIssuer(true);
+
+            ZTSClient ztsClient = ztsClientProducer.getZTSClient();
+            AccessTokenResponse tokenResponse;
+            try {
+                tokenResponse = ztsClient.getAccessToken(builder, true);
+            } catch (ZTSClientException e) {
+                throw mapZtsException(e);
+            }
+            String idTokenValue = tokenResponse.getId_token();
+            if (idTokenValue == null || idTokenValue.isBlank()) {
+                log.warn("Token exchange for id_token: ZTS response had no id_token");
+                recordZtsStep(ExchangeStep.ZTS_ATHENZ_ID_TOKEN, tokenExchangeDO.resource(), false, "unauthorized", t0);
+                return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            }
+            Long expiresIn = tokenResponse.getExpires_in() != null ? tokenResponse.getExpires_in().longValue() : 3600L;
+            TokenWrapper idToken = new TokenWrapper(
+                    tokenExchangeDO.tokenWrapper().key(),
+                    tokenExchangeDO.remoteServer(),
+                    idTokenValue,
+                    null,
+                    null,
+                    expiresIn);
+            recordZtsStep(ExchangeStep.ZTS_ATHENZ_ID_TOKEN, tokenExchangeDO.resource(), true, null, t0);
+            return new AuthorizationResultDO(AuthResult.AUTHORIZED, idToken);
+        } catch (WebApplicationException e) {
+            recordZtsStep(ExchangeStep.ZTS_ATHENZ_ID_TOKEN, tokenExchangeDO.resource(), false, "unauthorized", t0);
+            throw e;
         }
-        String idTokenValue = tokenResponse.getId_token();
-        if (idTokenValue == null || idTokenValue.isBlank()) {
-            log.warn("Token exchange for id_token: ZTS response had no id_token");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
-        }
-        Long expiresIn = tokenResponse.getExpires_in() != null ? tokenResponse.getExpires_in().longValue() : 3600L;
-        TokenWrapper idToken = new TokenWrapper(
-                tokenExchangeDO.tokenWrapper().key(),
-                tokenExchangeDO.remoteServer(),
-                idTokenValue,
-                null,
-                null,
-                expiresIn);
-        return new AuthorizationResultDO(AuthResult.AUTHORIZED, idToken);
     }
 
     @Override
     public AuthorizationResultDO getAccessTokenFromResourceAuthorizationServerWithClientCredentials(TokenExchangeDO tokenExchangeDO) {
-        OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder.newBuilder("client_credentials");
-        builder.openIdIssuer(true).expiryTime(3600L).roleNames(tokenExchangeDO.scopes()).domainName(tokenExchangeDO.namespace());
-        ZTSClient ztsClient = ztsClientProducer.getZTSClient();
-        AccessTokenResponse tokenResponse;
+        long t0 = System.nanoTime();
         try {
-            tokenResponse = ztsClient.getAccessToken(builder, true);
-        } catch (ZTSClientException e) {
-            throw mapZtsException(e);
+            OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder.newBuilder("client_credentials");
+            builder.openIdIssuer(true).expiryTime(3600L).roleNames(tokenExchangeDO.scopes()).domainName(tokenExchangeDO.namespace());
+            ZTSClient ztsClient = ztsClientProducer.getZTSClient();
+            AccessTokenResponse tokenResponse;
+            try {
+                tokenResponse = ztsClient.getAccessToken(builder, true);
+            } catch (ZTSClientException e) {
+                throw mapZtsException(e);
+            }
+            TokenWrapper resourceAccessToken = new TokenWrapper(tokenExchangeDO.tokenWrapper().key(), tokenExchangeDO.remoteServer(), null, tokenResponse.getAccess_token(), null, Long.valueOf(tokenResponse.getExpires_in()));
+            recordZtsStep(ExchangeStep.ZTS_CLIENT_CREDENTIALS, tokenExchangeDO.resource(), true, null, t0);
+            return new AuthorizationResultDO(AuthResult.AUTHORIZED, resourceAccessToken);
+        } catch (WebApplicationException e) {
+            recordZtsStep(ExchangeStep.ZTS_CLIENT_CREDENTIALS, tokenExchangeDO.resource(), false, "unauthorized", t0);
+            throw e;
         }
-        TokenWrapper resourceAccessToken = new TokenWrapper(tokenExchangeDO.tokenWrapper().key(), tokenExchangeDO.remoteServer(), null, tokenResponse.getAccess_token(), null, Long.valueOf(tokenResponse.getExpires_in()));
-        return new AuthorizationResultDO(AuthResult.AUTHORIZED, resourceAccessToken);
+    }
+
+    private void recordZtsStep(ExchangeStep step, String resourceUri, boolean success, String errorType, long startNanos) {
+        double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+        String oauthProvider = telemetryProviderResolver.fromResourceUri(resourceUri);
+        oauthProxyMetrics.recordExchangeStep(step, oauthProvider, success,
+                success ? null : (errorType != null ? errorType : "unauthorized"),
+                telemetryRequestContext.oauthClient(), metricsRegionProvider.primaryRegion(), seconds);
     }
 
     @Override

@@ -22,6 +22,11 @@ import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.RequestedZtsTokenType;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
+import io.athenz.mop.telemetry.ExchangeStep;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProviderLabel;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
 import io.athenz.mop.util.JwtUtils;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -57,6 +62,15 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
 
     @Inject
     ConfigService configService;
+
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
+    @Inject
+    TelemetryRequestContext telemetryRequestContext;
+
+    @Inject
+    MetricsRegionProvider metricsRegionProvider;
 
     @ConfigProperty(name = "server.token-exchange.gcp-role-name", defaultValue = "gcp.fed.mcp.user")
     String gcpRoleName;
@@ -109,8 +123,16 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
                 oktaToken,
                 RequestedZtsTokenType.ID_TOKEN);
         TokenExchangeService athenzExchange = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("athenz");
+        String oauthProviderLabel = OauthProviderLabel.normalize(audience);
+        String oauthClient = telemetryRequestContext.oauthClient();
+        String region = metricsRegionProvider.primaryRegion();
+
+        long tAthenz = System.nanoTime();
         AuthorizationResultDO athenzResult = athenzExchange.getAccessTokenFromResourceAuthorizationServer(athenzRequest);
-        if (athenzResult == null || athenzResult.token() == null || athenzResult.authResult() != AuthResult.AUTHORIZED) {
+        boolean athenzOk = athenzResult != null && athenzResult.token() != null && athenzResult.authResult() == AuthResult.AUTHORIZED;
+        recordGcpStep(ExchangeStep.GCP_ATHENZ_ID_TOKEN, oauthProviderLabel, oauthClient, region, tAthenz, athenzOk);
+
+        if (!athenzOk) {
             log.warn("Google GCP exchange: Athenz ID token exchange failed");
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
@@ -120,9 +142,12 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
 
+        long tSts = System.nanoTime();
         String stsAccessToken = googleWorkforceTokenExchange.exchange(
                 athenzIdToken, audience, zmsScope.defaultBillingProject());
-        if (stsAccessToken == null || stsAccessToken.isBlank()) {
+        boolean stsOk = stsAccessToken != null && !stsAccessToken.isBlank();
+        recordGcpStep(ExchangeStep.GCP_GOOGLE_STS, oauthProviderLabel, oauthClient, region, tSts, stsOk);
+        if (!stsOk) {
             log.warn("Google GCP exchange: Google STS exchange failed");
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
@@ -147,5 +172,12 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
     public TokenWrapper refreshWithUpstreamToken(String upstreamRefreshToken) {
         // Upstream for GCP Monitoring/Logging is Okta; refresh is performed by Okta exchange service.
         return null;
+    }
+
+    private void recordGcpStep(ExchangeStep step, String oauthProvider, String oauthClient, String region,
+                               long startNanos, boolean success) {
+        double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+        oauthProxyMetrics.recordExchangeStep(step, oauthProvider, success,
+                success ? null : "unauthorized", oauthClient, region, seconds);
     }
 }

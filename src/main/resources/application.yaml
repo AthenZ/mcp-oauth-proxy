@@ -33,7 +33,6 @@ quarkus:
         level: INFO
         min-level: INFO
 
-
   oidc:
     auth-server-url:
     client-id: ${CLIENT_ID}
@@ -102,7 +101,20 @@ quarkus:
           access_type: "offline"
 
   otel:
-    enabled: false
+    # Build-time in Quarkus: must be true at `mvn package` for runtime ConfigMap overrides to take effect.
+    enabled: true
+    # Required for application OTLP metrics (OauthProxyMetrics / mop_*). Disabled by default in Quarkus (tech preview).
+    metrics:
+      enabled: true
+    # MoP uses OTLP for metrics (and traces); avoid OTLP log export noise when no collector or logs unused.
+    logs:
+      enabled: false
+      handler:
+        enabled: false
+    instrument:
+      # Stops "VertxTracer delegate not set" WARN from startup race (OIDC/HTTP before bridge; quarkus#37718).
+      # Disables Vert.x HTTP trace spans only; mop_* metrics and non-Vert.x tracing are unaffected.
+      vertx-http: false
 
   cache:
     caffeine:
@@ -116,6 +128,8 @@ quarkus:
         maximum-size:
 
 server:
+  metrics:
+    region: ${AWS_REGION:}
   host: ${HOST}
   tls:
     certificate:

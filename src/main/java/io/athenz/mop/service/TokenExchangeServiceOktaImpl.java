@@ -40,6 +40,13 @@ import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.secret.K8SSecretsProvider;
+import io.athenz.mop.telemetry.ExchangeStep;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProviderLabel;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
+import io.athenz.mop.telemetry.UpstreamHttpCallLabels;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -64,6 +71,18 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
     @Inject
     OktaTokenClient oktaTokenClient;
 
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
+    @Inject
+    TelemetryProviderResolver telemetryProviderResolver;
+
+    @Inject
+    TelemetryRequestContext telemetryRequestContext;
+
+    @Inject
+    MetricsRegionProvider metricsRegionProvider;
+
     @Override
     public AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO) {
         throw new RuntimeException("Not implemented yet");
@@ -71,6 +90,10 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
 
     @Override
     public AuthorizationResultDO getAccessTokenFromResourceAuthorizationServer(TokenExchangeDO tokenExchangeDO) {
+        long t0 = System.nanoTime();
+        String oauthProvider = telemetryProviderResolver.fromResourceUri(tokenExchangeDO.resource());
+        String oauthClient = telemetryRequestContext.oauthClient();
+        String region = metricsRegionProvider.primaryRegion();
         try {
 
             String clientId = oktaTokenExchangeConfig.clientId();
@@ -81,20 +104,32 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
 
             if (clientSecret == null) {
                 log.error("Failed to retrieve client secret for key: {}", clientSecretKey);
+                recordOktaExchange(t0, oauthProvider, oauthClient, region, false);
                 return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
             }
 
             String audience = oktaTokenExchangeConfig.audience();
-            return exchangeToken(
+            AuthorizationResultDO result = exchangeToken(
                     tokenExchangeDO.tokenWrapper().accessToken(),
                     clientId,
                     clientSecret,
                     audience
             );
+            recordOktaExchange(t0, oauthProvider, oauthClient, region,
+                    result.authResult() == AuthResult.AUTHORIZED);
+            return result;
         } catch (Exception e) {
             log.error("Error exchanging token", e);
+            recordOktaExchange(t0, oauthProvider, oauthClient, region, false);
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
+    }
+
+    private void recordOktaExchange(long startNanos, String oauthProvider, String oauthClient,
+                                    String region, boolean success) {
+        double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+        oauthProxyMetrics.recordExchangeStep(ExchangeStep.OKTA_TOKEN_EXCHANGE, oauthProvider, success,
+                success ? null : "unauthorized", oauthClient, region, seconds);
     }
 
     @Override
@@ -130,7 +165,11 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
                 Collections.singletonList(audienceObj));
 
         TokenRequest tokenRequest = new TokenRequest(tokenEndpoint, clientAuth, grant);
-        TokenResponse tokenResponse = tokenClient.execute(tokenRequest);
+        TokenResponse tokenResponse;
+        try (var ignored = UpstreamHttpCallLabels.withLabels(
+                OauthProviderLabel.OKTA, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
+            tokenResponse = tokenClient.execute(tokenRequest);
+        }
 
         if (!tokenResponse.indicatesSuccess()) {
             TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
@@ -156,9 +195,13 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
         if (upstreamRefreshToken == null || upstreamRefreshToken.isEmpty()) {
             return null;
         }
+        long t0 = System.nanoTime();
+        String oauthClient = telemetryRequestContext.oauthClient();
+        String region = metricsRegionProvider.primaryRegion();
         try {
             OktaTokens tokens = oktaTokenClient.refreshToken(upstreamRefreshToken);
             long ttl = tokens.expiresIn() > 0 ? tokens.expiresIn() : 3600L;
+            recordUpstreamRefresh(t0, oauthClient, region, true);
             return new TokenWrapper(
                     null,
                     null,
@@ -169,7 +212,14 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
             );
         } catch (OktaTokenRevokedException | OktaTokenRefreshException e) {
             log.warn("Okta refresh failed: {}", e.getMessage());
+            recordUpstreamRefresh(t0, oauthClient, region, false);
             return null;
         }
+    }
+
+    private void recordUpstreamRefresh(long startNanos, String oauthClient, String region, boolean success) {
+        double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+        oauthProxyMetrics.recordExchangeStep(ExchangeStep.UPSTREAM_REFRESH, OauthProviderLabel.OKTA, success,
+                success ? null : "unauthorized", oauthClient, region, seconds);
     }
 }

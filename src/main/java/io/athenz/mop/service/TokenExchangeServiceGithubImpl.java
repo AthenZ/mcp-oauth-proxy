@@ -32,6 +32,13 @@ import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.secret.K8SSecretsProvider;
+import io.athenz.mop.telemetry.ExchangeStep;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProviderLabel;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
+import io.athenz.mop.telemetry.UpstreamHttpCallLabels;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -61,6 +68,18 @@ public class TokenExchangeServiceGithubImpl implements TokenExchangeService {
     @Inject
     TokenClient tokenClient;
 
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
+    @Inject
+    TelemetryProviderResolver telemetryProviderResolver;
+
+    @Inject
+    TelemetryRequestContext telemetryRequestContext;
+
+    @Inject
+    MetricsRegionProvider metricsRegionProvider;
+
     @Override
     public AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO) {
         throw new RuntimeException("Not implemented yet");
@@ -68,6 +87,11 @@ public class TokenExchangeServiceGithubImpl implements TokenExchangeService {
 
     @Override
     public AuthorizationResultDO getAccessTokenFromResourceAuthorizationServer(TokenExchangeDO tokenExchangeDO) {
+        long t0 = System.nanoTime();
+        String oauthProvider = telemetryProviderResolver.fromResourceUri(tokenExchangeDO.resource());
+        double seconds = (System.nanoTime() - t0) / 1_000_000_000.0;
+        oauthProxyMetrics.recordExchangeStep(ExchangeStep.PASS_THROUGH, oauthProvider, true, null,
+                telemetryRequestContext.oauthClient(), metricsRegionProvider.primaryRegion(), seconds);
         return new AuthorizationResultDO(AuthResult.AUTHORIZED, tokenExchangeDO.tokenWrapper());
     }
 
@@ -106,6 +130,10 @@ public class TokenExchangeServiceGithubImpl implements TokenExchangeService {
             return null;
         }
 
+        long t0 = System.nanoTime();
+        String oauthProvider = OauthProviderLabel.GITHUB;
+        String oauthClient = telemetryRequestContext.oauthClient();
+        String region = metricsRegionProvider.primaryRegion();
         try {
             String refreshTokenValue = upstreamRefreshToken.trim();
 
@@ -119,7 +147,11 @@ public class TokenExchangeServiceGithubImpl implements TokenExchangeService {
                     grant
             );
 
-            TokenResponse tokenResponse = tokenClient.execute(tokenRequest);
+            TokenResponse tokenResponse;
+            try (var ignored = UpstreamHttpCallLabels.withLabels(
+                    OauthProviderLabel.GITHUB, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
+                tokenResponse = tokenClient.execute(tokenRequest);
+            }
 
             if (tokenResponse.indicatesSuccess()) {
                 AccessTokenResponse successResponse = tokenResponse.toSuccessResponse();
@@ -127,6 +159,7 @@ public class TokenExchangeServiceGithubImpl implements TokenExchangeService {
                 RefreshToken newRefreshToken = successResponse.getTokens().getRefreshToken();
                 Long lifetime = accessToken.getLifetime();
                 long ttl = (lifetime != null && lifetime > 0) ? lifetime : GITHUB_DEFAULT_TOKEN_TTL;
+                recordGithubRefresh(t0, oauthProvider, oauthClient, region, true);
                 return new TokenWrapper(
                         null,
                         null,
@@ -140,11 +173,19 @@ public class TokenExchangeServiceGithubImpl implements TokenExchangeService {
                 String code = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getCode() : "unknown";
                 String desc = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getDescription() : "unknown";
                 log.warn("GitHub refresh failed: {} - {}", code, desc);
+                recordGithubRefresh(t0, oauthProvider, oauthClient, region, false);
                 return null;
             }
         } catch (Exception e) {
             log.warn("GitHub refresh failed", e);
+            recordGithubRefresh(t0, oauthProvider, oauthClient, region, false);
             return null;
         }
+    }
+
+    private void recordGithubRefresh(long startNanos, String oauthProvider, String oauthClient, String region, boolean success) {
+        double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+        oauthProxyMetrics.recordExchangeStep(ExchangeStep.UPSTREAM_REFRESH, oauthProvider, success,
+                success ? null : "unauthorized", oauthClient, region, seconds);
     }
 }

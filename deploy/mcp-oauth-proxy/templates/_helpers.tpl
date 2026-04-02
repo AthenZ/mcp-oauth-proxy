@@ -35,6 +35,38 @@ Create chart name and version as used by the chart label.
 {{- end }}
 
 {{/*
+Return the raw namespace (forceNamespace or release namespace), matching b2b-auth0-api chart.
+*/}}
+{{- define "mcp-oauth-proxy.rawnamespace" -}}
+{{- if .Values.forceNamespace -}}
+{{ print .Values.forceNamespace }}
+{{- else -}}
+{{ print .Release.Namespace }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Namespace line for Instrumentation metadata (indent under metadata:).
+*/}}
+{{- define "mcp-oauth-proxy.namespace" -}}
+{{ printf "namespace: %s" (include "mcp-oauth-proxy.rawnamespace" .) }}
+{{- end }}
+
+{{/*
+TLS cert path for OTEL exporter mTLS (Athenz SIA layout, same as b2b-auth0-api).
+*/}}
+{{- define "mcp-oauth-proxy.tlsCert" -}}
+{{- printf "/var/lib/sia/certs/%s.%s.cert.pem" .Values.athenz.domain .Values.athenz.service -}}
+{{- end -}}
+
+{{/*
+TLS key path for OTEL exporter mTLS (Athenz SIA layout, same as b2b-auth0-api).
+*/}}
+{{- define "mcp-oauth-proxy.tlsKey" -}}
+{{- printf "/var/lib/sia/keys/%s.%s.key.pem" .Values.athenz.domain .Values.athenz.service -}}
+{{- end -}}
+
+{{/*
 Common labels
 */}}
 {{- define "mcp-oauth-proxy.labels" -}}

@@ -18,6 +18,7 @@ package io.athenz.mop.store.impl.aws;
 import io.athenz.mop.model.AuthorizationCode;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
@@ -45,6 +46,9 @@ class CrossRegionTokenStoreFallbackTest {
     @Mock
     private DynamoDbClient fallbackClient;
 
+    @Mock
+    private OauthProxyMetrics oauthProxyMetrics;
+
     @InjectMocks
     private CrossRegionTokenStoreFallback fallback;
 
@@ -55,7 +59,7 @@ class CrossRegionTokenStoreFallbackTest {
         setField(fallback, "fallbackTableNameResolved", "fallback-table");
         // Same @InjectMocks instance across tests: reset peer client and mock invocations
         setField(fallback, "fallbackClient", null);
-        clearInvocations(tokenStoreDynamodb, dynamodbClientProvider, fallbackClient);
+        clearInvocations(tokenStoreDynamodb, dynamodbClientProvider, fallbackClient, oauthProxyMetrics);
     }
 
     private void setFallbackClient(DynamoDbClient client) throws Exception {

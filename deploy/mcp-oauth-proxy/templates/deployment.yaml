@@ -16,6 +16,9 @@ spec:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.otel.instrumentation.enabled }}
+        instrumentation.opentelemetry.io/inject-java: {{ printf "%s/%s" .Release.Namespace (include "mcp-oauth-proxy.fullname" .) | quote }}
+        {{- end }}
       {{- with .Values.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}

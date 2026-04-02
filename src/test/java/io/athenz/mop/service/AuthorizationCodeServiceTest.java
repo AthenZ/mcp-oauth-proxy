@@ -17,6 +17,10 @@ package io.athenz.mop.service;
 
 import io.athenz.mop.model.AuthorizationCode;
 import io.athenz.mop.store.AuthCodeStore;
+import io.athenz.mop.store.impl.aws.CrossRegionTokenStoreFallback;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -24,12 +28,15 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class AuthorizationCodeServiceTest {
@@ -40,13 +47,29 @@ class AuthorizationCodeServiceTest {
     @Mock
     private AuthCodeRegionResolver authCodeRegionResolver;
 
+    @Mock
+    private CrossRegionTokenStoreFallback crossRegionTokenStoreFallback;
+
+    @Mock
+    private OauthProxyMetrics oauthProxyMetrics;
+
+    @Mock
+    private MetricsRegionProvider metricsRegionProvider;
+
+    @Mock
+    private TelemetryProviderResolver telemetryProviderResolver;
+
     @InjectMocks
     private AuthorizationCodeService authorizationCodeService;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
         authorizationCodeService.providerDefault = AudienceConstants.PROVIDER_OKTA;
+        when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
+        Field f = AuthorizationCodeService.class.getDeclaredField("fallbackRegionConfig");
+        f.setAccessible(true);
+        f.set(authorizationCodeService, Optional.empty());
     }
 
     @Test
@@ -254,6 +277,24 @@ class AuthorizationCodeServiceTest {
         assertNull(result);
         verify(authCodeRegionResolver).resolve(code, AudienceConstants.PROVIDER_OKTA);
         verify(authCodeRegionResolver, never()).deleteAuthCode(anyString(), anyString(), anyBoolean());
+        verify(oauthProxyMetrics, never()).recordCrossRegionFallbackExhausted(
+                anyString(), anyString(), anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void testValidateAndConsume_CodeNotFound_crossRegionActive_recordsExhausted() {
+        String code = "missing-code";
+        when(crossRegionTokenStoreFallback.isActive()).thenReturn(true);
+        when(authCodeRegionResolver.resolve(code, AudienceConstants.PROVIDER_OKTA))
+                .thenReturn(new AuthCodeResolution(null, false));
+
+        AuthorizationCode result = authorizationCodeService.validateAndConsume(
+                code, "client-id", "https://example.com/callback", "verifier");
+
+        assertNull(result);
+        verify(oauthProxyMetrics, times(1)).recordCrossRegionFallbackExhausted(
+                eq(AudienceConstants.PROVIDER_OKTA), eq("auth_code_resolve"),
+                eq("us-east-1"), eq("unknown"), eq(401), eq("not_found"));
     }
 
     @Test

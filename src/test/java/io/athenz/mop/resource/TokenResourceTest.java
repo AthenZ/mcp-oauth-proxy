@@ -22,6 +22,10 @@ import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RefreshTokenService;
 import io.athenz.mop.service.UpstreamRefreshService;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
 import jakarta.ws.rs.core.Response;
 import java.time.Instant;
 import java.util.List;
@@ -38,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -71,12 +76,27 @@ class TokenResourceTest {
     @Mock
     private UpstreamRefreshService upstreamRefreshService;
 
+    @Mock
+    private OauthProxyMetrics oauthProxyMetrics;
+
+    @Mock
+    private TelemetryRequestContext telemetryRequestContext;
+
+    @Mock
+    private TelemetryProviderResolver telemetryProviderResolver;
+
+    @Mock
+    private MetricsRegionProvider metricsRegionProvider;
+
     @InjectMocks
     private TokenResource tokenResource;
 
     @BeforeEach
     void setUp() {
         tokenResource.refreshExpirySeconds = 7776000L;
+        lenient().when(telemetryRequestContext.oauthClient()).thenReturn("unknown");
+        lenient().when(telemetryProviderResolver.fromResourceUri(any())).thenReturn("unknown");
+        lenient().when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
     }
 
     @Test
@@ -152,7 +172,7 @@ class TokenResourceTest {
                 Instant.now().plusSeconds(600),
                 "state");
         when(authorizationCodeService.validateAndConsume(
-                eq("the-auth-code"), eq(CLIENT_ID), eq(REDIRECT_URI), eq("verifier")))
+                eq("the-auth-code"), eq(CLIENT_ID), eq(REDIRECT_URI), eq("verifier"), eq(RESOURCE)))
                 .thenReturn(authCode);
 
         ResourceMeta meta = new ResourceMeta(List.of(), "dom", PROVIDER, PROVIDER, false, null, null);
@@ -199,7 +219,7 @@ class TokenResourceTest {
                 Instant.now().plusSeconds(600),
                 "state");
         when(authorizationCodeService.validateAndConsume(
-                eq("the-auth-code"), eq(CLIENT_ID), eq(REDIRECT_URI), eq("verifier")))
+                eq("the-auth-code"), eq(CLIENT_ID), eq(REDIRECT_URI), eq("verifier"), eq(RESOURCE)))
                 .thenReturn(authCode);
 
         ResourceMeta meta = new ResourceMeta(List.of(), "dom", PROVIDER, PROVIDER, false, null, null);

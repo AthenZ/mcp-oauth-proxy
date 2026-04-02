@@ -24,6 +24,11 @@ import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RefreshTokenService;
 import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthClientLabel;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
 import io.quarkus.security.credential.CertificateCredential;
 import io.quarkus.security.credential.Credential;
 import io.quarkus.security.identity.SecurityIdentity;
@@ -78,6 +83,18 @@ public class TokenResource {
     @ConfigProperty(name = "server.refresh-token.expiry-seconds", defaultValue = "7776000")
     long refreshExpirySeconds;
 
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
+    @Inject
+    TelemetryRequestContext telemetryRequestContext;
+
+    @Inject
+    TelemetryProviderResolver telemetryProviderResolver;
+
+    @Inject
+    MetricsRegionProvider metricsRegionProvider;
+
     /**
      * RFC 6749/OAuth 2.1 compliant token endpoint
      * Accepts application/x-www-form-urlencoded (required by RFC 6749)
@@ -93,6 +110,8 @@ public class TokenResource {
         log.info("OAuth2 token request with grant_type: {} for resource: {}", request.getGrantType(),
                 request.getResource());
 
+        telemetryRequestContext.setOauthClient(OauthClientLabel.normalize(request.getClientId()));
+
         // Route to appropriate handler based on grant_type
         if ("authorization_code".equals(request.getGrantType())) {
             return handleAuthorizationCodeGrant(request);
@@ -102,11 +121,14 @@ public class TokenResource {
             return handleRefreshTokenGrant(request);
         } else {
             log.warn("Unsupported grant_type: {}", request.getGrantType());
-            return Response.status(Response.Status.BAD_REQUEST)
+            Response r = Response.status(Response.Status.BAD_REQUEST)
                     .entity(OAuth2ErrorResponse.of(
                             OAuth2ErrorResponse.ErrorCode.UNSUPPORTED_GRANT_TYPE,
                             "Supported grant types: authorization_code, client_credentials, refresh_token"))
                     .build();
+            oauthProxyMetrics.recordTokenIssuance("unknown", request.getGrantType() != null ? request.getGrantType() : "unknown",
+                    false, "unsupported_grant_type", telemetryRequestContext.oauthClient());
+            return r;
         }
     }
 
@@ -116,41 +138,48 @@ public class TokenResource {
      */
     private Response handleAuthorizationCodeGrant(OAuth2TokenRequest request) {
         log.info("Processing authorization_code grant");
+        long t0 = System.nanoTime();
+        String oauthClient = OauthClientLabel.normalize(request.getClientId());
+        telemetryRequestContext.setOauthClient(oauthClient);
 
         // Validate required parameters
         if (request.getCode() == null || request.getCode().isEmpty()) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(OAuth2ErrorResponse.of(
-                            OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
-                            "Missing required parameter: code"))
-                    .build();
+            return recordTokenGrant(request.getResource(), "authorization_code", t0, oauthClient,
+                    Response.status(Response.Status.BAD_REQUEST)
+                            .entity(OAuth2ErrorResponse.of(
+                                    OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
+                                    "Missing required parameter: code"))
+                            .build());
         }
 
         if (request.getRedirectUri() == null || request.getRedirectUri().isEmpty()) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(OAuth2ErrorResponse.of(
-                            OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
-                            "Missing required parameter: redirect_uri"))
-                    .build();
+            return recordTokenGrant(request.getResource(), "authorization_code", t0, oauthClient,
+                    Response.status(Response.Status.BAD_REQUEST)
+                            .entity(OAuth2ErrorResponse.of(
+                                    OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
+                                    "Missing required parameter: redirect_uri"))
+                            .build());
         }
 
         if (request.getCodeVerifier() == null || request.getCodeVerifier().isEmpty()) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(OAuth2ErrorResponse.of(
-                            OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
-                            "Missing required parameter: code_verifier (PKCE required in OAuth 2.1)"))
-                    .build();
+            return recordTokenGrant(request.getResource(), "authorization_code", t0, oauthClient,
+                    Response.status(Response.Status.BAD_REQUEST)
+                            .entity(OAuth2ErrorResponse.of(
+                                    OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
+                                    "Missing required parameter: code_verifier (PKCE required in OAuth 2.1)"))
+                            .build());
         }
 
         // Extract or validate client_id
         String clientId = request.getClientId();
 
         if (clientId == null || clientId.isEmpty()) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(OAuth2ErrorResponse.of(
-                            OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
-                            "Missing required parameter: client_id"))
-                    .build();
+            return recordTokenGrant(request.getResource(), "authorization_code", t0, oauthClient,
+                    Response.status(Response.Status.BAD_REQUEST)
+                            .entity(OAuth2ErrorResponse.of(
+                                    OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
+                                    "Missing required parameter: client_id"))
+                            .build());
         }
 
         // Validate and consume authorization code (one-time use + PKCE validation)
@@ -158,16 +187,18 @@ public class TokenResource {
                 request.getCode(),
                 clientId,
                 request.getRedirectUri(),
-                request.getCodeVerifier()
+                request.getCodeVerifier(),
+                request.getResource()
         );
 
         if (authCode == null) {
             log.error("Invalid or expired authorization code");
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(OAuth2ErrorResponse.of(
-                            OAuth2ErrorResponse.ErrorCode.INVALID_GRANT,
-                            "Invalid or expired authorization code"))
-                    .build();
+            return recordTokenGrant(request.getResource(), "authorization_code", t0, oauthClient,
+                    Response.status(Response.Status.BAD_REQUEST)
+                            .entity(OAuth2ErrorResponse.of(
+                                    OAuth2ErrorResponse.ErrorCode.INVALID_GRANT,
+                                    "Invalid or expired authorization code"))
+                            .build());
         }
 
         // TODO: Scope validation can be added once client starts requesting scopes
@@ -183,6 +214,8 @@ public class TokenResource {
         log.info("Authorization code validated for subject: {}, client: {}",
                 authCode.getSubject(), authCode.getClientId());
 
+        String resourceForMetrics = authCode.getResource() != null ? authCode.getResource() : request.getResource();
+
         // Get token response; then attach MOP refresh token if possible (authorization_code only)
         Response response = getTokenFromResourceAuthorizationServer(
                 authCode.getSubject(),
@@ -190,7 +223,7 @@ public class TokenResource {
                 authCode.getResource()
         );
         if (response.getStatus() != 200 || response.getEntity() == null) {
-            return response;
+            return recordTokenGrant(resourceForMetrics, "authorization_code", t0, oauthClient, response);
         }
         TokenResponse tokenResponse = (TokenResponse) response.getEntity();
         String resource = authCode.getResource() != null ? authCode.getResource() : request.getResource();
@@ -225,7 +258,7 @@ public class TokenResource {
             );
             if (mopRefresh == null) {
                 log.warn("RefreshTokenService.store returned null; returning token response without refresh");
-                return Response.ok(tokenResponse).build();
+                return recordTokenGrant(resourceForMetrics, "authorization_code", t0, oauthClient, Response.ok(tokenResponse).build());
             }
             TokenResponse withRefresh = new TokenResponse(
                     tokenResponse.accessToken(),
@@ -236,10 +269,10 @@ public class TokenResource {
                     refreshExpirySeconds
             );
             log.info("Attached MOP refresh token to authorization_code token response for subject={} clientId={}", authCode.getSubject(), request.getClientId());
-            return Response.ok(withRefresh).build();
+            return recordTokenGrant(resourceForMetrics, "authorization_code", t0, oauthClient, Response.ok(withRefresh).build());
         } catch (Exception e) {
             log.warn("Could not create MOP refresh token; returning token response without refresh: {}", e.getMessage());
-            return Response.ok(tokenResponse).build();
+            return recordTokenGrant(resourceForMetrics, "authorization_code", t0, oauthClient, Response.ok(tokenResponse).build());
         }
     }
 
@@ -249,16 +282,19 @@ public class TokenResource {
      */
     private Response handleClientCredentialsGrant(OAuth2TokenRequest request) {
         log.info("Processing client_credentials grant");
+        long t0 = System.nanoTime();
 
         // Extract client_id from mTLS certificate (RFC 8705)
         X509Certificate certificate = extractCertificate();
         if (certificate == null) {
             log.error("No client certificate provided for mTLS authentication");
-            return Response.status(Response.Status.UNAUTHORIZED)
-                    .entity(OAuth2ErrorResponse.of(
-                            OAuth2ErrorResponse.ErrorCode.INVALID_CLIENT,
-                            "Client certificate required for authentication"))
-                    .build();
+            String oc = telemetryRequestContext.oauthClient();
+            return recordTokenGrant(request.getResource(), "client_credentials", t0, oc,
+                    Response.status(Response.Status.UNAUTHORIZED)
+                            .entity(OAuth2ErrorResponse.of(
+                                    OAuth2ErrorResponse.ErrorCode.INVALID_CLIENT,
+                                    "Client certificate required for authentication"))
+                            .build());
         }
 
         String clientId;
@@ -267,27 +303,34 @@ public class TokenResource {
             log.info("Client authenticated via mTLS: {}", clientId);
         } catch (IllegalArgumentException e) {
             log.error("Failed to extract client_id from certificate", e);
-            return Response.status(Response.Status.UNAUTHORIZED)
-                    .entity(OAuth2ErrorResponse.of(
-                            OAuth2ErrorResponse.ErrorCode.INVALID_CLIENT,
-                            "Unable to extract client identity from certificate"))
-                    .build();
+            String oc = telemetryRequestContext.oauthClient();
+            return recordTokenGrant(request.getResource(), "client_credentials", t0, oc,
+                    Response.status(Response.Status.UNAUTHORIZED)
+                            .entity(OAuth2ErrorResponse.of(
+                                    OAuth2ErrorResponse.ErrorCode.INVALID_CLIENT,
+                                    "Unable to extract client identity from certificate"))
+                            .build());
         }
+
+        String oauthClient = OauthClientLabel.normalize(clientId);
+        telemetryRequestContext.setOauthClient(oauthClient);
 
         // Validate resource parameter (RFC 8707)
         String resource = request.getResource();
         if (resource == null || resource.trim().isEmpty()) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(OAuth2ErrorResponse.of(
-                            OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
-                            "Missing required parameter: resource"))
-                    .build();
+            return recordTokenGrant(null, "client_credentials", t0, oauthClient,
+                    Response.status(Response.Status.BAD_REQUEST)
+                            .entity(OAuth2ErrorResponse.of(
+                                    OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
+                                    "Missing required parameter: resource"))
+                            .build());
         }
 
         // Subject is the authenticated client
         String subject = clientId;
 
-        return getTokenFromResourceAuthorizationServer(subject, request.getScope(), resource);
+        Response r = getTokenFromResourceAuthorizationServer(subject, request.getScope(), resource);
+        return recordTokenGrant(resource, "client_credentials", t0, oauthClient, r);
     }
 
     /**
@@ -297,21 +340,25 @@ public class TokenResource {
      */
     private Response handleRefreshTokenGrant(OAuth2TokenRequest request) {
         log.info("Processing refresh_token grant");
+        long t0 = System.nanoTime();
+        String oauthClient = OauthClientLabel.normalize(request.getClientId());
+        telemetryRequestContext.setOauthClient(oauthClient);
+        String resourceUri = request.getResource();
 
         if (request.getRefreshToken() == null || request.getRefreshToken().isEmpty()) {
-            return invalidGrant("Missing required parameter: refresh_token");
+            return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Missing required parameter: refresh_token"));
         }
         if (request.getClientId() == null || request.getClientId().isEmpty()) {
-            return invalidGrant("Missing required parameter: client_id");
+            return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Missing required parameter: client_id"));
         }
         if (request.getResource() == null || request.getResource().trim().isEmpty()) {
-            return invalidGrant("Missing required parameter: resource");
+            return recordTokenGrant(null, "refresh_token", t0, oauthClient, invalidGrant("Missing required parameter: resource"));
         }
 
         // 1. Resolve (userId, provider) from presented refresh token (for grant flow and logging).
         var lockKeyOpt = refreshTokenService.lookupUserIdAndProviderForLock(request.getRefreshToken(), request.getClientId());
         if (lockKeyOpt.isEmpty()) {
-            return invalidGrant("Invalid or expired refresh token");
+            return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
         }
         String userId = lockKeyOpt.get().userId();
         String provider = lockKeyOpt.get().provider();
@@ -320,18 +367,18 @@ public class TokenResource {
         switch (result.status()) {
             case INVALID:
             case REVOKED:
-                return invalidGrant("Invalid or expired refresh token");
+                return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
             case ROTATED_REPLAY:
                 refreshTokenService.handleReplay(request.getRefreshToken());
-                return invalidGrant("Invalid or expired refresh token");
+                return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
             case ACTIVE:
                 if (result.record() == null) {
-                    return invalidGrant("Invalid or expired refresh token");
+                    return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
                 }
                 RefreshTokenRotateResult rotateResult = refreshTokenService.rotate(request.getRefreshToken(), request.getClientId());
                 if (rotateResult == null) {
                     log.warn("refresh_token grant failed: rotate() returned null for userId={} provider={}", userId, provider);
-                    return invalidGrant("Invalid or expired refresh token");
+                    return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
                 }
                 String providerUserId = result.record().providerUserId();
                 RefreshAndTokenResult refreshResult;
@@ -343,14 +390,15 @@ public class TokenResource {
                                 userId, provider, request.getResource(), oktaTokens);
                     } catch (IllegalStateException e) {
                         log.warn("refresh_token grant: upstream refresh lock not acquired: {}", e.getMessage());
-                        return Response.status(Response.Status.SERVICE_UNAVAILABLE)
-                                .entity(OAuth2ErrorResponse.of(OAuth2ErrorResponse.ErrorCode.SERVER_ERROR,
-                                        "Temporarily unavailable; please retry"))
-                                .build();
+                        return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient,
+                                Response.status(Response.Status.SERVICE_UNAVAILABLE)
+                                        .entity(OAuth2ErrorResponse.of(OAuth2ErrorResponse.ErrorCode.SERVER_ERROR,
+                                                "Temporarily unavailable; please retry"))
+                                        .build());
                     } catch (UpstreamRefreshException e) {
                         log.warn("refresh_token grant failed: centralized upstream refresh: {}", e.getMessage());
                         refreshTokenService.revokeFamily(result.record().tokenFamilyId());
-                        return invalidGrant("Invalid or expired refresh token");
+                        return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
                     }
                 } else {
                     refreshResult = authorizerService.refreshUpstreamAndGetToken(
@@ -371,7 +419,7 @@ public class TokenResource {
                     log.warn("refresh_token grant failed: upstream refresh failed; revoking token family for userId={} provider={} resource={} tokenFamilyId={}",
                             userId, provider, request.getResource(), result.record().tokenFamilyId());
                     refreshTokenService.revokeFamily(result.record().tokenFamilyId());
-                    return invalidGrant("Invalid or expired refresh token");
+                    return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
                 }
                 TokenResponse withNewRefresh = new TokenResponse(
                         refreshResult.tokenResponse().accessToken(),
@@ -381,9 +429,9 @@ public class TokenResource {
                         rotateResult.rawToken(),
                         refreshExpirySeconds
                 );
-                return Response.ok(withNewRefresh).build();
+                return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, Response.ok(withNewRefresh).build());
             default:
-                return invalidGrant("Invalid or expired refresh token");
+                return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
         }
     }
 
@@ -457,5 +505,36 @@ public class TokenResource {
             }
         }
         return null;
+    }
+
+    private Response recordTokenGrant(String resourceUri, String grantType, long startNanos, String oauthClient, Response response) {
+        String provider = telemetryProviderResolver.fromResourceUri(resourceUri);
+        boolean ok = response.getStatus() == 200;
+        double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+        oauthProxyMetrics.recordTokenExchangeDurationE2E(provider, grantType, ok, oauthClient,
+                metricsRegionProvider.primaryRegion(), seconds);
+        String err = ok ? null : errorTypeForHttpStatus(response.getStatus());
+        oauthProxyMetrics.recordTokenIssuance(provider, grantType, ok, err, oauthClient);
+        if ("authorization_code".equals(grantType)) {
+            oauthProxyMetrics.recordAuthCodeExchange(provider, ok, response.getStatus(), err, oauthClient);
+        } else if ("refresh_token".equals(grantType)) {
+            oauthProxyMetrics.recordRefreshTokenExchange(provider, ok, response.getStatus(), err, oauthClient);
+        } else if ("client_credentials".equals(grantType)) {
+            oauthProxyMetrics.recordClientCredentialsGrant(ok, err, oauthClient);
+        }
+        return response;
+    }
+
+    private static String errorTypeForHttpStatus(int status) {
+        if (status == 400) {
+            return "invalid_grant";
+        }
+        if (status == 401 || status == 403) {
+            return "unauthorized_client";
+        }
+        if (status >= 500) {
+            return "internal";
+        }
+        return "invalid_grant";
     }
 }

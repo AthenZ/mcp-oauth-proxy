@@ -17,9 +17,16 @@ package io.athenz.mop.service;
 
 import io.athenz.mop.model.AuthorizationCode;
 import io.athenz.mop.store.AuthCodeStore;
+import io.athenz.mop.store.impl.aws.CrossRegionTokenStoreFallback;
+import io.athenz.mop.telemetry.AuthCodeValidationReason;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProviderLabel;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
+import java.util.Optional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -52,8 +59,23 @@ public class AuthorizationCodeService {
     @Inject
     AuthCodeRegionResolver authCodeRegionResolver;
 
+    @Inject
+    CrossRegionTokenStoreFallback crossRegionTokenStoreFallback;
+
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
+    @Inject
+    MetricsRegionProvider metricsRegionProvider;
+
+    @Inject
+    TelemetryProviderResolver telemetryProviderResolver;
+
     @ConfigProperty(name = "server.token-exchange.idp")
     String providerDefault;
+
+    @ConfigProperty(name = "server.cross-region-fallback.region")
+    Optional<String> fallbackRegionConfig;
 
     /**
      * Generate a secure authorization code
@@ -109,14 +131,43 @@ public class AuthorizationCodeService {
      */
     public AuthorizationCode validateAndConsume(String code, String clientId,
                                                 String redirectUri, String codeVerifier) {
+        return validateAndConsume(code, clientId, redirectUri, codeVerifier, null);
+    }
+
+    /**
+     * Same as {@link #validateAndConsume(String, String, String, String)} with optional RFC 8707
+     * {@code resource} from the token request for metrics (matches token-exchange provider labels).
+     */
+    public AuthorizationCode validateAndConsume(String code, String clientId,
+                                                String redirectUri, String codeVerifier,
+                                                String tokenRequestResource) {
         if (code == null || code.isEmpty()) {
             log.warn("Empty authorization code provided");
+            oauthProxyMetrics.recordAuthCodeValidationFailure(
+                    oauthProviderForAuthCodeMetrics(tokenRequestResource, null),
+                    AuthCodeValidationReason.EMPTY_CODE);
             return null;
         }
 
         AuthCodeResolution resolution = authCodeRegionResolver.resolve(code, providerDefault);
         AuthorizationCode authCode = resolution.authorizationCode();
         boolean fromFallback = resolution.resolvedFromFallback();
+
+        String primaryRegion = metricsRegionProvider.primaryRegion();
+        String fallbackRegion = fallbackRegionConfig.map(String::trim).filter(s -> !s.isEmpty()).orElse("unknown");
+        if (authCode == null) {
+            String oauthProvider = oauthProviderForAuthCodeMetrics(tokenRequestResource, null);
+            if (crossRegionTokenStoreFallback.isActive()) {
+                oauthProxyMetrics.recordCrossRegionFallbackExhausted(oauthProvider, "auth_code_resolve",
+                        primaryRegion, fallbackRegion, 401, "not_found");
+            }
+            oauthProxyMetrics.recordAuthCodeValidationFailure(oauthProvider, AuthCodeValidationReason.NOT_FOUND);
+        } else if (fromFallback) {
+            oauthProxyMetrics.recordCrossRegionFallbackTriggered(
+                    oauthProviderForAuthCodeMetrics(tokenRequestResource, authCode),
+                    "auth_code_resolve",
+                    primaryRegion, fallbackRegion);
+        }
 
         String codePrefixForLog = code.substring(0, Math.min(8, code.length()));
         if (authCode == null) {
@@ -127,6 +178,9 @@ public class AuthorizationCodeService {
         // Check if already used (prevents replay attacks)
         if (authCode.isUsed()) {
             log.error("Authorization code already used: {}", codePrefixForLog);
+            oauthProxyMetrics.recordAuthCodeValidationFailure(
+                    oauthProviderForAuthCodeMetrics(tokenRequestResource, authCode),
+                    AuthCodeValidationReason.ALREADY_USED);
             // RFC 6749 Section 4.1.2: If code is used twice, revoke all tokens issued with it
             authCodeRegionResolver.deleteAuthCode(code, providerDefault, fromFallback);
             return null;
@@ -135,6 +189,9 @@ public class AuthorizationCodeService {
         // Check expiration
         if (authCode.isExpired()) {
             log.warn("Authorization code expired: {}", codePrefixForLog);
+            oauthProxyMetrics.recordAuthCodeValidationFailure(
+                    oauthProviderForAuthCodeMetrics(tokenRequestResource, authCode),
+                    AuthCodeValidationReason.EXPIRED);
             authCodeRegionResolver.deleteAuthCode(code, providerDefault, fromFallback);
             return null;
         }
@@ -143,6 +200,9 @@ public class AuthorizationCodeService {
         if (!authCode.getClientId().equals(clientId)) {
             log.error("Client ID mismatch for authorization code. Expected: {}, Got: {}",
                     authCode.getClientId(), clientId);
+            oauthProxyMetrics.recordAuthCodeValidationFailure(
+                    oauthProviderForAuthCodeMetrics(tokenRequestResource, authCode),
+                    AuthCodeValidationReason.CLIENT_ID_MISMATCH);
             return null;
         }
 
@@ -150,12 +210,20 @@ public class AuthorizationCodeService {
         if (!authCode.getRedirectUri().equals(redirectUri)) {
             log.error("Redirect URI mismatch for authorization code. Expected: {}, Got: {}",
                     authCode.getRedirectUri(), redirectUri);
+            oauthProxyMetrics.recordAuthCodeValidationFailure(
+                    oauthProviderForAuthCodeMetrics(tokenRequestResource, authCode),
+                    AuthCodeValidationReason.REDIRECT_URI_MISMATCH);
             return null;
         }
 
         // Validate PKCE code_verifier (OAuth 2.1 requirement)
-        if (!validatePKCE(authCode.getCodeChallenge(), authCode.getCodeChallengeMethod(), codeVerifier)) {
-            log.error("PKCE validation failed for authorization code");
+        String pkceFailure = pkceValidationFailureReason(
+                authCode.getCodeChallenge(), authCode.getCodeChallengeMethod(), codeVerifier);
+        if (pkceFailure != null) {
+            log.error("PKCE validation failed for authorization code: {}", pkceFailure);
+            oauthProxyMetrics.recordAuthCodeValidationFailure(
+                    oauthProviderForAuthCodeMetrics(tokenRequestResource, authCode),
+                    pkceFailure);
             return null;
         }
 
@@ -170,42 +238,62 @@ public class AuthorizationCodeService {
     }
 
     /**
-     * Validate PKCE code_verifier against code_challenge
-     * OAuth 2.1 mandates PKCE for all authorization code flows
-     *
-     * @param codeChallenge the stored code challenge
-     * @param codeChallengeMethod the challenge method (S256)
-     * @param codeVerifier the code verifier to validate
-     * @return true if PKCE validation passes
+     * OAuth provider label for auth-code metrics: prefer resource mapping (same as token exchange),
+     * then {@code server.token-exchange.idp}.
      */
-    private boolean validatePKCE(String codeChallenge, String codeChallengeMethod, String codeVerifier) {
+    private String oauthProviderForAuthCodeMetrics(String tokenRequestResource, AuthorizationCode authCode) {
+        String resource = firstNonBlank(
+                authCode != null ? authCode.getResource() : null,
+                tokenRequestResource);
+        if (resource != null) {
+            String resolved = telemetryProviderResolver.fromResourceUri(resource);
+            if (resolved != null && !OauthProviderLabel.UNKNOWN.equals(resolved)) {
+                return resolved;
+            }
+        }
+        return OauthProviderLabel.normalize(providerDefault);
+    }
+
+    private static String firstNonBlank(String a, String b) {
+        if (a != null && !a.isBlank()) {
+            return a;
+        }
+        if (b != null && !b.isBlank()) {
+            return b;
+        }
+        return null;
+    }
+
+    /**
+     * Validate PKCE code_verifier against code_challenge.
+     *
+     * @return {@code null} if valid; otherwise a {@link AuthCodeValidationReason} constant
+     */
+    private String pkceValidationFailureReason(String codeChallenge, String codeChallengeMethod, String codeVerifier) {
         if (codeChallenge == null || codeVerifier == null) {
             log.error("Missing PKCE parameters");
-            return false;
+            return AuthCodeValidationReason.PKCE_MISSING;
         }
 
         try {
-            String computedChallenge;
-
-            if ("S256".equals(codeChallengeMethod)) {
-                // Compute SHA256 hash of code_verifier
-                MessageDigest digest = MessageDigest.getInstance("SHA-256");
-                byte[] hash = digest.digest(codeVerifier.getBytes(StandardCharsets.US_ASCII));
-                computedChallenge = Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
-            } else {
+            if (!"S256".equals(codeChallengeMethod)) {
                 log.error("Unsupported code_challenge_method: {}", codeChallengeMethod);
-                return false;
+                return AuthCodeValidationReason.PKCE_UNSUPPORTED_METHOD;
             }
 
-            boolean valid = computedChallenge.equals(codeChallenge);
-            if (!valid) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(codeVerifier.getBytes(StandardCharsets.US_ASCII));
+            String computedChallenge = Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
+
+            if (!computedChallenge.equals(codeChallenge)) {
                 log.error("PKCE validation failed. Challenge mismatch.");
+                return AuthCodeValidationReason.PKCE_VERIFIER_MISMATCH;
             }
-            return valid;
+            return null;
 
         } catch (Exception e) {
             log.error("Error validating PKCE", e);
-            return false;
+            return AuthCodeValidationReason.PKCE_INTERNAL_ERROR;
         }
     }
 }

@@ -25,6 +25,9 @@ import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RedirectUriValidator;
 import io.athenz.mop.service.UpstreamRefreshService;
+import io.athenz.mop.telemetry.OauthClientLabel;
+import io.athenz.mop.telemetry.OauthProviderLabel;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
 import io.quarkus.oidc.IdToken;
 import io.quarkus.oidc.RefreshToken;
 import io.quarkus.oidc.UserInfo;
@@ -74,6 +77,9 @@ public class AuthorizeResource extends BaseResource {
     @Inject
     UpstreamRefreshService upstreamRefreshService;
 
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
     @ConfigProperty(name = "server.host", defaultValue = "localhost")
     String host;
 
@@ -92,51 +98,52 @@ public class AuthorizeResource extends BaseResource {
     @Produces(MediaType.TEXT_HTML)
     public Response authorize(@Valid @BeanParam OAuth2AuthorizationRequest request) {
         log.info("OAuth 2.1 authorization request from client: {}", request.getClientId());
+        String oauthClient = OauthClientLabel.normalize(request.getClientId());
 
         // Validate response_type (must be "code" for OAuth 2.1)
         if (!"code".equals(request.getResponseType())) {
             log.warn("Unsupported response_type: {}. OAuth 2.1 only supports 'code'", request.getResponseType());
-            return buildErrorRedirect(request.getRedirectUri(), request.getState(),
+            return recordAuthorizeRedirect(buildErrorRedirect(request.getRedirectUri(), request.getState(),
                     OAuth2ErrorResponse.ErrorCode.UNSUPPORTED_GRANT_TYPE,
-                    "OAuth 2.1 only supports response_type=code");
+                    "OAuth 2.1 only supports response_type=code"), oauthClient, false, "unsupported_grant_type");
         }
 
         // Validate code_challenge_method (must be S256, plain is deprecated)
         if (!"S256".equals(request.getCodeChallengeMethod())) {
             log.warn("Unsupported code_challenge_method: {}. OAuth 2.1 requires S256",
                     request.getCodeChallengeMethod());
-            return buildErrorRedirect(request.getRedirectUri(), request.getState(),
+            return recordAuthorizeRedirect(buildErrorRedirect(request.getRedirectUri(), request.getState(),
                     OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
-                    "code_challenge_method must be S256 (plain is deprecated in OAuth 2.1)");
+                    "code_challenge_method must be S256 (plain is deprecated in OAuth 2.1)"), oauthClient, false, "invalid_request");
         }
 
         // Validate redirect_uri
         if (!redirectUriValidator.isValidRedirectUri(request.getRedirectUri(), request.getClientId())) {
             log.error("Invalid redirect_uri for client {}: {}", request.getClientId(), request.getRedirectUri());
             // Per RFC 6749 Section 4.1.2.1, do NOT redirect on invalid redirect_uri
-            return Response.status(Response.Status.BAD_REQUEST)
+            return recordAuthorizeRedirect(Response.status(Response.Status.BAD_REQUEST)
                     .entity(OAuth2ErrorResponse.of(
                             OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
                             "Invalid or missing redirect_uri"))
-                    .build();
+                    .build(), oauthClient, false, "invalid_request");
         }
 
         if (request.getResource() == null || request.getResource().isEmpty()) {
             log.error("Invalid provider {} for client {}", request.getResource(), request.getClientId());
-            return Response.status(Response.Status.BAD_REQUEST)
+            return recordAuthorizeRedirect(Response.status(Response.Status.BAD_REQUEST)
                     .entity(OAuth2ErrorResponse.of(
                             OAuth2ErrorResponse.ErrorCode.INVALID_REQUEST,
                             "Invalid or missing resource"))
-                    .build();
+                    .build(), oauthClient, false, "invalid_request");
         }
 
         // Extract subject from authenticated key (OIDC IdToken)
         String subject = idToken != null ? idToken.getSubject() : accessToken.getSubject();
         if (subject == null || subject.isEmpty()) {
             log.error("Unable to extract subject from token");
-            return buildErrorRedirect(request.getRedirectUri(), request.getState(),
+            return recordAuthorizeRedirect(buildErrorRedirect(request.getRedirectUri(), request.getState(),
                     OAuth2ErrorResponse.ErrorCode.SERVER_ERROR,
-                    "Unable to determine user identity");
+                    "Unable to determine user identity"), oauthClient, false, "server_error");
         }
         ResourceMeta resourceMeta = configService.getResourceMeta(request.getResource());
 
@@ -175,11 +182,16 @@ public class AuthorizeResource extends BaseResource {
                 log.error("no token found for subject: {} provider: {}", subject, resourceMeta.idpServer());
                 String redirectUri = String.format("https://%s/%s/authorize", host, resourceMeta.idpServer());
                 log.info("redirecting to {} for authorization", redirectUri);
-                return buildRedirect(redirectUri, code);
+                return recordAuthorizeRedirect(buildRedirect(redirectUri, code), oauthClient, true, null);
             }
         }
         // Build success redirect with authorization code
-        return buildSuccessRedirect(request.getRedirectUri(), code, request.getState());
+        return recordAuthorizeRedirect(buildSuccessRedirect(request.getRedirectUri(), code, request.getState()), oauthClient, true, null);
+    }
+
+    private Response recordAuthorizeRedirect(Response response, String oauthClient, boolean success, String errorType) {
+        oauthProxyMetrics.recordAuthorizeRedirect(OauthProviderLabel.normalize(providerDefault), success, errorType, oauthClient);
+        return response;
     }
 
     /**

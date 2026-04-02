@@ -19,6 +19,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.athenz.mop.config.GoogleWorkforceTokenExchangeConfig;
 import io.athenz.mop.model.GcpExchangeTokenRequest;
 import io.athenz.mop.model.GcpExchangeTokenResponse;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProviderLabel;
+import io.athenz.mop.telemetry.UpstreamHttpCallLabels;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
@@ -49,6 +53,12 @@ public class GoogleWorkforceTokenExchange {
 
     @Inject
     GoogleWorkforceTokenExchangeConfig config;
+
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
+    @Inject
+    MetricsRegionProvider metricsRegionProvider;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -102,7 +112,12 @@ public class GoogleWorkforceTokenExchange {
                     .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
                     .build();
 
+            long startNanos = System.nanoTime();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+            String providerLabel = OauthProviderLabel.normalize(audience);
+            oauthProxyMetrics.recordUpstreamRequest(providerLabel, UpstreamHttpCallLabels.ENDPOINT_GOOGLE_STS, response.statusCode(),
+                    metricsRegionProvider.primaryRegion(), seconds);
 
             if (response.statusCode() != 200) {
                 log.warn("Google STS token-exchange failed: status={} body={}", response.statusCode(), response.body());

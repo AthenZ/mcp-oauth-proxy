@@ -26,6 +26,8 @@ import com.nimbusds.oauth2.sdk.token.RefreshToken;
 import com.nimbusds.openid.connect.sdk.OIDCTokenResponse;
 import io.athenz.mop.config.OktaTokenExchangeConfig;
 import io.athenz.mop.secret.K8SSecretsProvider;
+import io.athenz.mop.telemetry.OauthProviderLabel;
+import io.athenz.mop.telemetry.UpstreamHttpCallLabels;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
@@ -88,7 +90,11 @@ public class OktaTokenClient {
             com.nimbusds.oauth2.sdk.RefreshTokenGrant grant =
                     new com.nimbusds.oauth2.sdk.RefreshTokenGrant(new RefreshToken(trimmed));
             TokenRequest tokenRequest = new TokenRequest(tokenEndpoint, clientAuth, grant);
-            TokenResponse tokenResponse = tokenClient.execute(tokenRequest);
+            TokenResponse tokenResponse;
+            try (var ignored = UpstreamHttpCallLabels.withLabels(
+                    OauthProviderLabel.OKTA, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
+                tokenResponse = tokenClient.execute(tokenRequest);
+            }
             if (tokenResponse.indicatesSuccess()) {
                 OIDCTokenResponse oidcResponse = OIDCTokenResponse.parse(tokenResponse.toHTTPResponse());
                 var tokens = oidcResponse.getOIDCTokens();
