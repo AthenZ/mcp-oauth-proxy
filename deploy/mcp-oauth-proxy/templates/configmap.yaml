@@ -130,6 +130,15 @@ data:
               access_type: "offline"
 
       otel:
+        enabled: {{ .Values.otel.enabled | default false }}
+        metrics:
+          enabled: true
+        logs:
+          enabled: false
+          handler:
+            enabled: false
+        instrument:
+          vertx-http: false
         resource:
           attributes: service.name={{ include "mcp-oauth-proxy.serviceVersion" . }},service.instance.id=${POD_NAME},cloud.account.id=${CLOUD_ACCOUNT_ID}
         exporter:

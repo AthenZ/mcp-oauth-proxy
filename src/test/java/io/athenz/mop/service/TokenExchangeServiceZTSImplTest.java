@@ -27,6 +27,10 @@ import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.RequestedZtsTokenType;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -54,6 +58,18 @@ class TokenExchangeServiceZTSImplTest {
     @Mock
     private AthenzTokenExchangeConfig athenzTokenExchangeConfig;
 
+    @Mock
+    private OauthProxyMetrics oauthProxyMetrics;
+
+    @Mock
+    private TelemetryProviderResolver telemetryProviderResolver;
+
+    @Mock
+    private TelemetryRequestContext telemetryRequestContext;
+
+    @Mock
+    private MetricsRegionProvider metricsRegionProvider;
+
     @InjectMocks
     private TokenExchangeServiceZTSImpl tokenExchangeService;
 
@@ -65,6 +81,9 @@ class TokenExchangeServiceZTSImplTest {
         MockitoAnnotations.openMocks(this);
         when(ztsClientProducer.getZTSClient()).thenReturn(ztsClient);
         when(athenzTokenExchangeConfig.audience()).thenReturn("sys.auth.gcp");
+        when(telemetryProviderResolver.fromResourceUri(any())).thenReturn("athenz");
+        when(telemetryRequestContext.oauthClient()).thenReturn("unknown");
+        when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
 
         tokenWrapper = new TokenWrapper(
                 "test-key",

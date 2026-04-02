@@ -24,6 +24,10 @@ import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.secret.K8SSecretsProvider;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
@@ -50,6 +54,18 @@ class TokenExchangeServiceGithubImplTest {
     @Mock
     private TokenClient tokenClient;
 
+    @Mock
+    private OauthProxyMetrics oauthProxyMetrics;
+
+    @Mock
+    private TelemetryProviderResolver telemetryProviderResolver;
+
+    @Mock
+    private TelemetryRequestContext telemetryRequestContext;
+
+    @Mock
+    private MetricsRegionProvider metricsRegionProvider;
+
     @InjectMocks
     private TokenExchangeServiceGithubImpl tokenExchangeService;
 
@@ -59,6 +75,9 @@ class TokenExchangeServiceGithubImplTest {
     @BeforeEach
     void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
+        when(telemetryProviderResolver.fromResourceUri(any())).thenReturn("github");
+        when(telemetryRequestContext.oauthClient()).thenReturn("unknown");
+        when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
         setField(tokenExchangeService, "clientId", "test-client-id");
         setField(tokenExchangeService, "clientSecretKey", "github-client-secret");
 

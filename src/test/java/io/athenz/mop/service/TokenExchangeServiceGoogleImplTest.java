@@ -24,6 +24,10 @@ import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.secret.K8SSecretsProvider;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
@@ -49,6 +53,18 @@ class TokenExchangeServiceGoogleImplTest {
     @Mock
     private TokenClient tokenClient;
 
+    @Mock
+    private OauthProxyMetrics oauthProxyMetrics;
+
+    @Mock
+    private TelemetryProviderResolver telemetryProviderResolver;
+
+    @Mock
+    private TelemetryRequestContext telemetryRequestContext;
+
+    @Mock
+    private MetricsRegionProvider metricsRegionProvider;
+
     @InjectMocks
     private TokenExchangeServiceGoogleImpl tokenExchangeService;
 
@@ -58,6 +74,9 @@ class TokenExchangeServiceGoogleImplTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        when(telemetryProviderResolver.fromResourceUri(any())).thenReturn("google");
+        when(telemetryRequestContext.oauthClient()).thenReturn("unknown");
+        when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
         tokenExchangeService.clientId = "test-client-id";
         tokenExchangeService.clientSecretKey = "google-client-secret";
 

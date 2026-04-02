@@ -18,6 +18,8 @@ package io.athenz.mop.resource;
 import io.athenz.mop.model.RegisterRequest;
 import io.athenz.mop.model.RegisterResponse;
 import io.athenz.mop.service.RedirectUriValidator;
+import io.athenz.mop.telemetry.OauthClientLabel;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.*;
@@ -40,6 +42,9 @@ public class RegisterResource {
     @Inject
     RedirectUriValidator redirectUriValidator;
 
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
     @ConfigProperty(name = "server.athenz.register.domain")
     String registerDomain;
 
@@ -55,27 +60,33 @@ public class RegisterResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response register(@Valid RegisterRequest request) {
         log.info("register call for client: {} and token subject: {}", request.clientName(), jwt.getSubject());
+        String oauthClient = OauthClientLabel.normalize(request.clientName());
         if (request.redirectUris() == null || request.redirectUris().isEmpty()) {
+            oauthProxyMetrics.recordDynamicClientRegistration(false, "invalid_request", oauthClient);
             return Response.status(Response.Status.BAD_REQUEST).entity("redirect_uris is required").build();
         }
 
         // Validate all redirect URIs using the centralized validator
         if (!redirectUriValidator.validateRedirectUris(request.redirectUris(), request.clientName())) {
             log.error("Invalid redirect_uris for client: {}, uris: {}", request.clientName(), request.redirectUris());
+            oauthProxyMetrics.recordDynamicClientRegistration(false, "invalid_redirect_uri", oauthClient);
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity("redirect_uris validation failed - must use allowed prefixes and valid format")
                     .build();
         }
 
         if (request.clientName() == null || request.clientName().isEmpty()) {
+            oauthProxyMetrics.recordDynamicClientRegistration(false, "invalid_client_name", oauthClient);
             return Response.status(Response.Status.BAD_REQUEST).entity("client_name validation failed").build();
         }
 
         if (validateAttestationJwt && !isValidAttestationJwt(request)) {
+            oauthProxyMetrics.recordDynamicClientRegistration(false, "forbidden", oauthClient);
             return Response.status(Response.Status.FORBIDDEN).entity("token does not come from expected domain and/or role").build();
         }
         RegisterResponse registerResponse = new RegisterResponse(request.clientName(), request.clientName(), request.redirectUris());
         log.info("registered client: {} with redirect_uris: {}", registerResponse.clientName(), registerResponse.redirectUris());
+        oauthProxyMetrics.recordDynamicClientRegistration(true, null, oauthClient);
         return Response.ok(registerResponse).build();
     }
 

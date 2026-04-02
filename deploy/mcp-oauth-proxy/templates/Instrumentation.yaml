@@ -1,0 +1,49 @@
+{{- if .Values.otel.instrumentation.enabled }}
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: {{ include "mcp-oauth-proxy.fullname" . }}
+{{ include "mcp-oauth-proxy.namespace" . | indent 2 }}
+  labels:
+    {{- include "mcp-oauth-proxy.labels" . | nindent 4 }}
+spec:
+  exporter:
+    endpoint: {{ .Values.otel.collector.endpoint }}
+  propagators:
+    - tracecontext
+    - baggage
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"
+  java:
+    image: {{ .Values.otel.instrumentation.java.image }}
+    env:
+{{- if .Values.otel.instrumentation.java.disabledResourceProviders }}
+      - name: OTEL_JAVA_DISABLED_RESOURCE_PROVIDERS
+        value: {{ .Values.otel.instrumentation.java.disabledResourceProviders | quote }}
+{{- end }}
+      - name: OTEL_RESOURCE_PROVIDERS_AWS_ENABLED
+        value: {{ .Values.otel.instrumentation.resource.providers.aws.enabled | quote }}
+      - name: OTEL_SERVICE_NAME
+        value: {{ include "mcp-oauth-proxy.fullname" . }}:{{ .Chart.AppVersion }}
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: http/protobuf
+      - name: OTEL_EXPORTER_OTLP_CERTIFICATE
+        value: {{ .Values.otel.instrumentation.trustStore }}
+      - name: OTEL_JAVAAGENT_LOGGING
+        value: "application"
+{{- if .Values.otel.instrumentation.runtime.telemetry.enabled }}
+      - name: OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_EMIT_EXPERIMENTAL_TELEMETRY
+        value: {{ .Values.otel.instrumentation.runtime.telemetry.experimental.enabled | quote }}
+      - name: OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_JAVA17_ENABLED
+        value: {{ .Values.otel.instrumentation.runtime.telemetry.java17.enabled | quote }}
+      - name: OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_JAVA17_ENABLE_ALL
+        value: {{ .Values.otel.instrumentation.runtime.telemetry.java17.allEnabled | quote }}
+{{- end }}
+{{- if .Values.otel.exporter.mtls.enabled }}
+      - name: OTEL_EXPORTER_OTLP_CLIENT_KEY
+        value: {{ include "mcp-oauth-proxy.tlsKey" . }}
+      - name: OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE
+        value: {{ include "mcp-oauth-proxy.tlsCert" . }}
+{{- end }}
+{{- end }}

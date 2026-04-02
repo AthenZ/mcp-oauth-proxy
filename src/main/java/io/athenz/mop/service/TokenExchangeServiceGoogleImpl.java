@@ -30,6 +30,13 @@ import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.secret.K8SSecretsProvider;
+import io.athenz.mop.telemetry.ExchangeStep;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProviderLabel;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryProviderResolver;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
+import io.athenz.mop.telemetry.UpstreamHttpCallLabels;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
@@ -57,6 +64,18 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
     @Inject
     TokenClient tokenClient;
 
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
+    @Inject
+    TelemetryProviderResolver telemetryProviderResolver;
+
+    @Inject
+    TelemetryRequestContext telemetryRequestContext;
+
+    @Inject
+    MetricsRegionProvider metricsRegionProvider;
+
     @Override
     public AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO) {
         throw new RuntimeException("Not implemented yet");
@@ -64,6 +83,11 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
 
     @Override
     public AuthorizationResultDO getAccessTokenFromResourceAuthorizationServer(TokenExchangeDO tokenExchangeDO) {
+        long t0 = System.nanoTime();
+        String oauthProvider = telemetryProviderResolver.fromResourceUri(tokenExchangeDO.resource());
+        double seconds = (System.nanoTime() - t0) / 1_000_000_000.0;
+        oauthProxyMetrics.recordExchangeStep(ExchangeStep.PASS_THROUGH, oauthProvider, true, null,
+                telemetryRequestContext.oauthClient(), metricsRegionProvider.primaryRegion(), seconds);
         return new AuthorizationResultDO(AuthResult.AUTHORIZED, tokenExchangeDO.tokenWrapper());
     }
 
@@ -99,6 +123,10 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
             log.warn("Google refresh: client secret not found (key={})", clientSecretKey);
             return null;
         }
+        long t0 = System.nanoTime();
+        String oauthProvider = OauthProviderLabel.GOOGLE;
+        String oauthClient = telemetryRequestContext.oauthClient();
+        String region = metricsRegionProvider.primaryRegion();
         try {
             URI tokenEndpoint = URI.create(GOOGLE_TOKEN_URI);
             ClientAuthentication clientAuth = new ClientSecretPost(
@@ -107,13 +135,18 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
             );
             AuthorizationGrant refreshGrant = new RefreshTokenGrant(new RefreshToken(refreshTokenValue));
             TokenRequest tokenRequest = new TokenRequest(tokenEndpoint, clientAuth, refreshGrant);
-            TokenResponse tokenResponse = tokenClient.execute(tokenRequest);
+            TokenResponse tokenResponse;
+            try (var ignored = UpstreamHttpCallLabels.withLabels(
+                    OauthProviderLabel.GOOGLE, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
+                tokenResponse = tokenClient.execute(tokenRequest);
+            }
             if (tokenResponse.indicatesSuccess()) {
                 AccessTokenResponse successResponse = tokenResponse.toSuccessResponse();
                 String newAccessToken = successResponse.getTokens().getAccessToken().getValue();
                 com.nimbusds.oauth2.sdk.token.RefreshToken newRefreshToken = successResponse.getTokens().getRefreshToken();
                 Long lifetime = successResponse.getTokens().getAccessToken().getLifetime();
                 long ttl = (lifetime != null) ? lifetime : 3600L;
+                recordGoogleRefresh(t0, oauthProvider, oauthClient, region, true);
                 return new TokenWrapper(
                         null,
                         null,
@@ -127,11 +160,19 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
                 String code = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getCode() : "unknown";
                 String desc = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getDescription() : "unknown";
                 log.warn("Google refresh failed: {} - {}", code, desc);
+                recordGoogleRefresh(t0, oauthProvider, oauthClient, region, false);
                 return null;
             }
         } catch (Exception e) {
             log.warn("Google refresh failed: {}", e.getMessage());
+            recordGoogleRefresh(t0, oauthProvider, oauthClient, region, false);
             return null;
         }
+    }
+
+    private void recordGoogleRefresh(long startNanos, String oauthProvider, String oauthClient, String region, boolean success) {
+        double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+        oauthProxyMetrics.recordExchangeStep(ExchangeStep.UPSTREAM_REFRESH, oauthProvider, success,
+                success ? null : "unauthorized", oauthClient, region, seconds);
     }
 }

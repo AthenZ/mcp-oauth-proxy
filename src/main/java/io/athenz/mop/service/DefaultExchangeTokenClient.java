@@ -21,8 +21,13 @@ import com.nimbusds.oauth2.sdk.ParseException;
 import com.nimbusds.oauth2.sdk.TokenRequest;
 import com.nimbusds.oauth2.sdk.TokenResponse;
 import com.nimbusds.oauth2.sdk.http.HTTPRequest;
+import com.nimbusds.oauth2.sdk.http.HTTPResponse;
 
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.UpstreamHttpCallLabels;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 /**
  * Single implementation of TokenClient used for all providers (Okta, Google, GitHub, etc.).
@@ -30,10 +35,27 @@ import jakarta.enterprise.context.ApplicationScoped;
  */
 @ApplicationScoped
 public class DefaultExchangeTokenClient implements TokenClient {
+
+    @Inject
+    OauthProxyMetrics metrics;
+
+    @Inject
+    MetricsRegionProvider metricsRegionProvider;
+
     @Override
     public TokenResponse execute(TokenRequest request) throws IOException, ParseException {
+        long startNanos = System.nanoTime();
         HTTPRequest httpRequest = request.toHTTPRequest();
         httpRequest.setHeader("Accept", "application/json");
-        return TokenResponse.parse(httpRequest.send());
+        HTTPResponse httpResponse = httpRequest.send();
+        TokenResponse tokenResponse = TokenResponse.parse(httpResponse);
+        String p = UpstreamHttpCallLabels.oauthProvider();
+        String ep = UpstreamHttpCallLabels.upstreamEndpoint();
+        if (p != null && ep != null) {
+            double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+            metrics.recordUpstreamRequest(p, ep, httpResponse.getStatusCode(),
+                    metricsRegionProvider.primaryRegion(), seconds);
+        }
+        return tokenResponse;
     }
 }

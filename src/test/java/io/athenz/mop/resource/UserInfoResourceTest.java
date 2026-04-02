@@ -27,6 +27,9 @@ import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.store.TokenStore;
 import io.athenz.mop.store.impl.aws.CrossRegionTokenStoreFallback;
+import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.telemetry.TelemetryRequestContext;
 import jakarta.ws.rs.core.Response;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,11 +39,17 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Field;
 import java.util.Date;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -62,6 +71,15 @@ class UserInfoResourceTest {
     @Mock
     private CrossRegionTokenStoreFallback crossRegionFallback;
 
+    @Mock
+    private OauthProxyMetrics oauthProxyMetrics;
+
+    @Mock
+    private MetricsRegionProvider metricsRegionProvider;
+
+    @Mock
+    private TelemetryRequestContext telemetryRequestContext;
+
     @InjectMocks
     private UserInfoResource userInfoResource;
 
@@ -71,6 +89,11 @@ class UserInfoResourceTest {
 
     @BeforeEach
     void setUp() throws Exception {
+        lenient().when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
+        lenient().when(crossRegionFallback.isActive()).thenReturn(false);
+        Field f = UserInfoResource.class.getDeclaredField("fallbackRegionConfig");
+        f.setAccessible(true);
+        f.set(userInfoResource, Optional.empty());
         idToken = createIdToken(USER);
         long ttl = System.currentTimeMillis() / 1000 + 3600;
         tokenWrapper = new TokenWrapper(USER, PROVIDER, idToken, ACCESS_TOKEN, "refresh", ttl);
@@ -146,6 +169,21 @@ class UserInfoResourceTest {
         assertErrorBody(response, "invalid_token", "Token not found");
         verify(tokenStore, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
         verify(crossRegionFallback, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
+        verify(oauthProxyMetrics, never()).recordCrossRegionFallbackExhausted(
+                anyString(), anyString(), anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void getUserInfo_tokenNotFound_crossRegionActive_recordsExhaustedMetric() {
+        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(tokenStore.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
+        when(crossRegionFallback.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        verify(oauthProxyMetrics, times(1)).recordCrossRegionFallbackExhausted(
+                eq("unknown"), eq("userinfo_token_lookup"), eq("us-east-1"), eq("unknown"), eq(401), eq("not_found"));
     }
 
     @SuppressWarnings("unchecked")

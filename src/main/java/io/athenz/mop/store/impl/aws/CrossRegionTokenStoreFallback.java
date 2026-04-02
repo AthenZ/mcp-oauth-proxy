@@ -18,6 +18,7 @@ package io.athenz.mop.store.impl.aws;
 import io.athenz.mop.model.AuthorizationCode;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.store.EnterpriseStoreQualifier;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -66,8 +67,19 @@ public class CrossRegionTokenStoreFallback {
     @EnterpriseStoreQualifier
     TokenStoreDynamodbImpl tokenStoreDynamodb;
 
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
     private DynamoDbClient fallbackClient;
     private String fallbackTableNameResolved;
+
+    /**
+     * True when {@code server.cross-region-fallback.enabled} is set (e.g. prod). Used to gate cross-region-only
+     * metrics so stage/single-region deployments do not increment them on ordinary “not found” paths.
+     */
+    public boolean isActive() {
+        return enabled;
+    }
 
     @PostConstruct
     void init() {
@@ -126,6 +138,8 @@ public class CrossRegionTokenStoreFallback {
             return token;
         } catch (Exception e) {
             log.warn("Fallback region bearer credential lookup failed: {}", e.getMessage());
+            oauthProxyMetrics.recordCrossRegionDynamoFailure(
+                    "getUserTokenByAccessTokenHash", e.getClass().getSimpleName(), "unknown");
             return null;
         }
     }
@@ -142,6 +156,8 @@ public class CrossRegionTokenStoreFallback {
             return tokenStoreDynamodb.getUserToken(fallbackClient, fallbackTableNameResolved, user, provider);
         } catch (Exception e) {
             log.warn("Fallback region getUserToken failed for user={} provider={}: {}", user, provider, e.getMessage());
+            oauthProxyMetrics.recordCrossRegionDynamoFailure(
+                    "getUserToken", e.getClass().getSimpleName(), provider != null ? provider : "unknown");
             return null;
         }
     }
@@ -162,6 +178,8 @@ public class CrossRegionTokenStoreFallback {
             return authCode;
         } catch (Exception e) {
             log.warn("Fallback region getAuthCode failed: {}", e.getMessage());
+            oauthProxyMetrics.recordCrossRegionDynamoFailure(
+                    "getAuthCode", e.getClass().getSimpleName(), provider != null ? provider : "unknown");
             return null;
         }
     }
@@ -177,6 +195,8 @@ public class CrossRegionTokenStoreFallback {
             tokenStoreDynamodb.deleteAuthCode(fallbackClient, fallbackTableNameResolved, code, provider);
         } catch (Exception e) {
             log.warn("Fallback region deleteAuthCode failed: {}", e.getMessage());
+            oauthProxyMetrics.recordCrossRegionDynamoFailure(
+                    "deleteAuthCode", e.getClass().getSimpleName(), provider != null ? provider : "unknown");
         }
     }
 }

@@ -17,6 +17,8 @@ package io.athenz.mop.resource;
 
 import io.athenz.mop.model.OAuthAuthorizationServer;
 import io.athenz.mop.model.OpenIdConfiguration;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
@@ -46,11 +48,15 @@ public class WellKnownResource {
     @ConfigProperty(name = "server.host", defaultValue = "localhost")
     String host;
 
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
     @GET
     @Path("/.well-known/openid-configuration")
     @Produces(MediaType.APPLICATION_JSON)
     public Response getOpenIdConfiguration() {
         log.debug("Serving OpenID Connect discovery document");
+        oauthProxyMetrics.recordOidcDiscovery("openid-configuration", true, null);
 
         String baseUrl = getBaseUrl();
 
@@ -79,6 +85,7 @@ public class WellKnownResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response getOAuthAuthorizationServer() {
         log.debug("Serving OAuth 2.0 authorization server metadata (RFC 8414)");
+        oauthProxyMetrics.recordOidcDiscovery("oauth-authorization-server", true, null);
 
         String baseUrl = getBaseUrl();
 
