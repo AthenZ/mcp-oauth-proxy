@@ -1,3 +1,7 @@
+# Accidental unpack of quarkus-oidc JAR at module root (not used by Maven; use ~/.m2 dependency)
+/io/
+/META-INF/
+
 #Maven
 target/
 pom.xml.tag

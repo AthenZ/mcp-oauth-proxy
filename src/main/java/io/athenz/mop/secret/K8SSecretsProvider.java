@@ -53,12 +53,14 @@ public class K8SSecretsProvider implements CredentialsProvider {
             String atlassianClientSecret = new String(data.get("atlassian-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
             String githubClientSecret = new String(data.get("github-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
             String googleClientSecret = new String(data.get("google-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
+            String embraceClientSecret = new String(data.get("embrace-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
             String oktaTokenExchangeClientSecret = new String(data.get("okta-token-exchange-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
             return Map.of(
                     "okta-client-secret", clientSecret,
                     "atlassian-client-secret", atlassianClientSecret,
                     "github-client-secret", githubClientSecret,
                     "google-client-secret", googleClientSecret,
+                    "embrace-client-secret", embraceClientSecret,
                     "okta-token-exchange-client-secret", oktaTokenExchangeClientSecret
             );
 

@@ -23,6 +23,9 @@ data:
             health:
               paths: "/q/health/*"
               policy: "permit"
+            embrace-internal-userinfo:
+              paths: "/internal/embrace/oauth-userinfo"
+              policy: permit
             atlassian-mcp:
               paths: "/atlassian-mcp/*"
               policy: authenticated
@@ -34,6 +37,9 @@ data:
               policy: authenticated
             google:
               paths: "/google/*"
+              policy: authenticated
+            embrace:
+              paths: "/embrace/*"
               policy: authenticated
         cors:
           enabled: true
@@ -128,6 +134,39 @@ data:
             restore-path-after-redirect: true
             extra-params:
               access_type: "offline"
+        embrace:
+          discovery-enabled: false
+          auth-server-url: {{ .Values.oidc.embrace.authServerUrl | quote }}
+          authorization-path: {{ .Values.oidc.embrace.authorizationUrl | quote }}
+          token-path: {{ .Values.oidc.embrace.tokenPath | quote }}
+          jwks-path: {{ .Values.oidc.embrace.jwksPath | quote }}
+          {{- $embraceUiBase := .Values.oidc.embrace.syntheticUserInfoBaseUrl | default (printf "https://%s" .Values.application.host) }}
+          user-info-path: {{ printf "%s/internal/embrace/oauth-userinfo" $embraceUiBase | quote }}
+          client-id: {{ .Values.oidc.embrace.clientId | quote }}
+          credentials:
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.embrace.clientSecretKey | quote }}
+              method: {{ .Values.oidc.embrace.clientSecretMethod | default "basic" | quote }}
+          authentication:
+            scopes:
+            {{- range .Values.oidc.embrace.scopes }}
+              - {{ . | quote }}
+            {{- end }}
+            redirect-path: /embrace/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: false
+            id-token-required: false
+            user-info-required: true
+            verify-access-token: false
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            issuer: {{ .Values.oidc.embrace.tokenIssuer | quote }}
+            verify-access-token-with-user-info: false
 
       otel:
         enabled: {{ .Values.otel.enabled | default false }}
@@ -263,6 +302,9 @@ data:
             - name: google
               endpoint: {{ .Values.oidc.google.endpoint | quote }}
               username-claim: {{ .Values.oidc.google.claim | quote }}
+            - name: embrace
+              endpoint: {{ .Values.oidc.embrace.authorizationUrl | quote }}
+              username-claim: {{ .Values.oidc.embrace.claim | quote }}
       resources:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}

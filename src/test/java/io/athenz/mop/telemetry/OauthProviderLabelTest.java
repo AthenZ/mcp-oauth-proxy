@@ -23,7 +23,14 @@ class OauthProviderLabelTest {
     void normalize_knownProviders_preservedLowercase() {
         assertEquals(OauthProviderLabel.OKTA, OauthProviderLabel.normalize("OKTA"));
         assertEquals(OauthProviderLabel.GITHUB, OauthProviderLabel.normalize(" github "));
+        assertEquals(OauthProviderLabel.EMBRACE, OauthProviderLabel.normalize("EMBRACE"));
         assertEquals(OauthProviderLabel.GOOGLE_MONITORING, OauthProviderLabel.normalize("Google-Monitoring"));
+    }
+
+    @Test
+    void normalize_gcpPathSlugs_mapToGoogleAudienceNames() {
+        assertEquals(OauthProviderLabel.GOOGLE_MONITORING, OauthProviderLabel.normalize("gcp-monitoring"));
+        assertEquals(OauthProviderLabel.GOOGLE_LOGGING, OauthProviderLabel.normalize("gcp-logging"));
     }
 
     @Test

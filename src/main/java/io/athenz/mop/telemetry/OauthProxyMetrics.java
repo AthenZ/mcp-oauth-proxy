@@ -138,8 +138,6 @@ public class OauthProxyMetrics {
 
         tokenExchangeDurationSeconds.record(0.0, empty);
 
-        httpRequestsInflight.add(0, empty);
-
         upstreamRequestDurationSeconds.record(0.0, empty);
 
         retryAttemptsTotal.add(0, empty);

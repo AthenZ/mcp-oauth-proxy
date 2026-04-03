@@ -52,6 +52,7 @@ class TelemetryJaxrsFilterTest {
         when(requestContext.getUriInfo()).thenReturn(uriInfo);
         when(uriInfo.getPath()).thenReturn("/token");
         when(requestContext.getMethod()).thenReturn("POST");
+        when(telemetryContext.normalizedRoute()).thenReturn("/token");
         when(telemetryContext.oauthProvider()).thenReturn("okta");
         when(telemetryContext.oauthClient()).thenReturn("c1");
     }
@@ -97,6 +98,7 @@ class TelemetryJaxrsFilterTest {
         when(requestContext.getUriInfo()).thenReturn(uriInfo);
         when(uriInfo.getPath()).thenReturn("/userinfo");
         when(requestContext.getMethod()).thenReturn("POST");
+        when(telemetryContext.normalizedRoute()).thenReturn("/userinfo");
         when(telemetryContext.oauthProvider()).thenReturn("okta");
         when(telemetryContext.oauthClient()).thenReturn("c1");
         when(responseContext.getStatus()).thenReturn(401);

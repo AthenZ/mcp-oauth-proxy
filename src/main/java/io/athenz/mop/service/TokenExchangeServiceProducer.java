@@ -37,6 +37,9 @@ public class TokenExchangeServiceProducer {
     TokenExchangeServiceGoogleImpl tokenExchangeServiceGoogleImpl;
 
     @Inject
+    TokenExchangeServiceEmbraceImpl tokenExchangeServiceEmbraceImpl;
+
+    @Inject
     TokenExchangeServiceGcpWorkforceImpl tokenExchangeServiceGcpWorkforceImpl;
 
     public TokenExchangeService getTokenExchangeServiceImplementation(String idpType) {
@@ -44,6 +47,7 @@ public class TokenExchangeServiceProducer {
         return switch (idpType) {
             case "atlassian" -> tokenExchangeServiceAtlassianImpl;
             case "github" -> tokenExchangeServiceGithubImpl;
+            case "embrace" -> tokenExchangeServiceEmbraceImpl;
             case "google" -> tokenExchangeServiceGoogleImpl;
             case "okta" -> tokenExchangeServiceOktaImpl;
             case "glean" -> tokenExchangeServiceOktaImpl;

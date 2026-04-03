@@ -11,6 +11,10 @@ import java.util.Locale;
 /**
  * Normalizes provider strings for the {@code oauth_provider} metric label: trim + lowercase.
  * Known IdPs map to canonical names; any other non-blank value is passed through (watch label cardinality).
+ * <p>
+ * GCP Monitoring/Logging MCPs use URL paths like {@code .../v1/gcp-monitoring/mcp}, but metrics use the
+ * configured resource {@code audience} values {@code google-monitoring} and {@code google-logging}.
+ * Path-style {@code gcp-monitoring} / {@code gcp-logging} inputs are aliased to those canonical names.
  */
 public final class OauthProviderLabel {
 
@@ -18,6 +22,7 @@ public final class OauthProviderLabel {
     public static final String OKTA = "okta";
     public static final String GLEAN = "glean";
     public static final String GITHUB = "github";
+    public static final String EMBRACE = "embrace";
     public static final String GOOGLE = "google";
     public static final String ATLASSIAN = "atlassian";
     public static final String ATHENZ = "athenz";
@@ -33,7 +38,9 @@ public final class OauthProviderLabel {
         }
         String s = raw.trim().toLowerCase(Locale.ROOT);
         return switch (s) {
-            case OKTA, GLEAN, GITHUB, GOOGLE, ATLASSIAN, ATHENZ, GOOGLE_MONITORING, GOOGLE_LOGGING -> s;
+            case OKTA, GLEAN, GITHUB, EMBRACE, GOOGLE, ATLASSIAN, ATHENZ, GOOGLE_MONITORING, GOOGLE_LOGGING -> s;
+            case "gcp-monitoring" -> GOOGLE_MONITORING;
+            case "gcp-logging" -> GOOGLE_LOGGING;
             default -> s;
         };
     }

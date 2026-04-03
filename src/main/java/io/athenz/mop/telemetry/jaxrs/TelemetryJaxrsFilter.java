@@ -36,7 +36,9 @@ public class TelemetryJaxrsFilter implements ContainerRequestFilter, ContainerRe
 
     @Override
     public void filter(ContainerRequestContext requestContext, ContainerResponseContext responseContext) {
-        String route = normalizeRoute(requestContext.getUriInfo().getPath());
+        // Decrement using the same route as the request filter (request-scoped), not a second getPath()
+        // normalization, which can differ across phases and skew the up/down counter negative.
+        String route = telemetryContext.normalizedRoute();
         metrics.decHttpInflight(route);
 
         int status = responseContext.getStatus();
