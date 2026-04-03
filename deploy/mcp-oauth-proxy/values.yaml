@@ -210,6 +210,23 @@ oidc:
     clientSecretKey:
     scopes:
       - openid
+  embrace:
+    authServerUrl: "https://dash-api.embrace.io"
+    authorizationUrl: "https://dash.embrace.io/oauth/authorize"
+    tokenPath: "/oauth/token"
+    jwksPath: "/.well-known/jwks.json"
+    # Public HTTPS base for MoP (no path). Defaults to https://application.host if empty.
+    syntheticUserInfoBaseUrl: ""
+    # Quarkus OidcProvider: "any" skips iss on self-signed internal ID tokens (id-token-required=false + synthetic UserInfo).
+    tokenIssuer: "any"
+    clientId:
+    claim: sub
+    clientSecretKey: embrace-client-secret
+    clientSecretMethod: basic
+    scopes:
+      - mcp:read
+      - mcp:write
+      - mcp:tools:call
 
 healthCheck:
   enabled: true

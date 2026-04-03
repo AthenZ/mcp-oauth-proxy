@@ -41,6 +41,9 @@ class TokenExchangeServiceProducerTest {
     @Mock
     private TokenExchangeServiceGoogleImpl tokenExchangeServiceGoogleImpl;
 
+    @Mock
+    private TokenExchangeServiceEmbraceImpl tokenExchangeServiceEmbraceImpl;
+
     @InjectMocks
     private TokenExchangeServiceProducer tokenExchangeServiceProducer;
 
@@ -77,6 +80,13 @@ class TokenExchangeServiceProducerTest {
         // Then
         assertNotNull(result);
         assertSame(tokenExchangeServiceGoogleImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_Embrace() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("embrace");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceEmbraceImpl, result);
     }
 
     @Test
@@ -214,19 +224,25 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService atlassian = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("atlassian");
         TokenExchangeService github = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("github");
         TokenExchangeService google = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google");
+        TokenExchangeService embrace = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("embrace");
         TokenExchangeService okta = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA);
         TokenExchangeService athenz = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("athenz");
 
         // Then - All should be different instances
         assertNotSame(atlassian, github);
         assertNotSame(atlassian, google);
+        assertNotSame(atlassian, embrace);
         assertNotSame(atlassian, okta);
         assertNotSame(atlassian, athenz);
         assertNotSame(github, google);
+        assertNotSame(github, embrace);
         assertNotSame(github, okta);
         assertNotSame(github, athenz);
+        assertNotSame(google, embrace);
         assertNotSame(google, okta);
         assertNotSame(google, athenz);
+        assertNotSame(embrace, okta);
+        assertNotSame(embrace, athenz);
         assertNotSame(okta, athenz);
     }
 
@@ -251,7 +267,7 @@ class TokenExchangeServiceProducerTest {
     @Test
     void testGetTokenExchangeServiceImplementation_SpecialCharacters() {
         // When & Then - Test with special characters
-        String[] specialTypes = {"okta!", "github@", "google#", "athenz$", "atlassian%"};
+        String[] specialTypes = {"okta!", "github@", "google#", "embrace^", "athenz$", "atlassian%"};
 
         for (String type : specialTypes) {
             IllegalArgumentException exception = assertThrows(

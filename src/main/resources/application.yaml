@@ -14,6 +14,9 @@ quarkus:
         health:
           paths: "/q/health/*"
           policy: "permit"
+        embrace-internal-userinfo:
+          paths: "/internal/embrace/oauth-userinfo"
+          policy: permit
     cors:
       enabled: true
       origins: http://localhost:6274 # allow mcp inspector
@@ -99,6 +102,39 @@ quarkus:
         restore-path-after-redirect: true
         extra-params:
           access_type: "offline"
+    embrace:
+      discovery-enabled: false
+      auth-server-url: ${EMBRACE_AUTH_SERVER_URL:https://dash-api.embrace.io}
+      authorization-path: ${EMBRACE_AUTHORIZATION_URL:https://dash.embrace.io/oauth/authorize}
+      token-path: ${EMBRACE_TOKEN_PATH:/oauth/token}
+      jwks-path: ${EMBRACE_JWKS_PATH:/.well-known/jwks.json}
+      user-info-path: ${MOP_EMBRACE_SYNTHETIC_USERINFO_URL:https://127.0.0.1/internal/embrace/oauth-userinfo}
+      client-id: ${EMBRACE_CLIENT_ID:}
+      credentials:
+        client-secret:
+          provider:
+            key: ${EMBRACE_CLIENT_SECRET_KEY:embrace-client-secret}
+          method: ${EMBRACE_CLIENT_SECRET_METHOD:basic}
+      authentication:
+        scopes:
+          - mcp:read
+          - mcp:write
+          - mcp:tools:call
+        redirect-path: /embrace/authorize/callback
+        restore-path-after-redirect: true
+        add-openid-scope: false
+        id-token-required: false
+        user-info-required: true
+        verify-access-token: false
+      application-type: web-app
+      allow-user-info-cache: false
+      cache-user-info-in-idtoken: true
+      token-state-manager:
+        strategy: keep-all-tokens
+      token:
+        # "any" skips iss validation on MoP-issued internal ID tokens (no top-level iss; UserInfo is under "userinfo").
+        issuer: ${EMBRACE_TOKEN_ISSUER:any}
+        verify-access-token-with-user-info: false
 
   otel:
     # Build-time in Quarkus: must be true at `mvn package` for runtime ConfigMap overrides to take effect.
