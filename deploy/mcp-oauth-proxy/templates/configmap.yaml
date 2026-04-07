@@ -50,6 +50,11 @@ data:
         protocols: {{ .Values.application.tls.protocols | quote }}
         cipher-suites: {{ .Values.application.tls.cipherSuites | quote }}
         reload-period: {{ .Values.application.tls.reloadPeriod | quote }}
+{{- if (.Values.oidc.embrace.tlsInsecureClient | default false) }}
+        embrace-insecure-client:
+          trust-all: true
+          hostname-verification-algorithm: NONE
+{{- end }}
 
       log:
         console:
@@ -135,13 +140,21 @@ data:
             extra-params:
               access_type: "offline"
         embrace:
+{{- if (.Values.oidc.embrace.tlsInsecureClient | default false) }}
+          tls:
+            tls-configuration-name: embrace-insecure-client
+{{- end }}
           discovery-enabled: false
           auth-server-url: {{ .Values.oidc.embrace.authServerUrl | quote }}
           authorization-path: {{ .Values.oidc.embrace.authorizationUrl | quote }}
           token-path: {{ .Values.oidc.embrace.tokenPath | quote }}
           jwks-path: {{ .Values.oidc.embrace.jwksPath | quote }}
+          {{- if .Values.oidc.embrace.userInfoPath }}
+          user-info-path: {{ .Values.oidc.embrace.userInfoPath | quote }}
+          {{- else }}
           {{- $embraceUiBase := .Values.oidc.embrace.syntheticUserInfoBaseUrl | default (printf "https://%s" .Values.application.host) }}
           user-info-path: {{ printf "%s/internal/embrace/oauth-userinfo" $embraceUiBase | quote }}
+          {{- end }}
           client-id: {{ .Values.oidc.embrace.clientId | quote }}
           credentials:
             client-secret:

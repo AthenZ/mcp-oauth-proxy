@@ -215,8 +215,12 @@ oidc:
     authorizationUrl: "https://dash.embrace.io/oauth/authorize"
     tokenPath: "/oauth/token"
     jwksPath: "/.well-known/jwks.json"
-    # Public HTTPS base for MoP (no path). Defaults to https://application.host if empty.
+    # Full UserInfo URL for synthetic Embrace UserInfo (same as quarkus user-info-path). When set, overrides syntheticUserInfoBaseUrl.
+    userInfoPath: ""
+    # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty. Defaults to https://application.host if empty.
     syntheticUserInfoBaseUrl: ""
+    # When true, MoP trusts any server cert for the embrace OIDC tenant (token/JWKS/UserInfo). Use only for broken TLS (e.g. synthetic UserInfo on localhost).
+    tlsInsecureClient: false
     # Quarkus OidcProvider: "any" skips iss on self-signed internal ID tokens (id-token-required=false + synthetic UserInfo).
     tokenIssuer: "any"
     clientId:
