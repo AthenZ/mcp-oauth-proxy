@@ -40,6 +40,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Token exchange for GCP Monitoring and GCP Logging MCP: Okta id_token → ZMS scope →
  * Athenz id_token → Google STS access token. Same flow for both; Google scope is selected by audience.
+ * {@code server.token-exchange.gcp-role-name} may list several comma-separated short role names;
+ * ZMS assertions matching any of them are included in scope.
  */
 @ApplicationScoped
 public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeService {

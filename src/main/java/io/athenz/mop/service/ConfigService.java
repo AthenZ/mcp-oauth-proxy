@@ -21,13 +21,16 @@ import io.athenz.mop.model.ResourceMeta;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 @ApplicationScoped
 public class ConfigService {
-    
+
     @Inject
     ResourceConfig resourceConfig;
 
@@ -37,25 +40,39 @@ public class ConfigService {
     @ConfigProperty(name = "server.token-exchange.idp")
     String defaultIDP;
 
+    /** Exact URI → metadata (populated at init and when a pattern first matches). */
     Map<String, ResourceMeta> resourceMetaMap = new HashMap<>();
+
+    /** Glob-style patterns from {@code resourceMapping} entries whose {@code uri} contains {@code *}. */
+    List<PatternEntry> resourcePatterns = new ArrayList<>();
 
     Map<String, String> remoteServerMap = new HashMap<>();
 
     Map<String, String> remoteServerUsernameClaimMap = new HashMap<>();
 
-
     @PostConstruct
-    void  init() {
-        for(ResourceConfig.ResourceMapping rm : resourceConfig.resourceMapping()) {
-            resourceMetaMap.put(rm.uri(), new ResourceMeta(rm.scopes(), rm.domain(), rm.token().idp(), rm.token().as(),
-                    rm.token().jag().enabled(), rm.token().jag().issuer(), rm.token().audience().orElse(null)));
+    void init() {
+        for (ResourceConfig.ResourceMapping rm : resourceConfig.resourceMapping()) {
+            ResourceMeta meta = new ResourceMeta(
+                    rm.scopes(),
+                    rm.domain(),
+                    rm.token().idp(),
+                    rm.token().as(),
+                    rm.token().jag().enabled(),
+                    rm.token().jag().issuer(),
+                    rm.token().audience().orElse(null));
+            if (isWildcardUri(rm.uri())) {
+                resourcePatterns.add(new PatternEntry(globToRegex(rm.uri()), meta, rm.uri()));
+            } else {
+                resourceMetaMap.put(rm.uri(), meta);
+            }
         }
-        for(TokenExchangeServersConfig.RemoteServer rs : tokenExchangeServersConfig.endpoints()) {
+        for (TokenExchangeServersConfig.RemoteServer rs : tokenExchangeServersConfig.endpoints()) {
             remoteServerMap.put(rs.name(), rs.endpoint());
             remoteServerUsernameClaimMap.put(rs.name(), rs.usernameClaim());
         }
     }
-    
+
     public String getRemoteServerEndpoint(String key) {
         return remoteServerMap.get(key);
     }
@@ -65,10 +82,46 @@ public class ConfigService {
     }
 
     public ResourceMeta getResourceMeta(String key) {
-        return resourceMetaMap.get(key);
+        ResourceMeta meta = resourceMetaMap.get(key);
+        if (meta != null) {
+            return meta;
+        }
+        for (PatternEntry entry : resourcePatterns) {
+            if (entry.pattern.matcher(key).matches()) {
+                resourceMetaMap.put(key, entry.meta);
+                return entry.meta;
+            }
+        }
+        return null;
     }
 
     public String getDefaultIDP() {
         return defaultIDP;
+    }
+
+    static boolean isWildcardUri(String uri) {
+        return uri != null && uri.contains("*");
+    }
+
+    /**
+     * Turn a single-segment glob ({@code *} → {@code [^/]*}) into a compiled {@link Pattern}.
+     * Example: {@code https://<host>/v1/databricks-sql/<workspace-id>/mcp}
+     * {@literal *}{@code /mcp} matches a concrete workspace id segment (e.g. {@code dbc-44743f95-b8ca}).
+     */
+    static Pattern globToRegex(String glob) {
+        String regex = Pattern.quote(glob).replace("*", "\\E[^/]*\\Q");
+        return Pattern.compile(regex);
+    }
+
+    static final class PatternEntry {
+        final Pattern pattern;
+        final ResourceMeta meta;
+        final String originalGlob;
+
+        PatternEntry(Pattern pattern, ResourceMeta meta, String originalGlob) {
+            this.pattern = pattern;
+            this.meta = meta;
+            this.originalGlob = originalGlob;
+        }
     }
 }
