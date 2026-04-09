@@ -293,6 +293,7 @@ data:
             {{- range .Values.application.tokenExchange.googleWorkforce.scopes.googleLogging }}
               - {{ . | quote }}
             {{- end }}
+        gcp-role-name: {{ .Values.application.tokenExchange.gcpRoleName | default "gcp.fed.mcp.user" | quote }}
         oktaServiceTypeApp:
           auth-server-url: {{ .Values.application.oktaServiceTypeApp.endpoint | quote }}
           client-id: {{ .Values.application.oktaServiceTypeApp.clientId | quote }}

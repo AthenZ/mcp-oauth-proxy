@@ -35,8 +35,10 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Builds GCP workforce scope and billing project from ZMS {@code GET /zms/v1/resource} with
- * {@code action=gcp.assume_role}, filtering assertions to the configured short role name
- * (e.g. {@code gcp.fed.mcp.user}). Uses a direct HTTPS call with mTLS; the ZMS Java client
+ * {@code action=gcp.assume_role}, filtering assertions to the configured short role name(s)
+ * (e.g. {@code gcp.fed.mcp.user}, or comma-separated values such as
+ * {@code gcp.fed.mcp.user, gcp.fed.mcp.monitoring.user}). An assertion matches if its {@code role}
+ * contains {@code role.}<em>shortName</em> for any entry. Uses a direct HTTPS call with mTLS; the ZMS Java client
  * does not support this endpoint.
  */
 @ApplicationScoped
@@ -57,32 +59,50 @@ public class ZMSServiceImpl {
     /**
      * Resolves Athenz scope and default GCP billing project for the principal via ZMS resource API.
      * Assertions must match {@code action=gcp.assume_role}, {@code effect=ALLOW}, and
-     * {@code role} containing the configured short name as {@code role.shortName} (e.g.
+     * {@code role} containing {@code role.shortName} for at least one configured short name (e.g.
      * {@code msd.stage:role.gcp.fed.mcp.user} for short name {@code gcp.fed.mcp.user}).
      * Scope parts are the full {@code role} strings from matching assertions, plus {@code openid}.
      * The first matching assertion whose {@code resource} is {@code projects/projectId/roles/...}
      * supplies {@link GcpZmsPrincipalScope#defaultBillingProject()}.
      *
      * @param roleMember full Athenz principal name (e.g. user.shortid)
-     * @param roleName   short role name (e.g. gcp.fed.mcp.user), or null to use config default
+     * @param roleName   short role name(s), comma-separated and trimmed (e.g. {@code gcp.fed.mcp.user, gcp.fed.mcp.monitoring.user}),
+     *                   or null/blank to use config default (which may also be comma-separated)
      * @return never null; on failure or empty matches, scope is {@code openid} and billing project is null
      */
     public GcpZmsPrincipalScope getScopeForPrincipal(String roleMember, String roleName) {
-        String shortRole = roleName != null && !roleName.isBlank() ? roleName : defaultGcpRoleName;
-        String roleMarker = "role." + shortRole;
+        String raw = roleName != null && !roleName.isBlank() ? roleName : defaultGcpRoleName;
+        List<String> roleMarkers = roleMarkersFromRaw(raw);
+        if (roleMarkers.isEmpty()) {
+            return new GcpZmsPrincipalScope("openid", null);
+        }
         try {
             String json = zmsAssumeRoleResourceClient.getAssumeRoleResourceJson(roleMember);
             if (json == null || json.isBlank()) {
                 return new GcpZmsPrincipalScope("openid", null);
             }
-            return parseAssumeRoleResourceResponse(json, roleMarker);
+            return parseAssumeRoleResourceResponse(json, roleMarkers);
         } catch (Exception e) {
             log.warn("ZMS assume_role resource parse failed: {}", e.getMessage());
             return new GcpZmsPrincipalScope("openid", null);
         }
     }
 
-    GcpZmsPrincipalScope parseAssumeRoleResourceResponse(String json, String roleMarker) throws Exception {
+    static List<String> roleMarkersFromRaw(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        List<String> markers = new ArrayList<>();
+        for (String part : raw.split(",")) {
+            String shortName = part.trim();
+            if (!shortName.isEmpty()) {
+                markers.add("role." + shortName);
+            }
+        }
+        return markers;
+    }
+
+    GcpZmsPrincipalScope parseAssumeRoleResourceResponse(String json, List<String> roleMarkers) throws Exception {
         ZmsResourceResponse root = objectMapper.readValue(json, ZmsResourceResponse.class);
         List<ZmsResourcePrincipalEntry> resources = root.getResources();
         if (resources == null || resources.isEmpty()) {
@@ -95,16 +115,16 @@ public class ZMSServiceImpl {
             if (assertions == null || assertions.isEmpty()) {
                 continue;
             }
-            for (ZmsResourceAssertion a : assertions) {
-                if (!matchesAssumeRoleAssertion(a, roleMarker)) {
+            for (ZmsResourceAssertion assertion : assertions) {
+                if (!matchesAssumeRoleAssertion(assertion, roleMarkers)) {
                     continue;
                 }
-                String fullRole = a.getRole();
+                String fullRole = assertion.getRole();
                 if (fullRole != null && !fullRole.isBlank()) {
                     scopeRoles.add(fullRole);
                 }
                 if (billingProject == null) {
-                    String project = extractGcpProjectId(a.getResource());
+                    String project = extractGcpProjectId(assertion.getResource());
                     if (project != null && !project.isBlank()) {
                         billingProject = project;
                     }
@@ -119,15 +139,25 @@ public class ZMSServiceImpl {
         return new GcpZmsPrincipalScope(String.join(" ", parts), billingProject);
     }
 
-    private static boolean matchesAssumeRoleAssertion(ZmsResourceAssertion a, String roleMarker) {
-        String assertionRole = a.getRole();
-        if (assertionRole == null || !assertionRole.contains(roleMarker)) {
+    private static boolean matchesAssumeRoleAssertion(ZmsResourceAssertion assertion, List<String> roleMarkers) {
+        String assertionRole = assertion.getRole();
+        if (assertionRole == null || roleMarkers.isEmpty()) {
             return false;
         }
-        if (!ZmsAssumeRoleResourceClient.ASSUME_ROLE_ACTION.equals(a.getAction())) {
+        boolean roleMatches = false;
+        for (String marker : roleMarkers) {
+            if (assertionRole.contains(marker)) {
+                roleMatches = true;
+                break;
+            }
+        }
+        if (!roleMatches) {
             return false;
         }
-        return "ALLOW".equals(a.getEffect());
+        if (!ZmsAssumeRoleResourceClient.ASSUME_ROLE_ACTION.equals(assertion.getAction())) {
+            return false;
+        }
+        return "ALLOW".equals(assertion.getEffect());
     }
 
     static String extractGcpProjectId(String resource) {

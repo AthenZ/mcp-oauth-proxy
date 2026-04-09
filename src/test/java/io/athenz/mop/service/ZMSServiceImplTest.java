@@ -24,6 +24,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import java.lang.reflect.Field;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -133,6 +134,52 @@ class ZMSServiceImplTest {
     }
 
     @Test
+    void testGetScopeForPrincipal_CommaSeparatedRoleNames_MatchesAny() {
+        String json =
+                """
+                {"resources":[{"assertions":[
+                  {"role":"dom1:role.gcp.fed.mcp.user","resource":"projects/p-user/roles/r","action":"gcp.assume_role","effect":"ALLOW"},
+                  {"role":"dom2:role.gcp.fed.mcp.monitoring.user","resource":"projects/p-mon/roles/r","action":"gcp.assume_role","effect":"ALLOW"}
+                ]}]}
+                """
+                        .replaceAll("\\s+", "");
+
+        when(zmsAssumeRoleResourceClient.getAssumeRoleResourceJson("user.multi")).thenReturn(json);
+
+        GcpZmsPrincipalScope r =
+                zmsService.getScopeForPrincipal("user.multi", "gcp.fed.mcp.user, gcp.fed.mcp.monitoring.user");
+
+        assertTrue(r.scope().contains("dom1:role.gcp.fed.mcp.user"));
+        assertTrue(r.scope().contains("dom2:role.gcp.fed.mcp.monitoring.user"));
+        assertTrue(r.scope().endsWith(" openid"));
+        assertEquals("p-user", r.defaultBillingProject());
+    }
+
+    @Test
+    void testGetScopeForPrincipal_DefaultCommaSeparated_UsesAnyMatch() throws Exception {
+        setDefaultGcpRoleName("gcp.fed.mcp.user, gcp.fed.mcp.monitoring.user");
+        String json =
+                "{\"resources\":[{\"assertions\":["
+                        + "{\"role\":\"dom:role.gcp.fed.mcp.monitoring.user\","
+                        + "\"resource\":\"projects/p-m/roles/r\","
+                        + "\"action\":\"gcp.assume_role\",\"effect\":\"ALLOW\"}]}]}";
+
+        when(zmsAssumeRoleResourceClient.getAssumeRoleResourceJson("user.d")).thenReturn(json);
+
+        GcpZmsPrincipalScope r = zmsService.getScopeForPrincipal("user.d", null);
+
+        assertEquals("dom:role.gcp.fed.mcp.monitoring.user openid", r.scope());
+        assertEquals("p-m", r.defaultBillingProject());
+    }
+
+    @Test
+    void roleMarkersFromRaw_trimsAndSkipsBlanks() {
+        assertEquals(List.of("role.a", "role.b"), ZMSServiceImpl.roleMarkersFromRaw(" a , , b "));
+        assertTrue(ZMSServiceImpl.roleMarkersFromRaw("").isEmpty());
+        assertTrue(ZMSServiceImpl.roleMarkersFromRaw("   ,  ,").isEmpty());
+    }
+
+    @Test
     void testGetScopeForPrincipal_WrongActionIgnored() {
         String json =
                 "{\"resources\":[{\"assertions\":[{\"role\":\"dom:role.gcp.fed.mcp.user\","
@@ -160,6 +207,29 @@ class ZMSServiceImplTest {
 
         assertEquals("openid", r.scope());
         assertNull(r.defaultBillingProject());
+    }
+
+    @Test
+    void testGetScopeForPrincipal_DenyOnFirstAssertion_AllowOnSecondStillIncluded() {
+        String json =
+                "{\"resources\":[{\"assertions\":["
+                        + "{\"role\":\"dom1:role.gcp.fed.mcp.user\","
+                        + "\"resource\":\"projects/p-deny/roles/r\","
+                        + "\"action\":\"gcp.assume_role\",\"effect\":\"DENY\"},"
+                        + "{\"role\":\"dom2:role.gcp.fed.mcp.monitoring.user\","
+                        + "\"resource\":\"projects/p-allow/roles/r\","
+                        + "\"action\":\"gcp.assume_role\",\"effect\":\"ALLOW\"}"
+                        + "]}]}";
+
+        when(zmsAssumeRoleResourceClient.getAssumeRoleResourceJson("user.denyThenAllow")).thenReturn(json);
+
+        GcpZmsPrincipalScope r =
+                zmsService.getScopeForPrincipal(
+                        "user.denyThenAllow", "gcp.fed.mcp.user, gcp.fed.mcp.monitoring.user");
+
+        assertFalse(r.scope().contains("dom1:role.gcp.fed.mcp.user"));
+        assertTrue(r.scope().contains("dom2:role.gcp.fed.mcp.monitoring.user"));
+        assertEquals("p-allow", r.defaultBillingProject());
     }
 
     @Test
@@ -226,14 +296,15 @@ class ZMSServiceImplTest {
 
     @Test
     void parseAssumeRoleResourceResponse_emptyResourcesArray() throws Exception {
-        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse("{\"resources\":[]}", "role.gcp.fed.mcp.user");
+        GcpZmsPrincipalScope r =
+                zmsService.parseAssumeRoleResourceResponse("{\"resources\":[]}", List.of("role.gcp.fed.mcp.user"));
         assertEquals("openid", r.scope());
         assertNull(r.defaultBillingProject());
     }
 
     @Test
     void parseAssumeRoleResourceResponse_missingResourcesKey() throws Exception {
-        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse("{}", "role.gcp.fed.mcp.user");
+        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse("{}", List.of("role.gcp.fed.mcp.user"));
         assertEquals("openid", r.scope());
     }
 
@@ -246,7 +317,7 @@ class ZMSServiceImplTest {
                         + "\"resource\":\"projects/p2/roles/fed.mcp.user\","
                         + "\"action\":\"gcp.assume_role\",\"effect\":\"ALLOW\"}]}"
                         + "]}";
-        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse(json, "role.gcp.fed.mcp.user");
+        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse(json, List.of("role.gcp.fed.mcp.user"));
         assertEquals("d:role.gcp.fed.mcp.user openid", r.scope());
         assertEquals("p2", r.defaultBillingProject());
     }
@@ -260,7 +331,7 @@ class ZMSServiceImplTest {
                         + "{\"role\":\"b:role.gcp.fed.mcp.user\",\"resource\":\"projects/from-second/roles/fed.mcp.user\","
                         + "\"action\":\"gcp.assume_role\",\"effect\":\"ALLOW\"}"
                         + "]}]}";
-        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse(json, "role.gcp.fed.mcp.user");
+        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse(json, List.of("role.gcp.fed.mcp.user"));
         assertTrue(r.scope().contains("a:role.gcp.fed.mcp.user"));
         assertTrue(r.scope().contains("b:role.gcp.fed.mcp.user"));
         assertEquals("from-second", r.defaultBillingProject());
@@ -275,7 +346,7 @@ class ZMSServiceImplTest {
                         + "{\"role\":\"d:role.gcp.fed.mcp.user\",\"resource\":\"projects/p/roles/r\","
                         + "\"action\":\"gcp.assume_role\",\"effect\":\"ALLOW\"}"
                         + "]}]}";
-        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse(json, "role.gcp.fed.mcp.user");
+        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse(json, List.of("role.gcp.fed.mcp.user"));
         assertEquals("d:role.gcp.fed.mcp.user openid", r.scope());
     }
 
@@ -284,7 +355,7 @@ class ZMSServiceImplTest {
         String json =
                 "{\"resources\":[{\"assertions\":[{\"role\":\"d:role.gcp.fed.mcp.user\","
                         + "\"resource\":\"projects/p/roles/r\",\"effect\":\"ALLOW\"}]}]}";
-        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse(json, "role.gcp.fed.mcp.user");
+        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse(json, List.of("role.gcp.fed.mcp.user"));
         assertEquals("openid", r.scope());
     }
 
@@ -293,7 +364,24 @@ class ZMSServiceImplTest {
         String json =
                 "{\"resources\":[{\"assertions\":[{\"role\":\"d:role.gcp.fed.mcp.user\","
                         + "\"resource\":\"projects/p/roles/r\",\"action\":\"gcp.assume_role\"}]}]}";
-        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse(json, "role.gcp.fed.mcp.user");
+        GcpZmsPrincipalScope r = zmsService.parseAssumeRoleResourceResponse(json, List.of("role.gcp.fed.mcp.user"));
         assertEquals("openid", r.scope());
+    }
+
+    @Test
+    void parseAssumeRoleResourceResponse_multipleMarkers_unionOfMatches() throws Exception {
+        String json =
+                "{\"resources\":[{\"assertions\":["
+                        + "{\"role\":\"x:role.gcp.fed.mcp.user\",\"resource\":\"projects/px/roles/r\","
+                        + "\"action\":\"gcp.assume_role\",\"effect\":\"ALLOW\"},"
+                        + "{\"role\":\"y:role.gcp.fed.mcp.monitoring.user\",\"resource\":\"projects/py/roles/r\","
+                        + "\"action\":\"gcp.assume_role\",\"effect\":\"ALLOW\"}"
+                        + "]}]}";
+        GcpZmsPrincipalScope r =
+                zmsService.parseAssumeRoleResourceResponse(
+                        json, List.of("role.gcp.fed.mcp.user", "role.gcp.fed.mcp.monitoring.user"));
+        assertTrue(r.scope().contains("x:role.gcp.fed.mcp.user"));
+        assertTrue(r.scope().contains("y:role.gcp.fed.mcp.monitoring.user"));
+        assertEquals("px", r.defaultBillingProject());
     }
 }
