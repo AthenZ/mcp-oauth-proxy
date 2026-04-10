@@ -21,4 +21,7 @@ public interface TokenStore {
     void storeUserToken(String user, String provider, TokenWrapper token);
     TokenWrapper getUserToken(String user, String provider);
     TokenWrapper getUserTokenByAccessTokenHash(String accessTokenHash);
+
+    /** Remove the row for this user/provider (e.g. after upstream refresh is no longer valid). */
+    void deleteUserToken(String user, String provider);
 }

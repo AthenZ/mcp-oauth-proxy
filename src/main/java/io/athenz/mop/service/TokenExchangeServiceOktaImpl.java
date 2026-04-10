@@ -211,7 +211,8 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
                     ttl
             );
         } catch (OktaTokenRevokedException | OktaTokenRefreshException e) {
-            log.warn("Okta refresh failed: {}", e.getMessage());
+            // Upstream OAuth error body is logged at ERROR in OktaTokenClient when the token endpoint returns an error response.
+            log.error("Okta refresh failed: {}", e.getMessage());
             recordUpstreamRefresh(t0, oauthClient, region, false);
             return null;
         }

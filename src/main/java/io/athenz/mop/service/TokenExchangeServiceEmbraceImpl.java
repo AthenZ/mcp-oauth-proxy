@@ -42,6 +42,13 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Base64;
 import java.util.Map;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
@@ -52,6 +59,7 @@ public class TokenExchangeServiceEmbraceImpl implements TokenExchangeService {
 
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     private static final URI EMBRACE_TOKEN_ENDPOINT = URI.create("https://dash-api.embrace.io/oauth/token");
+    private static final URI EMBRACE_REVOKE_ENDPOINT = URI.create("https://dash-api.embrace.io/oauth/revoke");
 
     @ConfigProperty(name = "quarkus.oidc.embrace.client-id", defaultValue = "")
     String clientId;
@@ -153,16 +161,52 @@ public class TokenExchangeServiceEmbraceImpl implements TokenExchangeService {
                 );
             } else {
                 TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
-                String code = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getCode() : "unknown";
-                String desc = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getDescription() : "unknown";
-                log.warn("Embrace refresh failed: {} {}", code, desc);
+                log.error("Embrace refresh failed; upstream response: {}", UpstreamTokenRefreshErrors.formatTokenError(errorResponse));
                 recordEmbraceRefresh(t0, oauthProvider, oauthClient, region, false);
                 return null;
             }
         } catch (Exception e) {
-            log.warn("Embrace refresh failed: {}", e.getMessage());
+            log.error("Embrace refresh failed (could not complete token request or parse upstream response)", e);
             recordEmbraceRefresh(t0, oauthProvider, oauthClient, region, false);
             return null;
+        }
+    }
+
+    @Override
+    public void revokeUpstreamRefreshToken(String upstreamRefreshToken) {
+        if (upstreamRefreshToken == null || upstreamRefreshToken.isBlank()) {
+            return;
+        }
+        if (clientId == null || clientId.isBlank() || clientSecretKey == null || clientSecretKey.isBlank()) {
+            log.warn("Embrace revoke: client credentials not configured");
+            return;
+        }
+        Map<String, String> credentials = k8SSecretsProvider.getCredentials(null);
+        String clientSecret = credentials != null ? credentials.get(clientSecretKey) : null;
+        if (clientSecret == null || clientSecret.isEmpty()) {
+            log.warn("Embrace revoke: client secret not found for key {}", clientSecretKey);
+            return;
+        }
+        String token = upstreamRefreshToken.trim();
+        try {
+            String body = "token=" + URLEncoder.encode(token, StandardCharsets.UTF_8)
+                    + "&token_type_hint=refresh_token";
+            String basic = Base64.getEncoder().encodeToString(
+                    (clientId.trim() + ":" + clientSecret.trim()).getBytes(StandardCharsets.UTF_8));
+            HttpRequest request = HttpRequest.newBuilder(EMBRACE_REVOKE_ENDPOINT)
+                    .timeout(Duration.ofSeconds(20))
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Authorization", "Basic " + basic)
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                log.info("Embrace refresh token revoked at upstream (status {})", response.statusCode());
+            } else {
+                log.warn("Embrace refresh token revoke returned status {}", response.statusCode());
+            }
+        } catch (Exception e) {
+            log.warn("Embrace refresh token revoke failed: {}", e.getMessage());
         }
     }
 

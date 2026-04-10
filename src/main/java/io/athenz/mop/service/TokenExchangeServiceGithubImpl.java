@@ -170,14 +170,12 @@ public class TokenExchangeServiceGithubImpl implements TokenExchangeService {
                 );
             } else {
                 TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
-                String code = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getCode() : "unknown";
-                String desc = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getDescription() : "unknown";
-                log.warn("GitHub refresh failed: {} - {}", code, desc);
+                log.error("GitHub refresh failed; upstream response: {}", UpstreamTokenRefreshErrors.formatTokenError(errorResponse));
                 recordGithubRefresh(t0, oauthProvider, oauthClient, region, false);
                 return null;
             }
         } catch (Exception e) {
-            log.warn("GitHub refresh failed", e);
+            log.error("GitHub refresh failed (could not complete token request or parse upstream response)", e);
             recordGithubRefresh(t0, oauthProvider, oauthClient, region, false);
             return null;
         }

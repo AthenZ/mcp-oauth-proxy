@@ -157,14 +157,12 @@ public class TokenExchangeServiceAtlassianImpl implements TokenExchangeService {
                 );
             } else {
                 TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
-                String code = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getCode() : "unknown";
-                String desc = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getDescription() : "unknown";
-                log.warn("Atlassian refresh failed: {} - {}", code, desc);
+                log.error("Atlassian refresh failed; upstream response: {}", UpstreamTokenRefreshErrors.formatTokenError(errorResponse));
                 recordAtlassianRefresh(t0, oauthProvider, oauthClient, region, false);
                 return null;
             }
         } catch (Exception e) {
-            log.warn("Atlassian refresh failed: {}", e.getMessage());
+            log.error("Atlassian refresh failed (could not complete token request or parse upstream response)", e);
             recordAtlassianRefresh(t0, oauthProvider, oauthClient, region, false);
             return null;
         }
