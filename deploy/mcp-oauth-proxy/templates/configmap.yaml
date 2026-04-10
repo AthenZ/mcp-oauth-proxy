@@ -294,6 +294,17 @@ data:
               - {{ . | quote }}
             {{- end }}
         gcp-role-name: {{ .Values.application.tokenExchange.gcpRoleName | default "gcp.fed.mcp.user" | quote }}
+        {{- $splunk := .Values.application.tokenExchange.splunk | default (dict) }}
+        splunk:
+          admin-token-secret-key: {{ $splunk.adminTokenSecretKey | default "splunk-api-stage" | quote }}
+          mirror-user-prefix: {{ $splunk.mirrorUserPrefix | default "mcp." | quote }}
+          splunk-token-audience: {{ $splunk.splunkTokenAudience | default "mcp" | quote }}
+          token-expires-on: {{ $splunk.tokenExpiresOn | default "+1h" | quote }}
+          {{- $allowedRoles := $splunk.allowedRoles | default (list "yahoo_user" "mcp_user") }}
+          allowed-roles:
+          {{- range $allowedRoles }}
+            - {{ . | quote }}
+          {{- end }}
         oktaServiceTypeApp:
           auth-server-url: {{ .Values.application.oktaServiceTypeApp.endpoint | quote }}
           client-id: {{ .Values.application.oktaServiceTypeApp.clientId | quote }}
@@ -319,6 +330,9 @@ data:
             - name: embrace
               endpoint: {{ .Values.oidc.embrace.authorizationUrl | quote }}
               username-claim: {{ .Values.oidc.embrace.claim | quote }}
+            - name: splunk
+              endpoint: {{ $splunk.mgmtEndpoint | default "" | quote }}
+              username-claim: {{ $splunk.usernameClaim | default "short_id" | quote }}
       resources:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}

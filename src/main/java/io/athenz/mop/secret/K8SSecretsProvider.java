@@ -27,6 +27,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Map;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jetbrains.annotations.Nullable;
@@ -36,6 +37,28 @@ import org.slf4j.LoggerFactory;
 @ApplicationScoped
 @Unremovable
 public class K8SSecretsProvider implements CredentialsProvider {
+
+    /**
+     * Kubernetes {@link io.kubernetes.client.openapi.models.V1Secret#getData() Secret.data} keys (and, when the same
+     * string is used as the {@link #getCredentials} map key, that constant is used for both).
+     */
+    public static final String SECRET_DATA_KEY_CLIENT_SECRET = "client-secret";
+
+    public static final String SECRET_DATA_KEY_ATLASSIAN_CLIENT_SECRET = "atlassian-client-secret";
+    public static final String SECRET_DATA_KEY_GITHUB_CLIENT_SECRET = "github-client-secret";
+    public static final String SECRET_DATA_KEY_GOOGLE_CLIENT_SECRET = "google-client-secret";
+    public static final String SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET = "embrace-client-secret";
+    public static final String SECRET_DATA_KEY_OKTA_TOKEN_EXCHANGE_CLIENT_SECRET = "okta-token-exchange-client-secret";
+
+    /** Kubernetes secret data keys for Splunk management API tokens (same names in {@link #getCredentials} map). */
+    public static final String SECRET_DATA_KEY_SPLUNK_API_STAGE = "splunk-api-stage";
+    public static final String SECRET_DATA_KEY_SPLUNK_API_PROD = "splunk-api-prod";
+
+    /**
+     * {@link #getCredentials} map key for the value read from {@link #SECRET_DATA_KEY_CLIENT_SECRET} (Okta OIDC
+     * client secret).
+     */
+    public static final String CREDENTIALS_KEY_OKTA_CLIENT_SECRET = "okta-client-secret";
 
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
@@ -49,25 +72,48 @@ public class K8SSecretsProvider implements CredentialsProvider {
     public Map<String, String> getCredentials(String credentialsProviderName) {
         try {
             Map<String, byte[]> data = getSecretFromApiServer(secretName);
-            String clientSecret = new String(data.get("client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
-            String atlassianClientSecret = new String(data.get("atlassian-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
-            String githubClientSecret = new String(data.get("github-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
-            String googleClientSecret = new String(data.get("google-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
-            String embraceClientSecret = new String(data.get("embrace-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
-            String oktaTokenExchangeClientSecret = new String(data.get("okta-token-exchange-client-secret"), StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
-            return Map.of(
-                    "okta-client-secret", clientSecret,
-                    "atlassian-client-secret", atlassianClientSecret,
-                    "github-client-secret", githubClientSecret,
-                    "google-client-secret", googleClientSecret,
-                    "embrace-client-secret", embraceClientSecret,
-                    "okta-token-exchange-client-secret", oktaTokenExchangeClientSecret
-            );
+            if (data == null) {
+                return Map.of();
+            }
+            return Map.copyOf(credentialsMapFromData(data));
 
         } catch (IOException | ApiException e) {
             log.error("failed to read k8s secret {}", e.getMessage());
         }
         return Map.of();
+    }
+
+    /**
+     * Builds the credentials map from raw Kubernetes secret {@code data} entries (test seam for Splunk keys and trimming).
+     */
+    static Map<String, String> credentialsMapFromData(Map<String, byte[]> data) {
+        String clientSecret = decodeTrimmed(data, SECRET_DATA_KEY_CLIENT_SECRET);
+        String atlassianClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_ATLASSIAN_CLIENT_SECRET);
+        String githubClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_GITHUB_CLIENT_SECRET);
+        String googleClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_GOOGLE_CLIENT_SECRET);
+        String embraceClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET);
+        String oktaTokenExchangeClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_OKTA_TOKEN_EXCHANGE_CLIENT_SECRET);
+        String splunkApiStage = decodeTrimmed(data, SECRET_DATA_KEY_SPLUNK_API_STAGE);
+        String splunkApiProd = decodeTrimmed(data, SECRET_DATA_KEY_SPLUNK_API_PROD);
+
+        Map<String, String> map = new HashMap<>();
+        map.put(CREDENTIALS_KEY_OKTA_CLIENT_SECRET, clientSecret);
+        map.put(SECRET_DATA_KEY_ATLASSIAN_CLIENT_SECRET, atlassianClientSecret);
+        map.put(SECRET_DATA_KEY_GITHUB_CLIENT_SECRET, githubClientSecret);
+        map.put(SECRET_DATA_KEY_GOOGLE_CLIENT_SECRET, googleClientSecret);
+        map.put(SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET, embraceClientSecret);
+        map.put(SECRET_DATA_KEY_OKTA_TOKEN_EXCHANGE_CLIENT_SECRET, oktaTokenExchangeClientSecret);
+        map.put(SECRET_DATA_KEY_SPLUNK_API_STAGE, splunkApiStage);
+        map.put(SECRET_DATA_KEY_SPLUNK_API_PROD, splunkApiProd);
+        return map;
+    }
+
+    private static String decodeTrimmed(Map<String, byte[]> data, String key) {
+        byte[] raw = data.get(key);
+        if (raw == null) {
+            return "";
+        }
+        return new String(raw, StandardCharsets.UTF_8).replaceAll("\\r?\\n$", "");
     }
 
     private @Nullable Map<String, byte[]> getSecretFromApiServer(String pkeySecretName) throws IOException, ApiException {

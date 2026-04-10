@@ -33,6 +33,8 @@ import java.util.Arrays;
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class AuthorizerServiceTest {
@@ -437,6 +439,44 @@ class AuthorizerServiceTest {
     }
 
     @Test
+    void testGetTokenFromAuthorizationServer_SplunkAudience_storesExchangedTokenForUserinfo() {
+        String subject = "test-subject";
+        String scopes = "read";
+        String resource = "https://mcp-gateway.test/v1/splunk/mcp";
+        String authServer = "splunk";
+        String remoteEndpoint = "https://splunk-mgmt.test:8089";
+
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read"), "domain1", AudienceConstants.PROVIDER_OKTA, authServer, false, null,
+                AudienceConstants.PROVIDER_SPLUNK);
+
+        TokenWrapper inputToken = new TokenWrapper(
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
+                Instant.now().getEpochSecond() + 300);
+
+        long tokenTtl = 3600L;
+        TokenWrapper exchanged = new TokenWrapper(
+                null, null, null, "splunk-exchanged-access-token", null, tokenTtl);
+        AuthorizationResultDO authResultDO = new AuthorizationResultDO(AuthResult.AUTHORIZED, exchanged);
+
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        when(configService.getRemoteServerEndpoint(authServer)).thenReturn(remoteEndpoint);
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(authServer)).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class)))
+                .thenReturn(authResultDO);
+
+        TokenResponse result = authorizerService.getTokenFromAuthorizationServer(subject, scopes, resource, inputToken);
+
+        assertNotNull(result);
+        assertEquals("splunk-exchanged-access-token", result.accessToken());
+
+        verify(tokenStore).storeUserToken(eq("user.testuser"), eq(AudienceConstants.PROVIDER_SPLUNK), argThat(w ->
+                "splunk-exchanged-access-token".equals(w.accessToken())
+                        && AudienceConstants.PROVIDER_SPLUNK.equals(w.provider())
+                        && "user.testuser".equals(w.key())));
+    }
+
+    @Test
     void testGetTokenFromAuthorizationServer_WithJAG() {
         // Given
         String subject = "test-subject";
@@ -715,6 +755,43 @@ class AuthorizerServiceTest {
         // TTL = now + tokenTtl + 300 (grace)
         long expectedMinTtl = Instant.now().getEpochSecond() + tokenTtl + 300L;
         assertTrue(storedForUserinfo.ttl() >= expectedMinTtl - 2, "stored TTL should be token expiry + 5 min grace");
+    }
+
+    @Test
+    void testRefreshUpstreamAndGetToken_storeRefreshedAccessToken_Splunk_storesExchangedTokenUnderSplunk() {
+        String resource = "https://mcp-gateway.test/v1/splunk/mcp";
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read"), "domain1", AudienceConstants.PROVIDER_OKTA, "splunk", false, null,
+                AudienceConstants.PROVIDER_SPLUNK
+        );
+        long tokenTtl = 3600L;
+        TokenWrapper newToken = new TokenWrapper(
+                "user1", AudienceConstants.PROVIDER_OKTA, "new-id-token", "new-access-token", "new-upstream-refresh",
+                Instant.now().getEpochSecond() + tokenTtl
+        );
+        TokenWrapper exchangedToken = new TokenWrapper(
+                null, null, null, "splunk-exchanged-access-token", null, tokenTtl
+        );
+        AuthorizationResultDO atDO = new AuthorizationResultDO(AuthResult.AUTHORIZED, exchangedToken);
+
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA)).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(newToken);
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        when(configService.getRemoteServerEndpoint("splunk")).thenReturn("https://splunk-mgmt.test:8089");
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("splunk")).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class))).thenReturn(atDO);
+
+        authorizerService.refreshUpstreamAndGetToken("user1", AudienceConstants.PROVIDER_OKTA, resource, "upstream-refresh-token");
+
+        ArgumentCaptor<String> userCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> providerCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<TokenWrapper> tokenCaptor = ArgumentCaptor.forClass(TokenWrapper.class);
+        verify(tokenStore, times(2)).storeUserToken(userCaptor.capture(), providerCaptor.capture(), tokenCaptor.capture());
+
+        assertEquals("user1", userCaptor.getAllValues().get(1));
+        assertEquals(AudienceConstants.PROVIDER_SPLUNK, providerCaptor.getAllValues().get(1));
+        TokenWrapper storedForUserinfo = tokenCaptor.getAllValues().get(1);
+        assertEquals("splunk-exchanged-access-token", storedForUserinfo.accessToken());
     }
 
     @Test

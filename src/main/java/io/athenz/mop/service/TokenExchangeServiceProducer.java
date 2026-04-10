@@ -42,6 +42,9 @@ public class TokenExchangeServiceProducer {
     @Inject
     TokenExchangeServiceGcpWorkforceImpl tokenExchangeServiceGcpWorkforceImpl;
 
+    @Inject
+    TokenExchangeServiceSplunkImpl tokenExchangeServiceSplunkImpl;
+
     public TokenExchangeService getTokenExchangeServiceImplementation(String idpType) {
 
         return switch (idpType) {
@@ -53,6 +56,7 @@ public class TokenExchangeServiceProducer {
             case "glean" -> tokenExchangeServiceOktaImpl;
             case "athenz" -> tokenExchangeServiceZTSImpl;
             case "google-monitoring", "google-logging" -> tokenExchangeServiceGcpWorkforceImpl;
+            case "splunk" -> tokenExchangeServiceSplunkImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
         };
     }
