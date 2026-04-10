@@ -44,6 +44,12 @@ class TokenExchangeServiceProducerTest {
     @Mock
     private TokenExchangeServiceEmbraceImpl tokenExchangeServiceEmbraceImpl;
 
+    @Mock
+    private TokenExchangeServiceGcpWorkforceImpl tokenExchangeServiceGcpWorkforceImpl;
+
+    @Mock
+    private TokenExchangeServiceSplunkImpl tokenExchangeServiceSplunkImpl;
+
     @InjectMocks
     private TokenExchangeServiceProducer tokenExchangeServiceProducer;
 
@@ -107,6 +113,13 @@ class TokenExchangeServiceProducerTest {
         // Then
         assertNotNull(result);
         assertSame(tokenExchangeServiceZTSImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_Splunk() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("splunk");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceSplunkImpl, result);
     }
 
     @Test

@@ -227,11 +227,22 @@ server:
       namespace:
   token-exchange:
     idp:
+    splunk:
+      admin-token-secret-key: splunk-api-stage
+      mirror-user-prefix: mcp.
+      allowed-roles:
+        - yahoo_user
+        - mcp_user
+      splunk-token-audience: mcp
+      token-expires-on: "+1h"
     remote-servers:
       endpoints:
         - name:
           endpoint:
           username-claim:
+        - name: splunk
+          endpoint: ${SPLUNK_MGMT_URL:https://localhost:8089}
+          username-claim: short_id
 
   resources:
     resource-mapping:

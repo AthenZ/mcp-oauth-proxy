@@ -24,6 +24,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.time.Instant;
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.slf4j.Logger;
@@ -186,7 +187,7 @@ public class AuthorizerService {
 
     /**
      * Store exchanged token in DynamoDB when the resource has an audience that uses a dedicated provider
-     * (Glean, Gcp Monitoring, Gcp Logging). Stores with provider = audience so /userinfo can resolve by token.
+     * (Glean, Gcp Monitoring, Gcp Logging, Splunk). Stores with provider = audience so /userinfo can resolve by token.
      *
      * @param resource The resource URI being accessed
      * @param oktaToken The original Okta token containing the user/subject
@@ -198,10 +199,7 @@ public class AuthorizerService {
             return;
         }
         String audience = resourceMeta.audience();
-        boolean storeByAudience = AudienceConstants.PROVIDER_GLEAN.equals(audience)
-                || AudienceConstants.PROVIDER_GOOGLE_MONITORING.equals(audience)
-                || AudienceConstants.PROVIDER_GOOGLE_LOGGING.equals(audience);
-        if (!storeByAudience) {
+        if (!AudienceConstants.storesExchangedTokenForUserinfo(audience)) {
             return;
         }
         log.info("Storing exchanged token for user: {} audience: {}", oktaToken.key(), audience);
@@ -239,9 +237,7 @@ public class AuthorizerService {
         String storeProvider;
         TokenWrapper toStore;
         String audience = resourceMeta != null ? resourceMeta.audience() : null;
-        boolean storeByAudience = audience != null && (AudienceConstants.PROVIDER_GLEAN.equals(audience)
-                || AudienceConstants.PROVIDER_GOOGLE_MONITORING.equals(audience)
-                || AudienceConstants.PROVIDER_GOOGLE_LOGGING.equals(audience));
+        boolean storeByAudience = AudienceConstants.storesExchangedTokenForUserinfo(audience);
         if (resourceMeta != null && storeByAudience) {
             storeProvider = audience;
             long absoluteTtl = Instant.now().getEpochSecond() + (returnedToken.ttl() != null ? returnedToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
@@ -285,7 +281,7 @@ public class AuthorizerService {
      */
     public RefreshAndTokenResult refreshUpstreamAndGetToken(String userId, String provider, String resource,
                                                            String upstreamRefreshToken) {
-        if (upstreamRefreshToken == null || upstreamRefreshToken.isEmpty()) {
+        if (StringUtils.isBlank(upstreamRefreshToken)) {
             log.warn("refreshUpstreamAndGetToken: no upstream refresh token for user {} provider {}", userId, provider);
             return null;
         }
@@ -298,8 +294,7 @@ public class AuthorizerService {
         }
         long nowSeconds = Instant.now().getEpochSecond();
         long absoluteTtl = nowSeconds + (newToken.ttl() != null ? newToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
-        String newUpstreamRefresh = (newToken.refreshToken() != null && !newToken.refreshToken().isEmpty())
-                ? newToken.refreshToken() : null;
+        String newUpstreamRefresh = StringUtils.isNotBlank(newToken.refreshToken()) ? newToken.refreshToken() : null;
         TokenWrapper toStore = new TokenWrapper(
                 userId,
                 provider,
