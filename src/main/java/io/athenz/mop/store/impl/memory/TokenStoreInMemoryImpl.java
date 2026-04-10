@@ -73,6 +73,27 @@ public class TokenStoreInMemoryImpl implements TokenStore, AuthCodeStore, TokenS
     }
 
     @Override
+    public void deleteUserToken(String user, String provider) {
+        CompletableFuture<TokenWrapper> cachedTokenValue = tokenCache.as(CaffeineCache.class).getIfPresent(user);
+        if (cachedTokenValue == null) {
+            return;
+        }
+        try {
+            TokenWrapper token = cachedTokenValue.get();
+            if (token == null || !provider.equals(token.provider())) {
+                return;
+            }
+            if (token.accessToken() != null) {
+                hashToUserMap.remove(JwtUtils.hashAccessToken(token.accessToken()));
+            }
+            tokenCache.invalidate(user).await().indefinitely();
+            log.info("deleteUserToken: removed cache entry for user {} provider {}", user, provider);
+        } catch (Exception ex) {
+            log.warn("deleteUserToken: unable to evict user {} provider {}: {}", user, provider, ex.getMessage());
+        }
+    }
+
+    @Override
     public void storeAuthCode(String code, String provider, AuthorizationCode codeObj) {
         codeCache.as(CaffeineCache.class).put(code, CompletableFuture.completedFuture(codeObj));
     }

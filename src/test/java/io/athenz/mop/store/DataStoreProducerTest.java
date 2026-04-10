@@ -302,5 +302,9 @@ class DataStoreProducerTest {
         public TokenWrapper getUserTokenByAccessTokenHash(String accessTokenHash) {
             return null;
         }
+
+        @Override
+        public void deleteUserToken(String user, String provider) {
+        }
     }
 }

@@ -397,6 +397,10 @@ public class TokenResource {
                                         .build());
                     } catch (UpstreamRefreshException e) {
                         log.warn("refresh_token grant failed: centralized upstream refresh: {}", e.getMessage());
+                        authorizerService.cleanupAfterTerminalUpstreamRefreshFailure(
+                                userId,
+                                provider,
+                                result.record().encryptedUpstreamRefreshToken());
                         refreshTokenService.revokeFamily(result.record().tokenFamilyId());
                         return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
                     }
@@ -416,7 +420,7 @@ public class TokenResource {
                     }
                 }
                 if (refreshResult == null) {
-                    log.warn("refresh_token grant failed: upstream refresh failed; revoking token family for userId={} provider={} resource={} tokenFamilyId={}",
+                    log.error("refresh_token grant failed: upstream refresh failed; revoking token family for userId={} provider={} resource={} tokenFamilyId={} (upstream OAuth error body should appear in ERROR logs from token exchange)",
                             userId, provider, request.getResource(), result.record().tokenFamilyId());
                     refreshTokenService.revokeFamily(result.record().tokenFamilyId());
                     return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));

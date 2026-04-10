@@ -157,14 +157,12 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
                 );
             } else {
                 TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
-                String code = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getCode() : "unknown";
-                String desc = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getDescription() : "unknown";
-                log.warn("Google refresh failed: {} - {}", code, desc);
+                log.error("Google refresh failed; upstream response: {}", UpstreamTokenRefreshErrors.formatTokenError(errorResponse));
                 recordGoogleRefresh(t0, oauthProvider, oauthClient, region, false);
                 return null;
             }
         } catch (Exception e) {
-            log.warn("Google refresh failed: {}", e.getMessage());
+            log.error("Google refresh failed (could not complete token request or parse upstream response)", e);
             recordGoogleRefresh(t0, oauthProvider, oauthClient, region, false);
             return null;
         }

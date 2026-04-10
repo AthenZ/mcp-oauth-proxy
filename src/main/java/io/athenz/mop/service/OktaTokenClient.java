@@ -107,9 +107,10 @@ public class OktaTokenClient {
                 return new OktaTokens(accessToken.getValue(), rt, idTokenString, expiresIn);
             }
             TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
+            String body = UpstreamTokenRefreshErrors.formatTokenError(errorResponse);
+            log.error("Okta refresh failed; upstream response: {}", body);
             String code = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getCode() : "unknown";
             String desc = errorResponse.getErrorObject() != null ? errorResponse.getErrorObject().getDescription() : "unknown";
-            log.warn("Okta refresh failed: {} - {}", code, desc);
             if ("invalid_grant".equals(code)) {
                 throw new OktaTokenRevokedException("Okta refresh token invalid or revoked: " + desc);
             }
@@ -117,7 +118,7 @@ public class OktaTokenClient {
         } catch (OktaTokenRevokedException e) {
             throw e;
         } catch (Exception e) {
-            log.warn("Okta refresh failed: {}", e.getMessage());
+            log.error("Okta refresh failed (could not complete token request or parse upstream response)", e);
             throw new OktaTokenRefreshException("Okta token refresh failed: " + e.getMessage(), e);
         }
     }

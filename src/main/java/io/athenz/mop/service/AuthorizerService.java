@@ -288,8 +288,9 @@ public class AuthorizerService {
         TokenExchangeService exchangeService = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
         TokenWrapper newToken = exchangeService.refreshWithUpstreamToken(upstreamRefreshToken);
         if (newToken == null) {
-            log.warn("refreshUpstreamAndGetToken: upstream IDP refresh failed (refreshWithUpstreamToken returned null) for user {} provider {}",
+            log.error("refreshUpstreamAndGetToken: upstream IDP refresh failed (refreshWithUpstreamToken returned null) for user {} provider {}; see ERROR log from token exchange for upstream response body",
                     userId, provider);
+            cleanupAfterTerminalUpstreamRefreshFailure(userId, provider, upstreamRefreshToken);
             return null;
         }
         long nowSeconds = Instant.now().getEpochSecond();
@@ -379,6 +380,29 @@ public class AuthorizerService {
                 scopeStr
         );
         return new RefreshAndTokenResult(tokenResponse, null);
+    }
+
+    /**
+     * After upstream refresh fails terminally (e.g. {@code invalid_grant}): drop cached IdP tokens from the token store
+     * and best-effort revoke the upstream refresh token at the IdP when the provider implements it.
+     */
+    public void cleanupAfterTerminalUpstreamRefreshFailure(String userId, String provider, String upstreamRefreshToken) {
+        if (StringUtils.isBlank(userId) || StringUtils.isBlank(provider)) {
+            return;
+        }
+        try {
+            tokenStore.deleteUserToken(userId, provider);
+        } catch (Exception e) {
+            log.warn("Failed to delete token store entry for userId={} provider={}: {}", userId, provider, e.getMessage());
+        }
+        if (StringUtils.isNotBlank(upstreamRefreshToken)) {
+            try {
+                tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider)
+                        .revokeUpstreamRefreshToken(upstreamRefreshToken.trim());
+            } catch (Exception e) {
+                log.warn("Upstream refresh token revoke failed for provider {}: {}", provider, e.getMessage());
+            }
+        }
     }
 
 }

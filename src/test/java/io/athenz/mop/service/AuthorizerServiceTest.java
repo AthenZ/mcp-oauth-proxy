@@ -673,13 +673,15 @@ class AuthorizerServiceTest {
     }
 
     @Test
-    void testRefreshUpstreamAndGetToken_returnsNullWhenExchangeReturnsNull() {
+    void testRefreshUpstreamAndGetToken_returnsNullWhenUpstreamRefreshReturnsNull_cleansTokenStoreAndRevokes() {
         when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA)).thenReturn(tokenExchangeService);
         when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(null);
 
         RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", AudienceConstants.PROVIDER_OKTA, "https://resource.example.com", "upstream-refresh-token");
 
         assertNull(result);
+        verify(tokenStore).deleteUserToken("user1", AudienceConstants.PROVIDER_OKTA);
+        verify(tokenExchangeService).revokeUpstreamRefreshToken("upstream-refresh-token");
     }
 
     @Test
@@ -853,6 +855,8 @@ class AuthorizerServiceTest {
         RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken("user1", AudienceConstants.PROVIDER_OKTA, resource, "upstream-refresh-token");
 
         assertNull(result);
+        verify(tokenStore, never()).deleteUserToken(any(), any());
+        verify(tokenExchangeService, never()).revokeUpstreamRefreshToken(any());
     }
 
     @Test

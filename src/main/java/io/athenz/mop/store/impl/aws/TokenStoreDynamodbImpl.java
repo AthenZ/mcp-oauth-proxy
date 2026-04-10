@@ -96,6 +96,19 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
     }
 
     @Override
+    public void deleteUserToken(String user, String provider) {
+        deleteUserToken(dynamoDbClient, tableName, user, provider);
+    }
+
+    public void deleteUserToken(DynamoDbClient client, String table, String user, String provider) {
+        final HashMap<String, AttributeValue> key = new HashMap<>();
+        key.put(TokenTableAttribute.USER.attr(), AttributeValue.builder().s(user).build());
+        key.put(TokenTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(provider).build());
+        DeleteItemResponse response = client.deleteItem(DeleteItemRequest.builder().key(key).tableName(table).build());
+        log.info("deleteUserToken: key={}, provider={} HTTPStatusCode={}", user, provider, response.sdkHttpResponse().statusCode());
+    }
+
+    @Override
     public TokenWrapper getUserToken(String user, String provider) {
         return getUserToken(dynamoDbClient, tableName, user, provider);
     }

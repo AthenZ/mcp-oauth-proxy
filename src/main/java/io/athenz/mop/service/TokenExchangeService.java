@@ -34,4 +34,11 @@ public interface TokenExchangeService {
      * </p>
      */
     TokenWrapper refreshWithUpstreamToken(String upstreamRefreshToken);
+
+    /**
+     * Best-effort: revoke the upstream refresh token at the IdP after a terminal refresh failure
+     * (e.g. {@code invalid_grant}). Default is no-op.
+     */
+    default void revokeUpstreamRefreshToken(String upstreamRefreshToken) {
+    }
 }
