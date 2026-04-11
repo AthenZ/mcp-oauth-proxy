@@ -34,6 +34,19 @@ public final class AudienceConstants {
     public static final String PROVIDER_GOOGLE_LOGGING = "google-logging";
     public static final String PROVIDER_SPLUNK = "splunk";
 
+    /** Databricks SQL MCP resource mapping {@code token.audience} / {@code token.as} routing id. */
+    public static final String PROVIDER_DATABRICKS_SQL = "databricks-sql";
+
+    /**
+     * DynamoDB / userinfo provider column for a Databricks SQL workspace (prefix + workspace hostname).
+     */
+    public static String databricksSqlStorageProvider(String hostname) {
+        if (StringUtils.isBlank(hostname)) {
+            return PROVIDER_DATABRICKS_SQL;
+        }
+        return PROVIDER_DATABRICKS_SQL + "-" + hostname.trim();
+    }
+
     /** Exchanged access token stored by audience so {@code GET /userinfo} can resolve Okta profile from Splunk/Glean/GCP tokens. */
     public static boolean storesExchangedTokenForUserinfo(String audience) {
         if (StringUtils.isBlank(audience)) {
@@ -42,6 +55,7 @@ public final class AudienceConstants {
         return PROVIDER_GLEAN.equals(audience)
                 || PROVIDER_GOOGLE_MONITORING.equals(audience)
                 || PROVIDER_GOOGLE_LOGGING.equals(audience)
-                || PROVIDER_SPLUNK.equals(audience);
+                || PROVIDER_SPLUNK.equals(audience)
+                || PROVIDER_DATABRICKS_SQL.equals(audience);
     }
 }

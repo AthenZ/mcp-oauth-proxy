@@ -65,6 +65,9 @@ public class AuthorizerService {
     @Inject
     ConfigService configService;
 
+    @Inject
+    ExchangedTokenUserinfoStoreProviderResolver exchangedTokenUserinfoStoreProviderResolver;
+
     public void storeTokens(String lookupKey, JsonWebToken idToken, JsonWebToken accessToken, RefreshToken refreshToken, String provider) {
         String user = userPrefix + accessToken.getName();
         storeTokens(
@@ -157,7 +160,7 @@ public class AuthorizerService {
                     atDO.token().accessToken(),
                     TOKEN_TYPE,
                     atDO.token().ttl(),
-                    resourceMeta.scopes().toString()
+                    tokenResponseScope(atDO, resourceMeta)
             );
 
         } else {
@@ -179,10 +182,17 @@ public class AuthorizerService {
                     atDO.token().accessToken(),
                     TOKEN_TYPE,
                     atDO.token().ttl(),
-                    resourceMeta.scopes().toString()
+                    tokenResponseScope(atDO, resourceMeta)
             );
         }
         return tokenResponse;
+    }
+
+    private static String tokenResponseScope(AuthorizationResultDO atDO, ResourceMeta resourceMeta) {
+        if (atDO != null && StringUtils.isNotBlank(atDO.oauthScope())) {
+            return atDO.oauthScope();
+        }
+        return resourceMeta != null ? resourceMeta.scopes().toString() : "";
     }
 
     /**
@@ -202,22 +212,23 @@ public class AuthorizerService {
         if (!AudienceConstants.storesExchangedTokenForUserinfo(audience)) {
             return;
         }
-        log.info("Storing exchanged token for user: {} audience: {}", oktaToken.key(), audience);
+        String storeProvider = exchangedTokenUserinfoStoreProviderResolver.resolve(resource, audience);
+        log.info("Storing exchanged token for user: {} provider: {}", oktaToken.key(), storeProvider);
 
         long nowSeconds = Instant.now().getEpochSecond();
         long absoluteTtl = nowSeconds + (exchangedToken.ttl() != null ? exchangedToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
 
         TokenWrapper toStore = new TokenWrapper(
                 oktaToken.key(),
-                audience,
+                storeProvider,
                 null,
                 exchangedToken.accessToken(),
                 null,
                 absoluteTtl
         );
 
-        tokenStore.storeUserToken(oktaToken.key(), audience, toStore);
-        log.info("Successfully stored token for user: {} provider: {} with ttl: {}", oktaToken.key(), audience, toStore.ttl());
+        tokenStore.storeUserToken(oktaToken.key(), storeProvider, toStore);
+        log.info("Successfully stored token for user: {} provider: {} with ttl: {}", oktaToken.key(), storeProvider, toStore.ttl());
     }
 
     /**
@@ -239,7 +250,7 @@ public class AuthorizerService {
         String audience = resourceMeta != null ? resourceMeta.audience() : null;
         boolean storeByAudience = AudienceConstants.storesExchangedTokenForUserinfo(audience);
         if (resourceMeta != null && storeByAudience) {
-            storeProvider = audience;
+            storeProvider = exchangedTokenUserinfoStoreProviderResolver.resolve(resource, audience);
             long absoluteTtl = Instant.now().getEpochSecond() + (returnedToken.ttl() != null ? returnedToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
             toStore = new TokenWrapper(
                     userId,
@@ -307,7 +318,6 @@ public class AuthorizerService {
         tokenStore.storeUserToken(userId, provider, toStore);
 
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
-        String scopeStr = resourceMeta != null ? resourceMeta.scopes().toString() : "";
         // Run the new access token through the resource's authorization server (e.g. Okta/Glean exchange)
         // so the client receives the same exchanged token as in the auth_code flow (TokenExchangeServiceOktaImpl 87-92)
         TokenExchangeService accessTokenIssuer = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(
@@ -325,6 +335,7 @@ public class AuthorizerService {
             return null;
         }
         storeRefreshedAccessToken(resource, userId, provider, toStore, atDO.token());
+        String scopeStr = tokenResponseScope(atDO, resourceMeta);
         TokenResponse tokenResponse = new TokenResponse(
                 atDO.token().accessToken(),
                 TOKEN_TYPE,
@@ -357,7 +368,6 @@ public class AuthorizerService {
         tokenStore.storeUserToken(userId, provider, toStore);
 
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
-        String scopeStr = resourceMeta != null ? resourceMeta.scopes().toString() : "";
         TokenExchangeService accessTokenIssuer = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(
                 resourceMeta != null ? resourceMeta.authorizationServer() : provider);
         TokenExchangeDO accessTokenRequestDO = new TokenExchangeDO(
@@ -373,6 +383,7 @@ public class AuthorizerService {
             return null;
         }
         storeRefreshedAccessToken(resource, userId, provider, toStore, atDO.token());
+        String scopeStr = tokenResponseScope(atDO, resourceMeta);
         TokenResponse tokenResponse = new TokenResponse(
                 atDO.token().accessToken(),
                 TOKEN_TYPE,

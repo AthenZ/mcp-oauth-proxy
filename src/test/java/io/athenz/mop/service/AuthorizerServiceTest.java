@@ -33,6 +33,7 @@ import java.util.Arrays;
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -63,6 +64,9 @@ class AuthorizerServiceTest {
     @Mock
     private TokenExchangeService tokenExchangeService;
 
+    @Mock
+    private ExchangedTokenUserinfoStoreProviderResolver exchangedTokenUserinfoStoreProviderResolver;
+
     @InjectMocks
     private AuthorizerService authorizerService;
 
@@ -74,6 +78,8 @@ class AuthorizerServiceTest {
         authorizerService.authorizationDomain = "athenz.examples.agentic-ai";
         authorizerService.authorizationAction = "mcp.access";
         authorizerService.zmsResourceAuthorization = false;
+        when(exchangedTokenUserinfoStoreProviderResolver.resolve(anyString(), anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
     }
 
     @Test
@@ -794,6 +800,51 @@ class AuthorizerServiceTest {
         assertEquals(AudienceConstants.PROVIDER_SPLUNK, providerCaptor.getAllValues().get(1));
         TokenWrapper storedForUserinfo = tokenCaptor.getAllValues().get(1);
         assertEquals("splunk-exchanged-access-token", storedForUserinfo.accessToken());
+    }
+
+    @Test
+    void testRefreshUpstreamAndGetToken_storeRefreshedAccessToken_DatabricksSql_storesUnderWorkspaceProvider() {
+        String resource = "https://gateway.test.example/v1/databricks-sql/dbc-testws/mcp";
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read"),
+                "domain1",
+                AudienceConstants.PROVIDER_OKTA,
+                AudienceConstants.PROVIDER_DATABRICKS_SQL,
+                false,
+                null,
+                AudienceConstants.PROVIDER_DATABRICKS_SQL);
+        long tokenTtl = 3600L;
+        TokenWrapper newToken = new TokenWrapper(
+                "user1", AudienceConstants.PROVIDER_OKTA, "new-id-token", "new-access-token", "new-upstream-refresh",
+                Instant.now().getEpochSecond() + tokenTtl
+        );
+        TokenWrapper exchangedToken = new TokenWrapper(
+                null, null, null, "dbx-exchanged-access-token", null, tokenTtl
+        );
+        AuthorizationResultDO atDO = new AuthorizationResultDO(AuthResult.AUTHORIZED, exchangedToken, "sql");
+
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA))
+                .thenReturn(tokenExchangeService);
+        when(tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token")).thenReturn(newToken);
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        when(configService.getRemoteServerEndpoint(AudienceConstants.PROVIDER_DATABRICKS_SQL)).thenReturn(null);
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_DATABRICKS_SQL))
+                .thenReturn(tokenExchangeService);
+        when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class))).thenReturn(atDO);
+        when(exchangedTokenUserinfoStoreProviderResolver.resolve(eq(resource), eq(AudienceConstants.PROVIDER_DATABRICKS_SQL)))
+                .thenReturn("databricks-sql-dbc-testws.cloud.databricks.com");
+
+        RefreshAndTokenResult result = authorizerService.refreshUpstreamAndGetToken(
+                "user1", AudienceConstants.PROVIDER_OKTA, resource, "upstream-refresh-token");
+
+        assertNotNull(result);
+        assertEquals("sql", result.tokenResponse().scope());
+
+        ArgumentCaptor<String> providerCaptor = ArgumentCaptor.forClass(String.class);
+        verify(tokenStore, times(2)).storeUserToken(eq("user1"), providerCaptor.capture(), any(TokenWrapper.class));
+        assertEquals(
+                "databricks-sql-dbc-testws.cloud.databricks.com",
+                providerCaptor.getAllValues().get(1));
     }
 
     @Test
