@@ -305,6 +305,12 @@ data:
           {{- range $allowedRoles }}
             - {{ . | quote }}
           {{- end }}
+        {{- $dbxSql := .Values.application.tokenExchange.databricksSql | default (dict) }}
+        databricks-sql:
+          workspace-host-template: {{ $dbxSql.workspaceHostTemplate | default "https://%s.cloud.databricks.com" | quote }}
+          resource-path-prefix: {{ $dbxSql.resourcePathPrefix | default "/v1/databricks-sql/" | quote }}
+          workspace-segment-pattern: {{ $dbxSql.workspaceSegmentPattern | default "^dbc-[a-zA-Z0-9.-]+$" | quote }}
+          oauth-scope: {{ $dbxSql.oauthScope | default "sql" | quote }}
         oktaServiceTypeApp:
           auth-server-url: {{ .Values.application.oktaServiceTypeApp.endpoint | quote }}
           client-id: {{ .Values.application.oktaServiceTypeApp.clientId | quote }}

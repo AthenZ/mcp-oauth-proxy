@@ -235,6 +235,11 @@ server:
         - mcp_user
       splunk-token-audience: mcp
       token-expires-on: "+1h"
+    databricks-sql:
+      workspace-host-template: "https://%s.cloud.databricks.com"
+      resource-path-prefix: "/v1/databricks-sql/"
+      workspace-segment-pattern: "^dbc-[a-zA-Z0-9.-]+$"
+      oauth-scope: sql
     remote-servers:
       endpoints:
         - name:

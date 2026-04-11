@@ -15,4 +15,9 @@
  */
 package io.athenz.mop.model;
 
-public record AuthorizationResultDO(AuthResult authResult, TokenWrapper token) {}
+public record AuthorizationResultDO(AuthResult authResult, TokenWrapper token, String oauthScope) {
+
+    public AuthorizationResultDO(AuthResult authResult, TokenWrapper token) {
+        this(authResult, token, null);
+    }
+}

@@ -429,6 +429,7 @@ class TokenExchangeServiceSplunkImplTest {
     @Test
     void storesExchangedTokenForUserinfo_includesSplunk() {
         assertEquals(true, AudienceConstants.storesExchangedTokenForUserinfo(AudienceConstants.PROVIDER_SPLUNK));
+        assertEquals(true, AudienceConstants.storesExchangedTokenForUserinfo(AudienceConstants.PROVIDER_DATABRICKS_SQL));
         assertEquals(false, AudienceConstants.storesExchangedTokenForUserinfo("unknown"));
     }
 }
