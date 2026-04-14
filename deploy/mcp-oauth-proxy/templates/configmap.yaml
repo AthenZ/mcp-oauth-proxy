@@ -38,6 +38,9 @@ data:
             google:
               paths: "/google/*"
               policy: authenticated
+            slack:
+              paths: "/slack/*"
+              policy: authenticated
             embrace:
               paths: "/embrace/*"
               policy: authenticated
@@ -139,6 +142,36 @@ data:
             restore-path-after-redirect: true
             extra-params:
               access_type: "offline"
+        slack:
+          auth-server-url: "https://slack.com"
+          discovery-enabled: false
+          authorization-path: "/oauth/v2/authorize"
+          token-path: "/api/oauth.v2.user.access"
+          user-info-path: "https://slack.com/api/auth.test"
+          client-id: {{ .Values.oidc.slack.clientId | quote }}
+          credentials:
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.slack.clientSecretKey }}
+              method: post
+          authentication:
+            scopes: []
+            redirect-path: /slack/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: false
+            id-token-required: false
+            user-info-required: true
+            verify-access-token: false
+            extra-params:
+              user_scope: {{ .Values.oidc.slack.userScopes | quote }}
+              team: {{ .Values.oidc.slack.team | quote }}
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            issuer: any
         embrace:
 {{- if (.Values.oidc.embrace.tlsInsecureClient | default false) }}
           tls:
@@ -339,6 +372,9 @@ data:
             - name: splunk
               endpoint: {{ $splunk.mgmtEndpoint | default "" | quote }}
               username-claim: {{ $splunk.usernameClaim | default "short_id" | quote }}
+            - name: slack
+              endpoint: {{ .Values.oidc.slack.endpoint | quote }}
+              username-claim: {{ .Values.oidc.slack.claim | quote }}
       resources:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}

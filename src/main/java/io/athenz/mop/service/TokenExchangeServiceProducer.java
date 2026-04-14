@@ -48,6 +48,9 @@ public class TokenExchangeServiceProducer {
     @Inject
     TokenExchangeServiceDatabricksSqlImpl tokenExchangeServiceDatabricksSqlImpl;
 
+    @Inject
+    TokenExchangeServiceSlackImpl tokenExchangeServiceSlackImpl;
+
     public TokenExchangeService getTokenExchangeServiceImplementation(String idpType) {
 
         return switch (idpType) {
@@ -61,6 +64,7 @@ public class TokenExchangeServiceProducer {
             case "google-monitoring", "google-logging" -> tokenExchangeServiceGcpWorkforceImpl;
             case "splunk" -> tokenExchangeServiceSplunkImpl;
             case "databricks-sql" -> tokenExchangeServiceDatabricksSqlImpl;
+            case "slack" -> tokenExchangeServiceSlackImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
         };
     }

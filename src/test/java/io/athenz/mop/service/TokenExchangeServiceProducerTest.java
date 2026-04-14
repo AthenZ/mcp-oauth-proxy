@@ -50,6 +50,12 @@ class TokenExchangeServiceProducerTest {
     @Mock
     private TokenExchangeServiceSplunkImpl tokenExchangeServiceSplunkImpl;
 
+    @Mock
+    private TokenExchangeServiceDatabricksSqlImpl tokenExchangeServiceDatabricksSqlImpl;
+
+    @Mock
+    private TokenExchangeServiceSlackImpl tokenExchangeServiceSlackImpl;
+
     @InjectMocks
     private TokenExchangeServiceProducer tokenExchangeServiceProducer;
 
@@ -120,6 +126,20 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("splunk");
         assertNotNull(result);
         assertSame(tokenExchangeServiceSplunkImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_DatabricksSql() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("databricks-sql");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceDatabricksSqlImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_Slack() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("slack");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceSlackImpl, result);
     }
 
     @Test
@@ -240,6 +260,7 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService embrace = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("embrace");
         TokenExchangeService okta = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA);
         TokenExchangeService athenz = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("athenz");
+        TokenExchangeService slack = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("slack");
 
         // Then - All should be different instances
         assertNotSame(atlassian, github);
@@ -247,16 +268,22 @@ class TokenExchangeServiceProducerTest {
         assertNotSame(atlassian, embrace);
         assertNotSame(atlassian, okta);
         assertNotSame(atlassian, athenz);
+        assertNotSame(atlassian, slack);
         assertNotSame(github, google);
         assertNotSame(github, embrace);
         assertNotSame(github, okta);
         assertNotSame(github, athenz);
+        assertNotSame(github, slack);
         assertNotSame(google, embrace);
         assertNotSame(google, okta);
         assertNotSame(google, athenz);
+        assertNotSame(google, slack);
         assertNotSame(embrace, okta);
         assertNotSame(embrace, athenz);
+        assertNotSame(embrace, slack);
         assertNotSame(okta, athenz);
+        assertNotSame(okta, slack);
+        assertNotSame(athenz, slack);
     }
 
     @Test

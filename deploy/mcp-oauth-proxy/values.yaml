@@ -210,6 +210,13 @@ oidc:
     clientSecretKey:
     scopes:
       - openid
+  slack:
+    endpoint: "https://slack.com/oauth/v2/authorize"
+    clientId:
+    claim: user_id
+    clientSecretKey: slack-client-secret
+    team:
+    userScopes: "users:read.email,users:read,search:read.users,search:read.public,search:read.private,groups:history,channels:history,canvases:read"
   embrace:
     authServerUrl: "https://dash-api.embrace.io"
     authorizationUrl: "https://dash.embrace.io/oauth/authorize"
