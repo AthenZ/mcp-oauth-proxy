@@ -37,6 +37,16 @@ class K8SSecretsProviderTest {
     }
 
     @Test
+    void credentialsMapFromData_includesSlackClientSecret() {
+        Map<String, byte[]> data = new HashMap<>();
+        data.put(K8SSecretsProvider.SECRET_DATA_KEY_SLACK_CLIENT_SECRET, "slack-secret".getBytes(StandardCharsets.UTF_8));
+
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(data);
+
+        assertEquals("slack-secret", m.get(K8SSecretsProvider.SECRET_DATA_KEY_SLACK_CLIENT_SECRET));
+    }
+
+    @Test
     void credentialsMapFromData_trimsTrailingNewlineOnSplunkKeys() {
         Map<String, byte[]> data = new HashMap<>();
         data.put(

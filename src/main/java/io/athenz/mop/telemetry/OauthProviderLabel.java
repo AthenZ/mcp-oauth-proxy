@@ -29,6 +29,7 @@ public final class OauthProviderLabel {
     public static final String GOOGLE_MONITORING = "google-monitoring";
     public static final String GOOGLE_LOGGING = "google-logging";
     public static final String DATABRICKS_SQL = "databricks-sql";
+    public static final String SLACK = "slack";
 
     private OauthProviderLabel() {
     }
@@ -39,7 +40,7 @@ public final class OauthProviderLabel {
         }
         String s = raw.trim().toLowerCase(Locale.ROOT);
         return switch (s) {
-            case OKTA, GLEAN, GITHUB, EMBRACE, GOOGLE, ATLASSIAN, ATHENZ, GOOGLE_MONITORING, GOOGLE_LOGGING, DATABRICKS_SQL -> s;
+            case OKTA, GLEAN, GITHUB, EMBRACE, GOOGLE, ATLASSIAN, ATHENZ, GOOGLE_MONITORING, GOOGLE_LOGGING, DATABRICKS_SQL, SLACK -> s;
             case "gcp-monitoring" -> GOOGLE_MONITORING;
             case "gcp-logging" -> GOOGLE_LOGGING;
             default -> s;

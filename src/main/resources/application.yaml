@@ -102,6 +102,35 @@ quarkus:
         restore-path-after-redirect: true
         extra-params:
           access_type: "offline"
+    slack:
+      auth-server-url: "https://slack.com"
+      discovery-enabled: false
+      authorization-path: "/oauth/v2/authorize"
+      token-path: "/api/oauth.v2.user.access"
+      user-info-path: "https://slack.com/api/auth.test"
+      client-id: ${SLACK_CLIENT_ID:}
+      credentials:
+        client-secret:
+          provider:
+            key: ${SLACK_CLIENT_SECRET_KEY:slack-client-secret}
+          method: post
+      authentication:
+        scopes: []
+        redirect-path: /slack/authorize/callback
+        restore-path-after-redirect: true
+        add-openid-scope: false
+        id-token-required: false
+        user-info-required: true
+        verify-access-token: false
+        extra-params:
+          user_scope: "${SLACK_USER_SCOPES:users:read.email,users:read,search:read.users,search:read.public,search:read.private,groups:history,channels:history,canvases:read}"
+      application-type: web-app
+      allow-user-info-cache: false
+      cache-user-info-in-idtoken: true
+      token-state-manager:
+        strategy: keep-all-tokens
+      token:
+        issuer: any
     embrace:
       discovery-enabled: false
       auth-server-url: ${EMBRACE_AUTH_SERVER_URL:https://dash-api.embrace.io}
