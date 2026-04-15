@@ -129,15 +129,15 @@ class CrossRegionTokenStoreFallbackTest {
     @Test
     void testGetUserToken_WhenFallbackClientSet_DelegatesAndReturnsToken() throws Exception {
         setFallbackClient(fallbackClient);
-        TokenWrapper expected = new TokenWrapper("u1", "google", "id", "access", "refresh", 3600L);
-        when(tokenStoreDynamodb.getUserToken(eq(fallbackClient), eq("fallback-table"), eq("user1"), eq("google")))
+        TokenWrapper expected = new TokenWrapper("u1", "google-drive", "id", "access", "refresh", 3600L);
+        when(tokenStoreDynamodb.getUserToken(eq(fallbackClient), eq("fallback-table"), eq("user1"), eq("google-drive")))
                 .thenReturn(expected);
 
-        TokenWrapper result = fallback.getUserToken("user1", "google");
+        TokenWrapper result = fallback.getUserToken("user1", "google-drive");
 
         assertNotNull(result);
         assertEquals("u1", result.key());
-        verify(tokenStoreDynamodb, times(1)).getUserToken(fallbackClient, "fallback-table", "user1", "google");
+        verify(tokenStoreDynamodb, times(1)).getUserToken(fallbackClient, "fallback-table", "user1", "google-drive");
     }
 
     @Test

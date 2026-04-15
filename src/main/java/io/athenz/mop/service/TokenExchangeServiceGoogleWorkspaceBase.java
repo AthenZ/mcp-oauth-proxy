@@ -32,30 +32,31 @@ import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.secret.K8SSecretsProvider;
 import io.athenz.mop.telemetry.ExchangeStep;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
-import io.athenz.mop.telemetry.OauthProviderLabel;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
 import io.athenz.mop.telemetry.TelemetryProviderResolver;
 import io.athenz.mop.telemetry.TelemetryRequestContext;
 import io.athenz.mop.telemetry.UpstreamHttpCallLabels;
-import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import java.lang.invoke.MethodHandles;
 import java.net.URI;
 import java.util.Map;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-@ApplicationScoped
-public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
+/**
+ * Shared token exchange logic for all Google Workspace services (Drive, Docs, Sheets, etc.).
+ * All Google Workspace services share the same Google OAuth app (client-id and secret) and use the
+ * same token endpoint. The provider label is set by the producer at init time for telemetry.
+ */
+public abstract class TokenExchangeServiceGoogleWorkspaceBase implements TokenExchangeService {
 
-    private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+    private static final Logger log = LoggerFactory.getLogger(TokenExchangeServiceGoogleWorkspaceBase.class);
     private static final String GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token";
 
-    @ConfigProperty(name = "quarkus.oidc.google.client-id", defaultValue = "")
+    @ConfigProperty(name = "server.token-exchange.google-workspace.client-id", defaultValue = "")
     String clientId;
 
-    @ConfigProperty(name = "quarkus.oidc.google.credentials.client-secret.provider.key", defaultValue = "")
+    @ConfigProperty(name = "server.token-exchange.google-workspace.client-secret-key", defaultValue = "")
     String clientSecretKey;
 
     @Inject
@@ -75,6 +76,16 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
 
     @Inject
     MetricsRegionProvider metricsRegionProvider;
+
+    private String providerLabel;
+
+    public void setProviderLabel(String providerLabel) {
+        this.providerLabel = providerLabel;
+    }
+
+    public String getProviderLabel() {
+        return providerLabel;
+    }
 
     @Override
     public AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO) {
@@ -96,12 +107,9 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
         throw new RuntimeException("Not implemented yet");
     }
 
-    /**
-     * Refresh with Google. Google typically does not return a new refresh token unless
-     * rotation is enabled; when none is returned we keep the existing upstream token.
-     */
     @Override
     public TokenWrapper refreshWithUpstreamToken(String upstreamRefreshToken) {
+        String providerLabel = getProviderLabel();
         if (upstreamRefreshToken == null || upstreamRefreshToken.isEmpty()) {
             return null;
         }
@@ -110,21 +118,20 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
             return null;
         }
         if (clientId == null || clientId.isBlank()) {
-            log.warn("Google refresh: client_id not configured (quarkus.oidc.google.client-id)");
+            log.warn("{} refresh: client_id not configured (server.token-exchange.google-workspace.client-id)", providerLabel);
             return null;
         }
         if (clientSecretKey == null || clientSecretKey.isBlank()) {
-            log.warn("Google refresh: client secret key not configured (quarkus.oidc.google.credentials.client-secret.provider.key)");
+            log.warn("{} refresh: client secret key not configured (server.token-exchange.google-workspace.client-secret-key)", providerLabel);
             return null;
         }
         Map<String, String> credentials = k8SSecretsProvider.getCredentials(null);
         String clientSecret = credentials != null ? credentials.get(clientSecretKey) : null;
         if (clientSecret == null || clientSecret.isEmpty()) {
-            log.warn("Google refresh: client secret not found (key={})", clientSecretKey);
+            log.warn("{} refresh: client secret not found (key={})", providerLabel, clientSecretKey);
             return null;
         }
         long t0 = System.nanoTime();
-        String oauthProvider = OauthProviderLabel.GOOGLE;
         String oauthClient = telemetryRequestContext.oauthClient();
         String region = metricsRegionProvider.primaryRegion();
         try {
@@ -137,7 +144,7 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
             TokenRequest tokenRequest = new TokenRequest(tokenEndpoint, clientAuth, refreshGrant);
             TokenResponse tokenResponse;
             try (var ignored = UpstreamHttpCallLabels.withLabels(
-                    OauthProviderLabel.GOOGLE, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
+                    providerLabel, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
                 tokenResponse = tokenClient.execute(tokenRequest);
             }
             if (tokenResponse.indicatesSuccess()) {
@@ -146,7 +153,7 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
                 com.nimbusds.oauth2.sdk.token.RefreshToken newRefreshToken = successResponse.getTokens().getRefreshToken();
                 Long lifetime = successResponse.getTokens().getAccessToken().getLifetime();
                 long ttl = (lifetime != null) ? lifetime : 3600L;
-                recordGoogleRefresh(t0, oauthProvider, oauthClient, region, true);
+                recordRefresh(t0, providerLabel, oauthClient, region, true);
                 return new TokenWrapper(
                         null,
                         null,
@@ -157,18 +164,18 @@ public class TokenExchangeServiceGoogleImpl implements TokenExchangeService {
                 );
             } else {
                 TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
-                log.error("Google refresh failed; upstream response: {}", UpstreamTokenRefreshErrors.formatTokenError(errorResponse));
-                recordGoogleRefresh(t0, oauthProvider, oauthClient, region, false);
+                log.error("{} refresh failed; upstream response: {}", providerLabel, UpstreamTokenRefreshErrors.formatTokenError(errorResponse));
+                recordRefresh(t0, providerLabel, oauthClient, region, false);
                 return null;
             }
         } catch (Exception e) {
-            log.error("Google refresh failed (could not complete token request or parse upstream response)", e);
-            recordGoogleRefresh(t0, oauthProvider, oauthClient, region, false);
+            log.error("{} refresh failed (could not complete token request or parse upstream response)", providerLabel, e);
+            recordRefresh(t0, providerLabel, oauthClient, region, false);
             return null;
         }
     }
 
-    private void recordGoogleRefresh(long startNanos, String oauthProvider, String oauthClient, String region, boolean success) {
+    private void recordRefresh(long startNanos, String oauthProvider, String oauthClient, String region, boolean success) {
         double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
         oauthProxyMetrics.recordExchangeStep(ExchangeStep.UPSTREAM_REFRESH, oauthProvider, success,
                 success ? null : "unauthorized", oauthClient, region, seconds);

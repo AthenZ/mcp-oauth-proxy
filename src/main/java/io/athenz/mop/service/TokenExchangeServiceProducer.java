@@ -15,11 +15,25 @@
  */
 package io.athenz.mop.service;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
 
 @ApplicationScoped
 public class TokenExchangeServiceProducer {
+
+    static final Set<String> GOOGLE_WORKSPACE_PROVIDERS = Set.of(
+        "google-drive", "google-docs", "google-sheets",
+        "google-slides", "google-gmail", "google-calendar", "google-tasks",
+        "google-chat", "google-forms", "google-keep", "google-meet",
+        "google-cloud-platform");
+
+    @Inject
+    Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
 
     @Inject
     TokenExchangeServiceZTSImpl tokenExchangeServiceZTSImpl;
@@ -32,9 +46,6 @@ public class TokenExchangeServiceProducer {
 
     @Inject
     TokenExchangeServiceGithubImpl tokenExchangeServiceGithubImpl;
-
-    @Inject
-    TokenExchangeServiceGoogleImpl tokenExchangeServiceGoogleImpl;
 
     @Inject
     TokenExchangeServiceEmbraceImpl tokenExchangeServiceEmbraceImpl;
@@ -51,13 +62,27 @@ public class TokenExchangeServiceProducer {
     @Inject
     TokenExchangeServiceSlackImpl tokenExchangeServiceSlackImpl;
 
+    private final Map<String, TokenExchangeService> googleWorkspaceServices = new HashMap<>();
+
+    @PostConstruct
+    void init() {
+        for (String provider : GOOGLE_WORKSPACE_PROVIDERS) {
+            TokenExchangeServiceGoogleWorkspaceImpl svc = googleWorkspaceProvider.get();
+            svc.setProviderLabel(provider);
+            googleWorkspaceServices.put(provider, svc);
+        }
+    }
+
     public TokenExchangeService getTokenExchangeServiceImplementation(String idpType) {
+        TokenExchangeService googleSvc = googleWorkspaceServices.get(idpType);
+        if (googleSvc != null) {
+            return googleSvc;
+        }
 
         return switch (idpType) {
             case "atlassian" -> tokenExchangeServiceAtlassianImpl;
             case "github" -> tokenExchangeServiceGithubImpl;
             case "embrace" -> tokenExchangeServiceEmbraceImpl;
-            case "google" -> tokenExchangeServiceGoogleImpl;
             case "okta" -> tokenExchangeServiceOktaImpl;
             case "glean" -> tokenExchangeServiceOktaImpl;
             case "athenz" -> tokenExchangeServiceZTSImpl;

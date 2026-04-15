@@ -23,7 +23,18 @@ public final class OauthProviderLabel {
     public static final String GLEAN = "glean";
     public static final String GITHUB = "github";
     public static final String EMBRACE = "embrace";
-    public static final String GOOGLE = "google";
+    public static final String GOOGLE_DRIVE = "google-drive";
+    public static final String GOOGLE_DOCS = "google-docs";
+    public static final String GOOGLE_SHEETS = "google-sheets";
+    public static final String GOOGLE_SLIDES = "google-slides";
+    public static final String GOOGLE_GMAIL = "google-gmail";
+    public static final String GOOGLE_CALENDAR = "google-calendar";
+    public static final String GOOGLE_TASKS = "google-tasks";
+    public static final String GOOGLE_CHAT = "google-chat";
+    public static final String GOOGLE_FORMS = "google-forms";
+    public static final String GOOGLE_KEEP = "google-keep";
+    public static final String GOOGLE_MEET = "google-meet";
+    public static final String GOOGLE_CLOUD_PLATFORM = "google-cloud-platform";
     public static final String ATLASSIAN = "atlassian";
     public static final String ATHENZ = "athenz";
     public static final String GOOGLE_MONITORING = "google-monitoring";
@@ -40,7 +51,10 @@ public final class OauthProviderLabel {
         }
         String s = raw.trim().toLowerCase(Locale.ROOT);
         return switch (s) {
-            case OKTA, GLEAN, GITHUB, EMBRACE, GOOGLE, ATLASSIAN, ATHENZ, GOOGLE_MONITORING, GOOGLE_LOGGING, DATABRICKS_SQL, SLACK -> s;
+            case OKTA, GLEAN, GITHUB, EMBRACE, GOOGLE_DRIVE, GOOGLE_DOCS, GOOGLE_SHEETS,
+                    GOOGLE_SLIDES, GOOGLE_GMAIL, GOOGLE_CALENDAR, GOOGLE_TASKS, GOOGLE_CHAT, GOOGLE_FORMS,
+                    GOOGLE_KEEP, GOOGLE_MEET, GOOGLE_CLOUD_PLATFORM, ATLASSIAN, ATHENZ, GOOGLE_MONITORING,
+                    GOOGLE_LOGGING, DATABRICKS_SQL, SLACK -> s;
             case "gcp-monitoring" -> GOOGLE_MONITORING;
             case "gcp-logging" -> GOOGLE_LOGGING;
             default -> s;

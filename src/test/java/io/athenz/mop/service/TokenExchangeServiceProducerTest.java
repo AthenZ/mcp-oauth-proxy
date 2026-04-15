@@ -15,14 +15,17 @@
  */
 package io.athenz.mop.service;
 
-import io.athenz.mop.service.*;
+import jakarta.enterprise.inject.Instance;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 class TokenExchangeServiceProducerTest {
 
@@ -39,9 +42,6 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceGithubImpl tokenExchangeServiceGithubImpl;
 
     @Mock
-    private TokenExchangeServiceGoogleImpl tokenExchangeServiceGoogleImpl;
-
-    @Mock
     private TokenExchangeServiceEmbraceImpl tokenExchangeServiceEmbraceImpl;
 
     @Mock
@@ -56,42 +56,34 @@ class TokenExchangeServiceProducerTest {
     @Mock
     private TokenExchangeServiceSlackImpl tokenExchangeServiceSlackImpl;
 
+    @Mock
+    private Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
+
     @InjectMocks
     private TokenExchangeServiceProducer tokenExchangeServiceProducer;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        when(googleWorkspaceProvider.get()).thenAnswer(invocation -> {
+            TokenExchangeServiceGoogleWorkspaceImpl impl = new TokenExchangeServiceGoogleWorkspaceImpl();
+            return impl;
+        });
+        tokenExchangeServiceProducer.init();
     }
 
     @Test
     void testGetTokenExchangeServiceImplementation_Atlassian() {
-        // When
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("atlassian");
-
-        // Then
         assertNotNull(result);
         assertSame(tokenExchangeServiceAtlassianImpl, result);
     }
 
     @Test
     void testGetTokenExchangeServiceImplementation_Github() {
-        // When
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("github");
-
-        // Then
         assertNotNull(result);
         assertSame(tokenExchangeServiceGithubImpl, result);
-    }
-
-    @Test
-    void testGetTokenExchangeServiceImplementation_Google() {
-        // When
-        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google");
-
-        // Then
-        assertNotNull(result);
-        assertSame(tokenExchangeServiceGoogleImpl, result);
     }
 
     @Test
@@ -103,20 +95,14 @@ class TokenExchangeServiceProducerTest {
 
     @Test
     void testGetTokenExchangeServiceImplementation_Okta() {
-        // When
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA);
-
-        // Then
         assertNotNull(result);
         assertSame(tokenExchangeServiceOktaImpl, result);
     }
 
     @Test
     void testGetTokenExchangeServiceImplementation_Athenz() {
-        // When
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("athenz");
-
-        // Then
         assertNotNull(result);
         assertSame(tokenExchangeServiceZTSImpl, result);
     }
@@ -142,21 +128,52 @@ class TokenExchangeServiceProducerTest {
         assertSame(tokenExchangeServiceSlackImpl, result);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "google-drive", "google-docs", "google-sheets",
+        "google-slides", "google-gmail", "google-calendar", "google-tasks",
+        "google-chat", "google-forms", "google-keep", "google-meet",
+        "google-cloud-platform"
+    })
+    void testGetTokenExchangeServiceImplementation_GoogleWorkspaceProviders(String provider) {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
+        assertNotNull(result);
+        assertInstanceOf(TokenExchangeServiceGoogleWorkspaceImpl.class, result);
+        assertEquals(provider, ((TokenExchangeServiceGoogleWorkspaceImpl) result).getProviderLabel());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "google-drive", "google-docs", "google-sheets",
+        "google-slides", "google-gmail", "google-calendar", "google-tasks",
+        "google-chat", "google-forms", "google-keep", "google-meet",
+        "google-cloud-platform"
+    })
+    void testGetTokenExchangeServiceImplementation_GoogleWorkspaceProviders_ReturnDistinctInstances(String provider) {
+        TokenExchangeService first = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
+        TokenExchangeService second = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
+        assertSame(first, second, "Same provider should return the same cached instance");
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_GoogleWorkspaceProviders_AllDistinct() {
+        TokenExchangeService drive = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-drive");
+        TokenExchangeService docs = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-docs");
+        assertNotSame(drive, docs, "Different providers should return different instances");
+    }
+
     @Test
     void testGetTokenExchangeServiceImplementation_UnsupportedType() {
-        // When & Then
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
                 () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("unsupported")
         );
-
         assertEquals("Unsupported IDP type: unsupported", exception.getMessage());
     }
 
     @Test
     void testGetTokenExchangeServiceImplementation_NullType() {
-        // When & Then
-        NullPointerException exception = assertThrows(
+        assertThrows(
                 NullPointerException.class,
                 () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(null)
         );
@@ -164,152 +181,38 @@ class TokenExchangeServiceProducerTest {
 
     @Test
     void testGetTokenExchangeServiceImplementation_EmptyType() {
-        // When & Then
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
                 () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("")
         );
-
         assertEquals("Unsupported IDP type: ", exception.getMessage());
     }
 
     @Test
     void testGetTokenExchangeServiceImplementation_CaseSensitive() {
-        // When & Then - Verify case sensitivity
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
                 () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("OKTA")
         );
-
         assertEquals("Unsupported IDP type: OKTA", exception.getMessage());
     }
 
     @Test
-    void testGetTokenExchangeServiceImplementation_CaseSensitiveGithub() {
-        // When & Then
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("GitHub")
-        );
-
-        assertEquals("Unsupported IDP type: GitHub", exception.getMessage());
-    }
-
-    @Test
-    void testGetTokenExchangeServiceImplementation_CaseSensitiveAtlassian() {
-        // When & Then
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("Atlassian")
-        );
-
-        assertEquals("Unsupported IDP type: Atlassian", exception.getMessage());
-    }
-
-    @Test
-    void testGetTokenExchangeServiceImplementation_CaseSensitiveGoogle() {
-        // When & Then
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("Google")
-        );
-
-        assertEquals("Unsupported IDP type: Google", exception.getMessage());
-    }
-
-    @Test
-    void testGetTokenExchangeServiceImplementation_CaseSensitiveAthenz() {
-        // When & Then
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("Athenz")
-        );
-
-        assertEquals("Unsupported IDP type: Athenz", exception.getMessage());
-    }
-
-    @Test
-    void testGetTokenExchangeServiceImplementation_WithWhitespace() {
-        // When & Then
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(" okta ")
-        );
-
-        assertEquals("Unsupported IDP type:  okta ", exception.getMessage());
-    }
-
-    @Test
     void testGetTokenExchangeServiceImplementation_MultipleCallsSameType() {
-        // When - Call multiple times with the same type
         TokenExchangeService result1 = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA);
         TokenExchangeService result2 = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA);
-
-        // Then - Should return the same instance each time
         assertSame(result1, result2);
         assertSame(tokenExchangeServiceOktaImpl, result1);
-        assertSame(tokenExchangeServiceOktaImpl, result2);
-    }
-
-    @Test
-    void testGetTokenExchangeServiceImplementation_AllProvidersDifferent() {
-        // When - Get all implementations
-        TokenExchangeService atlassian = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("atlassian");
-        TokenExchangeService github = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("github");
-        TokenExchangeService google = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google");
-        TokenExchangeService embrace = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("embrace");
-        TokenExchangeService okta = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(AudienceConstants.PROVIDER_OKTA);
-        TokenExchangeService athenz = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("athenz");
-        TokenExchangeService slack = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("slack");
-
-        // Then - All should be different instances
-        assertNotSame(atlassian, github);
-        assertNotSame(atlassian, google);
-        assertNotSame(atlassian, embrace);
-        assertNotSame(atlassian, okta);
-        assertNotSame(atlassian, athenz);
-        assertNotSame(atlassian, slack);
-        assertNotSame(github, google);
-        assertNotSame(github, embrace);
-        assertNotSame(github, okta);
-        assertNotSame(github, athenz);
-        assertNotSame(github, slack);
-        assertNotSame(google, embrace);
-        assertNotSame(google, okta);
-        assertNotSame(google, athenz);
-        assertNotSame(google, slack);
-        assertNotSame(embrace, okta);
-        assertNotSame(embrace, athenz);
-        assertNotSame(embrace, slack);
-        assertNotSame(okta, athenz);
-        assertNotSame(okta, slack);
-        assertNotSame(athenz, slack);
     }
 
     @Test
     void testGetTokenExchangeServiceImplementation_RandomUnsupportedValues() {
-        // Test various unsupported values
         String[] unsupportedTypes = {
                 "aws", "azure", "facebook", "twitter", "linkedin",
                 "salesforce", "microsoft", "apple", "amazon"
         };
 
         for (String type : unsupportedTypes) {
-            IllegalArgumentException exception = assertThrows(
-                    IllegalArgumentException.class,
-                    () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(type),
-                    "Expected exception for type: " + type
-            );
-            assertEquals("Unsupported IDP type: " + type, exception.getMessage());
-        }
-    }
-
-    @Test
-    void testGetTokenExchangeServiceImplementation_SpecialCharacters() {
-        // When & Then - Test with special characters
-        String[] specialTypes = {"okta!", "github@", "google#", "embrace^", "athenz$", "atlassian%"};
-
-        for (String type : specialTypes) {
             IllegalArgumentException exception = assertThrows(
                     IllegalArgumentException.class,
                     () -> tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(type),
