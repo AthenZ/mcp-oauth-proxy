@@ -178,6 +178,32 @@ application:
           enabled:
           issuer:
 
+googleWorkspaceServices:
+  - name: google-drive
+    scopesKey: googleDrive
+  - name: google-docs
+    scopesKey: googleDocs
+  - name: google-sheets
+    scopesKey: googleSheets
+  - name: google-slides
+    scopesKey: googleSlides
+  - name: google-gmail
+    scopesKey: googleGmail
+  - name: google-calendar
+    scopesKey: googleCalendar
+  - name: google-tasks
+    scopesKey: googleTasks
+  - name: google-chat
+    scopesKey: googleChat
+  - name: google-forms
+    scopesKey: googleForms
+  - name: google-keep
+    scopesKey: googleKeep
+  - name: google-meet
+    scopesKey: googleMeet
+  - name: google-cloud-platform
+    scopesKey: googleCloudPlatform
+
 oidc:
   authServerUrl:
   claim:
@@ -203,11 +229,45 @@ oidc:
     clientSecretKey:
     scopes:
       - offline_access
-  google:
+  googleWorkspace:
     endpoint: "https://accounts.google.com/o/oauth2/v2/auth"
     clientId:
     claim:
     clientSecretKey:
+  googleDrive:
+    scopes:
+      - openid
+  googleDocs:
+    scopes:
+      - openid
+  googleSheets:
+    scopes:
+      - openid
+  googleSlides:
+    scopes:
+      - openid
+  googleGmail:
+    scopes:
+      - openid
+  googleCalendar:
+    scopes:
+      - openid
+  googleTasks:
+    scopes:
+      - openid
+  googleChat:
+    scopes:
+      - openid
+  googleForms:
+    scopes:
+      - openid
+  googleKeep:
+    scopes:
+      - openid
+  googleMeet:
+    scopes:
+      - openid
+  googleCloudPlatform:
     scopes:
       - openid
   slack:

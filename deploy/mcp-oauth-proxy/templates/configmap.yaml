@@ -35,9 +35,11 @@ data:
             github:
               paths: "/github/*"
               policy: authenticated
-            google:
-              paths: "/google/*"
+            {{- range .Values.googleWorkspaceServices }}
+            {{ .name }}:
+              paths: "/{{ .name }}/*"
               policy: authenticated
+            {{- end }}
             slack:
               paths: "/slack/*"
               policy: authenticated
@@ -125,23 +127,25 @@ data:
             {{- end }}
             redirect-path: /github/authorize/callback
             restore-path-after-redirect: true
-        google:
+        {{- range .Values.googleWorkspaceServices }}
+        {{ .name }}:
           provider: google
-          client-id: {{ .Values.oidc.google.clientId | quote }}
+          client-id: {{ $.Values.oidc.googleWorkspace.clientId | quote }}
           credentials:
             client-secret:
               provider:
-                key: {{ .Values.oidc.google.clientSecretKey }}
+                key: {{ $.Values.oidc.googleWorkspace.clientSecretKey }}
               method: post
           authentication:
             scopes:
-            {{- range .Values.oidc.google.scopes }}
+            {{- range (index $.Values.oidc .scopesKey).scopes }}
               - {{ . | quote }}
             {{- end }}
-            redirect-path: /google/authorize/callback
+            redirect-path: /{{ .name }}/authorize/callback
             restore-path-after-redirect: true
             extra-params:
               access_type: "offline"
+        {{- end }}
         slack:
           auth-server-url: "https://slack.com"
           discovery-enabled: false
@@ -312,6 +316,9 @@ data:
           namespace: {{ .Values.application.k8s.namespace | quote }}
       token-exchange:
         idp: {{ .Values.oidc.provider }}
+        google-workspace:
+          client-id: {{ .Values.oidc.googleWorkspace.clientId | quote }}
+          client-secret-key: {{ .Values.oidc.googleWorkspace.clientSecretKey }}
         athenz-token-exchange:
           audience: {{ .Values.application.tokenExchange.athenzTokenExchange.audience | default "sys.auth.gcp" | quote }}
         google-workforce:
@@ -363,9 +370,11 @@ data:
             - name: github
               endpoint: {{ .Values.oidc.github.endpoint | quote }}
               username-claim: {{ .Values.oidc.github.claim | quote }}
-            - name: google
-              endpoint: {{ .Values.oidc.google.endpoint | quote }}
-              username-claim: {{ .Values.oidc.google.claim | quote }}
+            {{- range .Values.googleWorkspaceServices }}
+            - name: {{ .name }}
+              endpoint: {{ $.Values.oidc.googleWorkspace.endpoint | quote }}
+              username-claim: {{ $.Values.oidc.googleWorkspace.claim | quote }}
+            {{- end }}
             - name: embrace
               endpoint: {{ .Values.oidc.embrace.authorizationUrl | quote }}
               username-claim: {{ .Values.oidc.embrace.claim | quote }}

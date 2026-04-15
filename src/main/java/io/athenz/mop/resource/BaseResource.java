@@ -33,7 +33,7 @@ public abstract class BaseResource {
      * Build success redirect with authorization code
      * RFC 6749 Section 4.1.2
      */
-    Response buildSuccessRedirect(String redirectUri, String code, String state) {
+    protected Response buildSuccessRedirect(String redirectUri, String code, String state) {
         try {
             StringBuilder locationBuilder = new StringBuilder(redirectUri);
 
@@ -127,7 +127,7 @@ public abstract class BaseResource {
         return userName;
     }
 
-    String getUsername(UserInfo userInfo, String userNameClaim, String token) {
+    protected String getUsername(UserInfo userInfo, String userNameClaim, String token) {
         String userName = null;
         if (userInfo != null) {
             userName = getUserNameFromUserInfo(userInfo, userNameClaim);
@@ -145,7 +145,7 @@ public abstract class BaseResource {
         return userName;
     }
 
-    void logoutFromProvider(String provider, OidcSession oidcSession) {
+    protected void logoutFromProvider(String provider, OidcSession oidcSession) {
         log.info("Logging out of {} OIDC session", provider);
         oidcSession.logout().await().indefinitely();
     }

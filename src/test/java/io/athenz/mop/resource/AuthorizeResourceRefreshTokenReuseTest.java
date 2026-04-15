@@ -167,7 +167,7 @@ class AuthorizeResourceRefreshTokenReuseTest {
 
     @Test
     void preferCentralizedOktaUpstreamRefresh_whenNotOkta_returnsCandidate() {
-        authorizeResource.providerDefault = "google";
+        authorizeResource.providerDefault = "google-drive";
         assertEquals(NEW_FROM_OIDC, authorizeResource.preferCentralizedOktaUpstreamRefresh(SUBJECT, NEW_FROM_OIDC));
     }
 

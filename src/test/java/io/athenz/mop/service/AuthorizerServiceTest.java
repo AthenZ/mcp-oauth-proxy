@@ -142,7 +142,7 @@ class AuthorizerServiceTest {
     void testStoreTokens_WithoutRefreshToken() {
         // Given
         String lookupKey = "test-lookup-key";
-        String provider = "google";
+        String provider = "google-drive";
         String username = "testuser";
         String idTokenRaw = "id-token-raw";
         String accessTokenRaw = "access-token-raw";

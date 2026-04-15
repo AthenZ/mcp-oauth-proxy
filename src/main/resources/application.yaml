@@ -87,18 +87,129 @@ quarkus:
           - offline_access
         redirect-path: /github/authorize/callback
         restore-path-after-redirect: true
-    google:
+    google-drive:
       provider: google
-      client-id: ${GOOGLE_CLIENT_ID}
-      credentials:
-        client-secret:
-          provider:
-            key: ${GOOGLE_CLIENT_SECRET}
-          method: post
+      <<: &google-workspace-creds
+        client-id: ${GOOGLE_WORKSPACE_CLIENT_ID}
+        credentials:
+          client-secret:
+            provider:
+              key: ${GOOGLE_WORKSPACE_CLIENT_SECRET_KEY}
+            method: post
       authentication:
         scopes:
           - openid
-        redirect-path: /google/authorize/callback
+        redirect-path: /google-drive/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-cloud-platform:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-cloud-platform/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-docs:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-docs/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-sheets:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-sheets/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-slides:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-slides/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-gmail:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-gmail/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-calendar:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-calendar/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-tasks:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-tasks/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-chat:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-chat/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-forms:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-forms/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-keep:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-keep/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
+    google-meet:
+      provider: google
+      <<: *google-workspace-creds
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /google-meet/authorize/callback
         restore-path-after-redirect: true
         extra-params:
           access_type: "offline"
@@ -256,6 +367,9 @@ server:
       namespace:
   token-exchange:
     idp:
+    google-workspace:
+      client-id: ${GOOGLE_WORKSPACE_CLIENT_ID}
+      client-secret-key: ${GOOGLE_WORKSPACE_CLIENT_SECRET_KEY}
     splunk:
       admin-token-secret-key: splunk-api-stage
       mirror-user-prefix: mcp.

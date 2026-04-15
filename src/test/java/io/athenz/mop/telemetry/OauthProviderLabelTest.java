@@ -24,7 +24,23 @@ class OauthProviderLabelTest {
         assertEquals(OauthProviderLabel.OKTA, OauthProviderLabel.normalize("OKTA"));
         assertEquals(OauthProviderLabel.GITHUB, OauthProviderLabel.normalize(" github "));
         assertEquals(OauthProviderLabel.EMBRACE, OauthProviderLabel.normalize("EMBRACE"));
+        assertEquals(OauthProviderLabel.GOOGLE_DRIVE, OauthProviderLabel.normalize("Google-Drive"));
+        assertEquals(OauthProviderLabel.GOOGLE_CLOUD_PLATFORM, OauthProviderLabel.normalize("Google-Cloud-Platform"));
         assertEquals(OauthProviderLabel.GOOGLE_MONITORING, OauthProviderLabel.normalize("Google-Monitoring"));
+    }
+
+    @Test
+    void normalize_googleWorkspaceProviders_preservedLowercase() {
+        assertEquals(OauthProviderLabel.GOOGLE_DOCS, OauthProviderLabel.normalize("Google-Docs"));
+        assertEquals(OauthProviderLabel.GOOGLE_SHEETS, OauthProviderLabel.normalize("Google-Sheets"));
+        assertEquals(OauthProviderLabel.GOOGLE_SLIDES, OauthProviderLabel.normalize("Google-Slides"));
+        assertEquals(OauthProviderLabel.GOOGLE_GMAIL, OauthProviderLabel.normalize("Google-Gmail"));
+        assertEquals(OauthProviderLabel.GOOGLE_CALENDAR, OauthProviderLabel.normalize("Google-Calendar"));
+        assertEquals(OauthProviderLabel.GOOGLE_TASKS, OauthProviderLabel.normalize("Google-Tasks"));
+        assertEquals(OauthProviderLabel.GOOGLE_CHAT, OauthProviderLabel.normalize("Google-Chat"));
+        assertEquals(OauthProviderLabel.GOOGLE_FORMS, OauthProviderLabel.normalize("Google-Forms"));
+        assertEquals(OauthProviderLabel.GOOGLE_KEEP, OauthProviderLabel.normalize("Google-Keep"));
+        assertEquals(OauthProviderLabel.GOOGLE_MEET, OauthProviderLabel.normalize("Google-Meet"));
     }
 
     @Test

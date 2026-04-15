@@ -173,7 +173,7 @@ class ConfigServiceTest {
     @Test
     void testGetRemoteServerUsernameClaim_Exists() {
         TokenExchangeServersConfig.RemoteServer server1 = mock(TokenExchangeServersConfig.RemoteServer.class);
-        when(server1.name()).thenReturn("google");
+        when(server1.name()).thenReturn("google-drive");
         when(server1.endpoint()).thenReturn("https://accounts.google.com/token");
         when(server1.usernameClaim()).thenReturn("email");
 
@@ -182,7 +182,7 @@ class ConfigServiceTest {
 
         configService.init();
 
-        assertEquals("email", configService.getRemoteServerUsernameClaim("google"));
+        assertEquals("email", configService.getRemoteServerUsernameClaim("google-drive"));
     }
 
     @Test

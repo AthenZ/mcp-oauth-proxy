@@ -93,10 +93,12 @@ public class CustomTokenStateManager implements TokenStateManager {
     }
 
     private String getProviderFromOidcConfig(OidcTenantConfig oidcConfig) {
-        if (oidcConfig.provider().isPresent()) {
-            return oidcConfig.provider().get().name().toLowerCase();
-        } else {
-            return providerDefault;
+        if (oidcConfig.tenantId().isPresent()) {
+            String tenantId = oidcConfig.tenantId().get();
+            if (!"Default".equals(tenantId)) {
+                return tenantId;
+            }
         }
+        return providerDefault;
     }
 }
