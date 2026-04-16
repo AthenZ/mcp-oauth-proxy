@@ -383,6 +383,11 @@ server:
       resource-path-prefix: "/v1/databricks-sql/"
       workspace-segment-pattern: "^dbc-[a-zA-Z0-9.-]+$"
       oauth-scope: sql
+    databricks-vector-search:
+      workspace-host-template: "https://%s.cloud.databricks.com"
+      resource-path-prefix: "/v1/databricks-vector-search/"
+      workspace-segment-pattern: "^dbc-[a-zA-Z0-9.-]+$"
+      oauth-scope: vector-search
     remote-servers:
       endpoints:
         - name:

@@ -16,6 +16,7 @@
 package io.athenz.mop.service;
 
 import io.athenz.mop.config.DatabricksSqlTokenExchangeConfig;
+import io.athenz.mop.config.DatabricksVectorSearchTokenExchangeConfig;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.apache.commons.lang3.StringUtils;
@@ -31,9 +32,12 @@ public class ExchangedTokenUserinfoStoreProviderResolver {
     @Inject
     DatabricksSqlTokenExchangeConfig databricksSqlTokenExchangeConfig;
 
+    @Inject
+    DatabricksVectorSearchTokenExchangeConfig databricksVectorSearchTokenExchangeConfig;
+
     /**
      * @param resource MCP resource URI from the token or refresh request
-     * @param audience resource mapping audience (e.g. glean, splunk, databricks-sql)
+     * @param audience resource mapping audience (e.g. glean, splunk, databricks-sql, databricks-vector-search)
      * @return provider key for {@code storeUserToken}
      */
     public String resolve(String resource, String audience) {
@@ -41,8 +45,13 @@ public class ExchangedTokenUserinfoStoreProviderResolver {
             return audience;
         }
         if (AudienceConstants.PROVIDER_DATABRICKS_SQL.equals(audience)) {
-            return DatabricksSqlWorkspaceResolver.resolve(resource, databricksSqlTokenExchangeConfig)
+            return DatabricksWorkspaceResolver.resolve(resource, databricksSqlTokenExchangeConfig)
                     .map(w -> AudienceConstants.databricksSqlStorageProvider(w.hostname()))
+                    .orElse(audience);
+        }
+        if (AudienceConstants.PROVIDER_DATABRICKS_VECTOR_SEARCH.equals(audience)) {
+            return DatabricksWorkspaceResolver.resolve(resource, databricksVectorSearchTokenExchangeConfig)
+                    .map(w -> AudienceConstants.databricksVectorSearchStorageProvider(w.hostname()))
                     .orElse(audience);
         }
         return audience;

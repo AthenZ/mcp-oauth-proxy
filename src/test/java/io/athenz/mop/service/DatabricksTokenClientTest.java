@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class DatabricksSqlTokenClientTest {
+class DatabricksTokenClientTest {
 
     @Test
     void postForm_returnsStatusBodyAndRequestIdHeader() throws Exception {
@@ -50,8 +50,8 @@ class DatabricksSqlTokenClientTest {
             server.start();
             int port = server.getAddress().getPort();
 
-            DatabricksSqlTokenClient client = new DatabricksSqlTokenClient();
-            DatabricksSqlTokenClient.DatabricksTokenHttpResponse r = client.postForm(
+            DatabricksTokenClient client = new DatabricksTokenClient();
+            DatabricksTokenClient.DatabricksTokenHttpResponse r = client.postForm(
                     URI.create("http://127.0.0.1:" + port + "/oidc/v1/token"),
                     "grant_type=x&a=b");
 
@@ -79,8 +79,8 @@ class DatabricksSqlTokenClientTest {
             server.start();
             int port = server.getAddress().getPort();
 
-            DatabricksSqlTokenClient client = new DatabricksSqlTokenClient();
-            DatabricksSqlTokenClient.DatabricksTokenHttpResponse r =
+            DatabricksTokenClient client = new DatabricksTokenClient();
+            DatabricksTokenClient.DatabricksTokenHttpResponse r =
                     client.postForm(URI.create("http://127.0.0.1:" + port + "/t"), "x=1");
 
             assertEquals(201, r.statusCode());

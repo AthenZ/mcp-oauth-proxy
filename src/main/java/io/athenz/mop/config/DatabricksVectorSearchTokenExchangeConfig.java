@@ -20,26 +20,24 @@ import io.smallrye.config.WithDefault;
 import io.smallrye.config.WithName;
 
 /**
- * Databricks SQL MCP: Okta ID token exchange at each workspace {@code POST /oidc/v1/token}.
+ * Databricks Vector Search MCP: Okta ID token exchange at each workspace {@code POST /oidc/v1/token}.
  */
-@ConfigMapping(prefix = "server.token-exchange.databricks-sql")
-public interface DatabricksSqlTokenExchangeConfig extends DatabricksTokenExchangeConfig {
+@ConfigMapping(prefix = "server.token-exchange.databricks-vector-search")
+public interface DatabricksVectorSearchTokenExchangeConfig extends DatabricksTokenExchangeConfig {
 
     @WithName("workspace-host-template")
     @WithDefault("https://%s.cloud.databricks.com")
     String workspaceHostTemplate();
 
-    /** Path prefix before the workspace segment; segment is followed by {@code /mcp}. */
     @WithName("resource-path-prefix")
-    @WithDefault("/v1/databricks-sql/")
+    @WithDefault("/v1/databricks-vector-search/")
     String resourcePathPrefix();
 
-    /** Regex applied only to the workspace path segment (e.g. {@code dbc-…} deployment id). */
     @WithName("workspace-segment-pattern")
     @WithDefault("^dbc-[a-zA-Z0-9.-]+$")
     String workspaceSegmentPattern();
 
     @WithName("oauth-scope")
-    @WithDefault("sql")
+    @WithDefault("vector-search")
     String oauthScope();
 }

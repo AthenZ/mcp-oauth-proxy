@@ -25,9 +25,14 @@ import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
+import io.athenz.mop.service.OktaTokens;
+import io.athenz.mop.service.UpstreamRefreshException;
+import io.athenz.mop.service.UpstreamRefreshService;
 import io.athenz.mop.store.TokenStore;
 import io.athenz.mop.store.impl.aws.CrossRegionTokenStoreFallback;
+import io.athenz.mop.telemetry.ExchangeStep;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProviderLabel;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
 import io.athenz.mop.telemetry.TelemetryRequestContext;
 import jakarta.ws.rs.core.Response;
@@ -46,9 +51,12 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -63,7 +71,10 @@ class UserInfoResourceTest {
 
     private static final String ACCESS_TOKEN = "test_access_token";
     private static final String USER = "user.test";
+    private static final String USER_PREFIX = "user.";
+    private static final String SUBJECT = "test";
     private static final String PROVIDER = AudienceConstants.PROVIDER_OKTA;
+    private static final String PROVIDER_USER_ID = PROVIDER + "#" + SUBJECT;
 
     @Mock
     private TokenStore tokenStore;
@@ -80,6 +91,9 @@ class UserInfoResourceTest {
     @Mock
     private TelemetryRequestContext telemetryRequestContext;
 
+    @Mock
+    private UpstreamRefreshService upstreamRefreshService;
+
     @InjectMocks
     private UserInfoResource userInfoResource;
 
@@ -94,6 +108,9 @@ class UserInfoResourceTest {
         Field f = UserInfoResource.class.getDeclaredField("fallbackRegionConfig");
         f.setAccessible(true);
         f.set(userInfoResource, Optional.empty());
+        Field up = UserInfoResource.class.getDeclaredField("userPrefix");
+        up.setAccessible(true);
+        up.set(userInfoResource, USER_PREFIX);
         idToken = createIdToken(USER);
         long ttl = System.currentTimeMillis() / 1000 + 3600;
         tokenWrapper = new TokenWrapper(USER, PROVIDER, idToken, ACCESS_TOKEN, "refresh", ttl);
@@ -184,6 +201,106 @@ class UserInfoResourceTest {
         assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
         verify(oauthProxyMetrics, times(1)).recordCrossRegionFallbackExhausted(
                 eq("unknown"), eq("userinfo_token_lookup"), eq("us-east-1"), eq("unknown"), eq(401), eq("not_found"));
+    }
+
+    @Test
+    void getUserInfo_oktaRowMissing_upstreamRefreshSucceeds_returns200() throws Exception {
+        String dbProvider = "databricks-sql-dbc-abc123.cloud.databricks.com";
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
+        when(tokenStore.getUserTokenByAccessTokenHash(anyString())).thenReturn(dbToken);
+        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(null);
+        when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
+                .thenReturn(new OktaTokens("new_at", "new_rt", idToken, 3600));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        verify(upstreamRefreshService, times(1)).refreshUpstream(PROVIDER_USER_ID);
+        verify(tokenStore, times(1)).storeUserToken(eq(USER), eq(PROVIDER), any(TokenWrapper.class));
+        verify(oauthProxyMetrics).recordExchangeStep(eq(ExchangeStep.UPSTREAM_REFRESH),
+                eq(OauthProviderLabel.OKTA), eq(true), isNull(), eq(""), eq("us-east-1"), anyDouble());
+    }
+
+    @Test
+    void getUserInfo_oktaRowMissing_upstreamRefreshFails_returns401() {
+        String dbProvider = "databricks-sql-dbc-abc123.cloud.databricks.com";
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
+        when(tokenStore.getUserTokenByAccessTokenHash(anyString())).thenReturn(dbToken);
+        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(null);
+        when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
+                .thenThrow(new UpstreamRefreshException("token revoked"));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        assertErrorBody(response, "server_error", "Okta token record not found");
+        verify(upstreamRefreshService, times(1)).refreshUpstream(PROVIDER_USER_ID);
+        verify(tokenStore, never()).storeUserToken(anyString(), anyString(), any(TokenWrapper.class));
+        verify(oauthProxyMetrics).recordExchangeStep(eq(ExchangeStep.UPSTREAM_REFRESH),
+                eq(OauthProviderLabel.OKTA), eq(false), eq("unauthorized"), eq(""), eq("us-east-1"), anyDouble());
+    }
+
+    @Test
+    void getUserInfo_oktaRowMissing_upstreamLockFails_returns401() {
+        String dbProvider = "databricks-sql-dbc-abc123.cloud.databricks.com";
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
+        when(tokenStore.getUserTokenByAccessTokenHash(anyString())).thenReturn(dbToken);
+        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(null);
+        when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
+                .thenThrow(new IllegalStateException("lock not acquired"));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        assertErrorBody(response, "server_error", "Okta token record not found");
+        verify(upstreamRefreshService, times(1)).refreshUpstream(PROVIDER_USER_ID);
+        verify(tokenStore, never()).storeUserToken(anyString(), anyString(), any(TokenWrapper.class));
+        verify(oauthProxyMetrics).recordExchangeStep(eq(ExchangeStep.UPSTREAM_REFRESH),
+                eq(OauthProviderLabel.OKTA), eq(false), eq("unauthorized"), eq(""), eq("us-east-1"), anyDouble());
+    }
+
+    @Test
+    void getUserInfo_oktaRowExistsButIdTokenNull_upstreamRefreshSucceeds_returns200() throws Exception {
+        String dbProvider = "databricks-vector-search-dbc-xyz.cloud.databricks.com";
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
+        TokenWrapper oktaNoIdToken = new TokenWrapper(USER, PROVIDER, null, "old_at", null, ttl);
+        when(tokenStore.getUserTokenByAccessTokenHash(anyString())).thenReturn(dbToken);
+        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(oktaNoIdToken);
+        when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
+                .thenReturn(new OktaTokens("new_at", "new_rt", idToken, 3600));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        verify(upstreamRefreshService, times(1)).refreshUpstream(PROVIDER_USER_ID);
+        verify(tokenStore, times(1)).storeUserToken(eq(USER), eq(PROVIDER), any(TokenWrapper.class));
+        verify(oauthProxyMetrics).recordExchangeStep(eq(ExchangeStep.UPSTREAM_REFRESH),
+                eq(OauthProviderLabel.OKTA), eq(true), isNull(), eq(""), eq("us-east-1"), anyDouble());
+    }
+
+    @Test
+    void getUserInfo_oktaRowExistsButIdTokenNull_upstreamRefreshFails_returns401() {
+        String dbProvider = "databricks-vector-search-dbc-xyz.cloud.databricks.com";
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
+        TokenWrapper oktaNoIdToken = new TokenWrapper(USER, PROVIDER, null, "old_at", null, ttl);
+        when(tokenStore.getUserTokenByAccessTokenHash(anyString())).thenReturn(dbToken);
+        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(oktaNoIdToken);
+        when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
+                .thenThrow(new UpstreamRefreshException("no upstream token"));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        assertErrorBody(response, "server_error", "Okta token record not found");
+        verify(upstreamRefreshService, times(1)).refreshUpstream(PROVIDER_USER_ID);
+        verify(tokenStore, never()).storeUserToken(anyString(), anyString(), any(TokenWrapper.class));
+        verify(oauthProxyMetrics).recordExchangeStep(eq(ExchangeStep.UPSTREAM_REFRESH),
+                eq(OauthProviderLabel.OKTA), eq(false), eq("unauthorized"), eq(""), eq("us-east-1"), anyDouble());
     }
 
     @SuppressWarnings("unchecked")

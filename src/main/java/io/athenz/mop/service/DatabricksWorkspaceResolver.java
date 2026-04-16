@@ -15,29 +15,34 @@
  */
 package io.athenz.mop.service;
 
-import io.athenz.mop.config.DatabricksSqlTokenExchangeConfig;
+import io.athenz.mop.config.DatabricksTokenExchangeConfig;
 import java.net.URI;
 import java.util.Optional;
 import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
 
 /**
- * Parses MCP resource URLs for Databricks SQL ({@code .../v1/databricks-sql/<segment>/mcp}),
+ * Parses MCP resource URLs for Databricks providers
+ * ({@code .../v1/databricks-sql/<workspace>/mcp} or
+ * {@code .../v1/databricks-vector-search/<workspace>/<catalog>/<schema>/mcp}),
  * validates the workspace segment, and builds the workspace API host.
  */
-public final class DatabricksSqlWorkspaceResolver {
+public final class DatabricksWorkspaceResolver {
 
-    private DatabricksSqlWorkspaceResolver() {
+    private DatabricksWorkspaceResolver() {
     }
 
     /** Resolved workspace: full token URL host and hostname used for storage keys. */
-    public record DatabricksSqlWorkspace(String workspaceBaseUrl, String hostname) {}
+    public record DatabricksWorkspace(String workspaceBaseUrl, String hostname) {}
 
     /**
      * Extract and validate workspace from {@code resource} URI path, then build
      * {@code https://<deployment>.cloud.databricks.com} (or template equivalent).
+     * The workspace is always the first path segment after the configured prefix;
+     * additional segments (e.g. catalog/schema for vector search) are allowed before
+     * the trailing {@code /mcp}.
      */
-    public static Optional<DatabricksSqlWorkspace> resolve(String resource, DatabricksSqlTokenExchangeConfig config) {
+    public static Optional<DatabricksWorkspace> resolve(String resource, DatabricksTokenExchangeConfig config) {
         if (StringUtils.isBlank(resource) || config == null) {
             return Optional.empty();
         }
@@ -60,8 +65,10 @@ public final class DatabricksSqlWorkspaceResolver {
         if (!tail.endsWith(suffix) || tail.length() <= suffix.length()) {
             return Optional.empty();
         }
-        String segment = tail.substring(0, tail.length() - suffix.length());
-        if (segment.isEmpty() || segment.indexOf('/') >= 0) {
+        String pathBeforeMcp = tail.substring(0, tail.length() - suffix.length());
+        int slash = pathBeforeMcp.indexOf('/');
+        String workspaceSegment = slash < 0 ? pathBeforeMcp : pathBeforeMcp.substring(0, slash);
+        if (workspaceSegment.isEmpty()) {
             return Optional.empty();
         }
         Pattern p;
@@ -70,7 +77,7 @@ public final class DatabricksSqlWorkspaceResolver {
         } catch (Exception e) {
             return Optional.empty();
         }
-        if (!p.matcher(segment).matches()) {
+        if (!p.matcher(workspaceSegment).matches()) {
             return Optional.empty();
         }
         String template = config.workspaceHostTemplate();
@@ -79,7 +86,7 @@ public final class DatabricksSqlWorkspaceResolver {
         }
         String workspaceUrl;
         try {
-            workspaceUrl = String.format(template, segment);
+            workspaceUrl = String.format(template, workspaceSegment);
         } catch (Exception e) {
             return Optional.empty();
         }
@@ -93,7 +100,7 @@ public final class DatabricksSqlWorkspaceResolver {
         if (StringUtils.isBlank(host)) {
             return Optional.empty();
         }
-        return Optional.of(new DatabricksSqlWorkspace(workspaceUrl, host));
+        return Optional.of(new DatabricksWorkspace(workspaceUrl, host));
     }
 
     static String normalizePrefix(String prefix) {

@@ -16,6 +16,7 @@
 package io.athenz.mop.service;
 
 import io.athenz.mop.config.DatabricksSqlTokenExchangeConfig;
+import io.athenz.mop.config.DatabricksVectorSearchTokenExchangeConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
@@ -31,6 +32,9 @@ class ExchangedTokenUserinfoStoreProviderResolverTest {
     @Mock
     private DatabricksSqlTokenExchangeConfig databricksSqlTokenExchangeConfig;
 
+    @Mock
+    private DatabricksVectorSearchTokenExchangeConfig databricksVectorSearchTokenExchangeConfig;
+
     @InjectMocks
     private ExchangedTokenUserinfoStoreProviderResolver resolver;
 
@@ -41,6 +45,11 @@ class ExchangedTokenUserinfoStoreProviderResolverTest {
         when(databricksSqlTokenExchangeConfig.resourcePathPrefix()).thenReturn("/v1/databricks-sql/");
         when(databricksSqlTokenExchangeConfig.workspaceSegmentPattern()).thenReturn("^dbc-[a-zA-Z0-9.-]+$");
         when(databricksSqlTokenExchangeConfig.oauthScope()).thenReturn("sql");
+
+        when(databricksVectorSearchTokenExchangeConfig.workspaceHostTemplate()).thenReturn("https://%s.cloud.databricks.com");
+        when(databricksVectorSearchTokenExchangeConfig.resourcePathPrefix()).thenReturn("/v1/databricks-vector-search/");
+        when(databricksVectorSearchTokenExchangeConfig.workspaceSegmentPattern()).thenReturn("^dbc-[a-zA-Z0-9.-]+$");
+        when(databricksVectorSearchTokenExchangeConfig.oauthScope()).thenReturn("vector-search");
     }
 
     @Test
@@ -49,6 +58,14 @@ class ExchangedTokenUserinfoStoreProviderResolverTest {
                 "https://gateway.test.example/v1/databricks-sql/dbc-abc/mcp",
                 AudienceConstants.PROVIDER_DATABRICKS_SQL);
         assertEquals("databricks-sql-dbc-abc.cloud.databricks.com", p);
+    }
+
+    @Test
+    void resolve_databricksVectorSearch_prefixesHostname() {
+        String p = resolver.resolve(
+                "https://gateway.test.example/v1/databricks-vector-search/dbc-xyz/catalog/schema/mcp",
+                AudienceConstants.PROVIDER_DATABRICKS_VECTOR_SEARCH);
+        assertEquals("databricks-vector-search-dbc-xyz.cloud.databricks.com", p);
     }
 
     @Test
@@ -70,5 +87,12 @@ class ExchangedTokenUserinfoStoreProviderResolverTest {
         assertEquals(
                 AudienceConstants.PROVIDER_DATABRICKS_SQL,
                 resolver.resolve("https://evil.example/not-databricks/mcp", AudienceConstants.PROVIDER_DATABRICKS_SQL));
+    }
+
+    @Test
+    void resolve_databricksVectorSearch_invalidResource_fallsBackToAudience() {
+        assertEquals(
+                AudienceConstants.PROVIDER_DATABRICKS_VECTOR_SEARCH,
+                resolver.resolve("https://evil.example/not-databricks/mcp", AudienceConstants.PROVIDER_DATABRICKS_VECTOR_SEARCH));
     }
 }

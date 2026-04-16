@@ -15,6 +15,8 @@
  */
 package io.athenz.mop.service;
 
+import io.athenz.mop.config.DatabricksSqlTokenExchangeConfig;
+import io.athenz.mop.config.DatabricksVectorSearchTokenExchangeConfig;
 import jakarta.enterprise.inject.Instance;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,13 +53,19 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceSplunkImpl tokenExchangeServiceSplunkImpl;
 
     @Mock
-    private TokenExchangeServiceDatabricksSqlImpl tokenExchangeServiceDatabricksSqlImpl;
-
-    @Mock
     private TokenExchangeServiceSlackImpl tokenExchangeServiceSlackImpl;
 
     @Mock
     private Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
+
+    @Mock
+    private Instance<TokenExchangeServiceDatabricksImpl> databricksProvider;
+
+    @Mock
+    private DatabricksSqlTokenExchangeConfig databricksSqlConfig;
+
+    @Mock
+    private DatabricksVectorSearchTokenExchangeConfig databricksVectorSearchConfig;
 
     @InjectMocks
     private TokenExchangeServiceProducer tokenExchangeServiceProducer;
@@ -69,6 +77,7 @@ class TokenExchangeServiceProducerTest {
             TokenExchangeServiceGoogleWorkspaceImpl impl = new TokenExchangeServiceGoogleWorkspaceImpl();
             return impl;
         });
+        when(databricksProvider.get()).thenAnswer(invocation -> new TokenExchangeServiceDatabricksImpl());
         tokenExchangeServiceProducer.init();
     }
 
@@ -118,7 +127,35 @@ class TokenExchangeServiceProducerTest {
     void testGetTokenExchangeServiceImplementation_DatabricksSql() {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("databricks-sql");
         assertNotNull(result);
-        assertSame(tokenExchangeServiceDatabricksSqlImpl, result);
+        assertInstanceOf(TokenExchangeServiceDatabricksImpl.class, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_DatabricksVectorSearch() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("databricks-vector-search");
+        assertNotNull(result);
+        assertInstanceOf(TokenExchangeServiceDatabricksImpl.class, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_DatabricksSqlAndVectorSearch_areDistinctInstances() {
+        TokenExchangeService sql = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("databricks-sql");
+        TokenExchangeService vs = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("databricks-vector-search");
+        assertNotSame(sql, vs);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_DatabricksSql_cachedInstance() {
+        TokenExchangeService first = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("databricks-sql");
+        TokenExchangeService second = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("databricks-sql");
+        assertSame(first, second);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_DatabricksVectorSearch_cachedInstance() {
+        TokenExchangeService first = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("databricks-vector-search");
+        TokenExchangeService second = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("databricks-vector-search");
+        assertSame(first, second);
     }
 
     @Test

@@ -37,6 +37,9 @@ public final class AudienceConstants {
     /** Databricks SQL MCP resource mapping {@code token.audience} / {@code token.as} routing id. */
     public static final String PROVIDER_DATABRICKS_SQL = "databricks-sql";
 
+    /** Databricks Vector Search MCP resource mapping {@code token.audience} / {@code token.as} routing id. */
+    public static final String PROVIDER_DATABRICKS_VECTOR_SEARCH = "databricks-vector-search";
+
     /**
      * DynamoDB / userinfo provider column for a Databricks SQL workspace (prefix + workspace hostname).
      */
@@ -45,6 +48,16 @@ public final class AudienceConstants {
             return PROVIDER_DATABRICKS_SQL;
         }
         return PROVIDER_DATABRICKS_SQL + "-" + hostname.trim();
+    }
+
+    /**
+     * DynamoDB / userinfo provider column for a Databricks Vector Search workspace (prefix + workspace hostname).
+     */
+    public static String databricksVectorSearchStorageProvider(String hostname) {
+        if (StringUtils.isBlank(hostname)) {
+            return PROVIDER_DATABRICKS_VECTOR_SEARCH;
+        }
+        return PROVIDER_DATABRICKS_VECTOR_SEARCH + "-" + hostname.trim();
     }
 
     /** Exchanged access token stored by audience so {@code GET /userinfo} can resolve Okta profile from Splunk/Glean/GCP tokens. */
@@ -56,6 +69,7 @@ public final class AudienceConstants {
                 || PROVIDER_GOOGLE_MONITORING.equals(audience)
                 || PROVIDER_GOOGLE_LOGGING.equals(audience)
                 || PROVIDER_SPLUNK.equals(audience)
-                || PROVIDER_DATABRICKS_SQL.equals(audience);
+                || PROVIDER_DATABRICKS_SQL.equals(audience)
+                || PROVIDER_DATABRICKS_VECTOR_SEARCH.equals(audience);
     }
 }
