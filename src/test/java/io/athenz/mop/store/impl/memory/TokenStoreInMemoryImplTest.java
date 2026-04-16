@@ -26,6 +26,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
@@ -56,7 +57,7 @@ class TokenStoreInMemoryImplTest {
     private static final String TEST_ID_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.id";
     private static final String TEST_ACCESS_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.access";
     private static final String TEST_REFRESH_TOKEN = "refresh_token_value";
-    private static final Long TEST_TTL = 1735311600L;
+    private static final Long TEST_TTL = Instant.now().getEpochSecond() + 3600L;
 
     @BeforeEach
     void setUp() {
@@ -159,8 +160,9 @@ class TokenStoreInMemoryImplTest {
         // Arrange
         String user1 = "user.alice";
         String user2 = "user.bob";
-        TokenWrapper token1 = new TokenWrapper(user1, TEST_PROVIDER, "id1", "access1", "refresh1", 123456L);
-        TokenWrapper token2 = new TokenWrapper(user2, TEST_PROVIDER, "id2", "access2", "refresh2", 789012L);
+        long futureTtl = Instant.now().getEpochSecond() + 7200L;
+        TokenWrapper token1 = new TokenWrapper(user1, TEST_PROVIDER, "id1", "access1", "refresh1", futureTtl);
+        TokenWrapper token2 = new TokenWrapper(user2, TEST_PROVIDER, "id2", "access2", "refresh2", futureTtl);
 
         CompletableFuture<TokenWrapper> tokenFuture1 = CompletableFuture.completedFuture(token1);
         CompletableFuture<TokenWrapper> tokenFuture2 = CompletableFuture.completedFuture(token2);
@@ -203,5 +205,21 @@ class TokenStoreInMemoryImplTest {
         // Assert
         verify(tokenCache).as(CaffeineCache.class);
         verify(caffeineCache).put(eq(TEST_USER), any(CompletableFuture.class));
+    }
+
+    @Test
+    void testGetUserToken_ExpiredToken_ReturnsNullAndEvicts() {
+        long expiredTtl = Instant.now().getEpochSecond() - 60L;
+        TokenWrapper expiredToken = new TokenWrapper(
+                TEST_USER, TEST_PROVIDER, TEST_ID_TOKEN, TEST_ACCESS_TOKEN, TEST_REFRESH_TOKEN, expiredTtl);
+        CompletableFuture<TokenWrapper> tokenFuture = CompletableFuture.completedFuture(expiredToken);
+        when(tokenCache.as(CaffeineCache.class)).thenReturn(caffeineCache);
+        doReturn(tokenFuture).when(caffeineCache).getIfPresent(TEST_USER);
+        when(tokenCache.invalidate(TEST_USER)).thenReturn(io.smallrye.mutiny.Uni.createFrom().voidItem());
+
+        TokenWrapper result = tokenStore.getUserToken(TEST_USER, TEST_PROVIDER);
+
+        assertNull(result);
+        verify(tokenCache).invalidate(TEST_USER);
     }
 }

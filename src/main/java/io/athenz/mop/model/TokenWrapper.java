@@ -15,6 +15,8 @@
  */
 package io.athenz.mop.model;
 
+import java.time.Instant;
+
 public record TokenWrapper(
         String key,
         String provider,
@@ -22,4 +24,8 @@ public record TokenWrapper(
         String accessToken,
         String refreshToken,
         Long ttl
-) {}
+) {
+    public boolean isExpired() {
+        return ttl != null && ttl <= Instant.now().getEpochSecond();
+    }
+}

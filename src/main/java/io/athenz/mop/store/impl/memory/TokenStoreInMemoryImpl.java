@@ -63,7 +63,13 @@ public class TokenStoreInMemoryImpl implements TokenStore, AuthCodeStore, TokenS
         CompletableFuture<TokenWrapper> cachedTokenValue = tokenCache.as(CaffeineCache.class).getIfPresent(user);
         if (cachedTokenValue != null) {
             try {
-                return cachedTokenValue.get();
+                TokenWrapper token = cachedTokenValue.get();
+                if (token != null && token.isExpired()) {
+                    log.info("Token expired for user={}, provider={}, ttl={} — evicting from cache", user, provider, token.ttl());
+                    deleteUserToken(user, provider);
+                    return null;
+                }
+                return token;
             } catch (Exception ex) {
                 log.error("Unable to retrieve token from cache");
                 return null;
@@ -153,6 +159,11 @@ public class TokenStoreInMemoryImpl implements TokenStore, AuthCodeStore, TokenS
         if (cachedTokenValue != null) {
             try {
                 TokenWrapper token = cachedTokenValue.get();
+                if (token != null && token.isExpired()) {
+                    log.info("Token expired for user={}, provider={}, ttl={} — evicting from cache", user, token.provider(), token.ttl());
+                    deleteUserToken(user, token.provider());
+                    return null;
+                }
                 log.info("Found token in memory cache for bearer lookup");
                 return token;
             } catch (Exception ex) {

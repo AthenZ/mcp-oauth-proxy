@@ -121,6 +121,11 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
         final GetItemResponse getResponse = queryTable(client, table, user, provider);
         log.info("getUserToken: key={}, provider={} HTTPStatusCode={}", user, provider, getResponse.sdkHttpResponse().statusCode());
         TokenWrapper token = mapItemToTokenWrapper(getResponse.item(), user, provider);
+        if (token != null && token.isExpired()) {
+            log.info("Token expired for key={}, provider={}, ttl={} — deleting stale row", user, provider, token.ttl());
+            deleteUserToken(client, table, user, provider);
+            return null;
+        }
         if (token != null) {
             log.info("fetched token for lookupKey: {} user: {}, provider: {} with ttl: {}", user, user, provider, token.ttl());
         }
@@ -239,6 +244,11 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
             String user = item.get(TokenTableAttribute.USER.attr()).s();
             String provider = item.get(TokenTableAttribute.PROVIDER.attr()).s();
             TokenWrapper token = mapItemToTokenWrapper(item, user, provider);
+            if (token != null && token.isExpired()) {
+                log.info("Token expired for user={}, provider={}, ttl={} — deleting stale row", user, provider, token.ttl());
+                deleteUserToken(client, table, user, provider);
+                return null;
+            }
             if (token != null) {
                 log.info("Found token for user: {}, provider: {} with ttl: {}", user, provider, token.ttl());
             }
