@@ -15,12 +15,13 @@
  */
 package io.athenz.mop.service;
 
-import io.athenz.mop.config.DatabricksSqlTokenExchangeConfig;
+import io.athenz.mop.config.DatabricksTokenExchangeConfig;
 import io.athenz.mop.model.AuthResult;
 import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
+import io.athenz.mop.telemetry.OauthProviderLabel;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
 import java.net.URI;
 import java.util.Optional;
@@ -35,10 +36,10 @@ import static org.mockito.Mockito.*;
 
 import java.io.IOException;
 
-class TokenExchangeServiceDatabricksSqlImplTest {
+class TokenExchangeServiceDatabricksImplTest {
 
     @Mock
-    DatabricksSqlTokenExchangeConfig config;
+    DatabricksTokenExchangeConfig config;
 
     @Mock
     OauthProxyMetrics oauthProxyMetrics;
@@ -47,9 +48,9 @@ class TokenExchangeServiceDatabricksSqlImplTest {
     MetricsRegionProvider metricsRegionProvider;
 
     @Mock
-    DatabricksSqlTokenClient tokenClient;
+    DatabricksTokenClient tokenClient;
 
-    TokenExchangeServiceDatabricksSqlImpl impl;
+    TokenExchangeServiceDatabricksImpl impl;
 
     @BeforeEach
     void setUp() {
@@ -60,18 +61,19 @@ class TokenExchangeServiceDatabricksSqlImplTest {
         when(config.oauthScope()).thenReturn("sql");
         when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
 
-        impl = new TokenExchangeServiceDatabricksSqlImpl();
-        impl.config = config;
+        impl = new TokenExchangeServiceDatabricksImpl();
+        impl.setConfig(config);
+        impl.setProviderLabel(OauthProviderLabel.DATABRICKS_SQL);
         impl.oauthProxyMetrics = oauthProxyMetrics;
         impl.metricsRegionProvider = metricsRegionProvider;
-        impl.databricksSqlTokenClient = tokenClient;
+        impl.databricksTokenClient = tokenClient;
     }
 
     @Test
     void exchange_success_returnsOAuthScope() throws Exception {
         String json = "{\"access_token\":\"atok\",\"expires_in\":100,\"scope\":\"sql\"}";
         when(tokenClient.postForm(any(URI.class), anyString()))
-                .thenReturn(new DatabricksSqlTokenClient.DatabricksTokenHttpResponse(200, json, Optional.of("req-1")));
+                .thenReturn(new DatabricksTokenClient.DatabricksTokenHttpResponse(200, json, Optional.of("req-1")));
 
         TokenWrapper tw = new TokenWrapper("u", "okta", "id.jwt", "acc", "rt", 3600L);
         TokenExchangeDO req = new TokenExchangeDO(
@@ -108,7 +110,7 @@ class TokenExchangeServiceDatabricksSqlImplTest {
     @Test
     void exchange_httpError_unauthorized() throws Exception {
         when(tokenClient.postForm(any(URI.class), anyString()))
-                .thenReturn(new DatabricksSqlTokenClient.DatabricksTokenHttpResponse(
+                .thenReturn(new DatabricksTokenClient.DatabricksTokenHttpResponse(
                         400, "{\"error\":\"invalid_scope\"}", Optional.empty()));
 
         TokenWrapper tw = new TokenWrapper("u", "okta", "id", "acc", null, 3600L);
@@ -197,7 +199,7 @@ class TokenExchangeServiceDatabricksSqlImplTest {
     void exchange_success_usesDefaultTtlWhenExpiresMissingOrNonPositive() throws Exception {
         String jsonNoExpiry = "{\"access_token\":\"at2\"}";
         when(tokenClient.postForm(any(URI.class), anyString()))
-                .thenReturn(new DatabricksSqlTokenClient.DatabricksTokenHttpResponse(200, jsonNoExpiry, Optional.empty()));
+                .thenReturn(new DatabricksTokenClient.DatabricksTokenHttpResponse(200, jsonNoExpiry, Optional.empty()));
 
         TokenWrapper tw = new TokenWrapper("u", "okta", "id.jwt", "acc", null, 3600L);
         TokenExchangeDO req = new TokenExchangeDO(
@@ -209,7 +211,7 @@ class TokenExchangeServiceDatabricksSqlImplTest {
 
         String jsonZeroExpiry = "{\"access_token\":\"at3\",\"expires_in\":0}";
         when(tokenClient.postForm(any(URI.class), anyString()))
-                .thenReturn(new DatabricksSqlTokenClient.DatabricksTokenHttpResponse(200, jsonZeroExpiry, Optional.empty()));
+                .thenReturn(new DatabricksTokenClient.DatabricksTokenHttpResponse(200, jsonZeroExpiry, Optional.empty()));
         AuthorizationResultDO out2 = impl.getAccessTokenFromResourceAuthorizationServer(req);
         assertEquals(3600L, out2.token().ttl());
     }
@@ -218,7 +220,7 @@ class TokenExchangeServiceDatabricksSqlImplTest {
     void exchange_success_usesConfiguredScopeWhenResponseOmitsScope() throws Exception {
         String json = "{\"access_token\":\"atok\",\"expires_in\":10}";
         when(tokenClient.postForm(any(URI.class), anyString()))
-                .thenReturn(new DatabricksSqlTokenClient.DatabricksTokenHttpResponse(200, json, Optional.empty()));
+                .thenReturn(new DatabricksTokenClient.DatabricksTokenHttpResponse(200, json, Optional.empty()));
 
         TokenWrapper tw = new TokenWrapper("u", "okta", "id.jwt", "acc", null, 3600L);
         TokenExchangeDO req = new TokenExchangeDO(
@@ -231,7 +233,7 @@ class TokenExchangeServiceDatabricksSqlImplTest {
     @Test
     void exchange_200MissingAccessToken_unauthorized() throws Exception {
         when(tokenClient.postForm(any(URI.class), anyString()))
-                .thenReturn(new DatabricksSqlTokenClient.DatabricksTokenHttpResponse(200, "{}", Optional.empty()));
+                .thenReturn(new DatabricksTokenClient.DatabricksTokenHttpResponse(200, "{}", Optional.empty()));
 
         TokenWrapper tw = new TokenWrapper("u", "okta", "id", "acc", null, 3600L);
         TokenExchangeDO req = new TokenExchangeDO(
@@ -244,7 +246,7 @@ class TokenExchangeServiceDatabricksSqlImplTest {
     @Test
     void exchange_200MalformedJson_unauthorized() throws Exception {
         when(tokenClient.postForm(any(URI.class), anyString()))
-                .thenReturn(new DatabricksSqlTokenClient.DatabricksTokenHttpResponse(200, "not-json", Optional.empty()));
+                .thenReturn(new DatabricksTokenClient.DatabricksTokenHttpResponse(200, "not-json", Optional.empty()));
 
         TokenWrapper tw = new TokenWrapper("u", "okta", "id", "acc", null, 3600L);
         TokenExchangeDO req = new TokenExchangeDO(
@@ -281,7 +283,7 @@ class TokenExchangeServiceDatabricksSqlImplTest {
                     URI u = invocation.getArgument(0);
                     assertTrue(u.toString().endsWith("/oidc/v1/token"), u::toString);
                     assertFalse(u.toString().contains("///oidc"), u::toString);
-                    return new DatabricksSqlTokenClient.DatabricksTokenHttpResponse(200, json, Optional.empty());
+                    return new DatabricksTokenClient.DatabricksTokenHttpResponse(200, json, Optional.empty());
                 });
 
         TokenWrapper tw = new TokenWrapper("u", "okta", "id", "acc", null, 3600L);
@@ -290,5 +292,32 @@ class TokenExchangeServiceDatabricksSqlImplTest {
 
         assertEquals(AuthResult.AUTHORIZED,
                 impl.getAccessTokenFromResourceAuthorizationServer(req).authResult());
+    }
+
+    // --- Vector Search specific tests ---
+
+    @Test
+    void exchange_vectorSearch_success() throws Exception {
+        when(config.resourcePathPrefix()).thenReturn("/v1/databricks-vector-search/");
+        when(config.oauthScope()).thenReturn("vector-search");
+        impl.setProviderLabel(OauthProviderLabel.DATABRICKS_VECTOR_SEARCH);
+
+        String json = "{\"access_token\":\"vs-tok\",\"expires_in\":200,\"scope\":\"vector-search\"}";
+        when(tokenClient.postForm(any(URI.class), anyString()))
+                .thenReturn(new DatabricksTokenClient.DatabricksTokenHttpResponse(200, json, Optional.of("vs-req-1")));
+
+        TokenWrapper tw = new TokenWrapper("u", "okta", "id.jwt", "acc", null, 3600L);
+        TokenExchangeDO req = new TokenExchangeDO(
+                null,
+                "https://gw.example/v1/databricks-vector-search/dbc-ws/catalog/schema/mcp",
+                null,
+                null,
+                tw);
+
+        AuthorizationResultDO out = impl.getAccessTokenFromResourceAuthorizationServer(req);
+        assertEquals(AuthResult.AUTHORIZED, out.authResult());
+        assertEquals("vs-tok", out.token().accessToken());
+        assertEquals(200L, out.token().ttl());
+        assertEquals("vector-search", out.oauthScope());
     }
 }

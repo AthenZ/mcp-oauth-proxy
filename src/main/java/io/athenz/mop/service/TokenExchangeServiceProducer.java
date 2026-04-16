@@ -15,6 +15,9 @@
  */
 package io.athenz.mop.service;
 
+import io.athenz.mop.config.DatabricksSqlTokenExchangeConfig;
+import io.athenz.mop.config.DatabricksVectorSearchTokenExchangeConfig;
+import io.athenz.mop.telemetry.OauthProviderLabel;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
@@ -34,6 +37,15 @@ public class TokenExchangeServiceProducer {
 
     @Inject
     Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
+
+    @Inject
+    Instance<TokenExchangeServiceDatabricksImpl> databricksProvider;
+
+    @Inject
+    DatabricksSqlTokenExchangeConfig databricksSqlConfig;
+
+    @Inject
+    DatabricksVectorSearchTokenExchangeConfig databricksVectorSearchConfig;
 
     @Inject
     TokenExchangeServiceZTSImpl tokenExchangeServiceZTSImpl;
@@ -57,12 +69,10 @@ public class TokenExchangeServiceProducer {
     TokenExchangeServiceSplunkImpl tokenExchangeServiceSplunkImpl;
 
     @Inject
-    TokenExchangeServiceDatabricksSqlImpl tokenExchangeServiceDatabricksSqlImpl;
-
-    @Inject
     TokenExchangeServiceSlackImpl tokenExchangeServiceSlackImpl;
 
     private final Map<String, TokenExchangeService> googleWorkspaceServices = new HashMap<>();
+    private final Map<String, TokenExchangeService> databricksServices = new HashMap<>();
 
     @PostConstruct
     void init() {
@@ -71,12 +81,27 @@ public class TokenExchangeServiceProducer {
             svc.setProviderLabel(provider);
             googleWorkspaceServices.put(provider, svc);
         }
+
+        TokenExchangeServiceDatabricksImpl sqlSvc = databricksProvider.get();
+        sqlSvc.setConfig(databricksSqlConfig);
+        sqlSvc.setProviderLabel(OauthProviderLabel.DATABRICKS_SQL);
+        databricksServices.put("databricks-sql", sqlSvc);
+
+        TokenExchangeServiceDatabricksImpl vsSvc = databricksProvider.get();
+        vsSvc.setConfig(databricksVectorSearchConfig);
+        vsSvc.setProviderLabel(OauthProviderLabel.DATABRICKS_VECTOR_SEARCH);
+        databricksServices.put("databricks-vector-search", vsSvc);
     }
 
     public TokenExchangeService getTokenExchangeServiceImplementation(String idpType) {
         TokenExchangeService googleSvc = googleWorkspaceServices.get(idpType);
         if (googleSvc != null) {
             return googleSvc;
+        }
+
+        TokenExchangeService databricksSvc = databricksServices.get(idpType);
+        if (databricksSvc != null) {
+            return databricksSvc;
         }
 
         return switch (idpType) {
@@ -88,7 +113,6 @@ public class TokenExchangeServiceProducer {
             case "athenz" -> tokenExchangeServiceZTSImpl;
             case "google-monitoring", "google-logging" -> tokenExchangeServiceGcpWorkforceImpl;
             case "splunk" -> tokenExchangeServiceSplunkImpl;
-            case "databricks-sql" -> tokenExchangeServiceDatabricksSqlImpl;
             case "slack" -> tokenExchangeServiceSlackImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
         };

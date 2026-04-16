@@ -18,7 +18,7 @@ package io.athenz.mop.service;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.athenz.mop.config.DatabricksSqlTokenExchangeConfig;
+import io.athenz.mop.config.DatabricksTokenExchangeConfig;
 import io.athenz.mop.model.AuthResult;
 import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
@@ -27,7 +27,7 @@ import io.athenz.mop.telemetry.MetricsRegionProvider;
 import io.athenz.mop.telemetry.OauthProviderLabel;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
 import io.athenz.mop.telemetry.UpstreamHttpCallLabels;
-import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.Dependent;
 import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.net.URI;
@@ -41,9 +41,11 @@ import org.slf4j.LoggerFactory;
 /**
  * Exchanges the MoP-held Okta {@code id_token} (JWT) for a Databricks workspace access token via
  * {@code POST https://&lt;workspace&gt;/oidc/v1/token} (token-exchange grant). No Databricks refresh token.
+ * Shared by both {@code databricks-sql} and {@code databricks-vector-search} providers;
+ * each instance receives its own {@link DatabricksTokenExchangeConfig} and provider label via setters.
  */
-@ApplicationScoped
-public class TokenExchangeServiceDatabricksSqlImpl implements TokenExchangeService {
+@Dependent
+public class TokenExchangeServiceDatabricksImpl implements TokenExchangeService {
 
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
@@ -52,8 +54,8 @@ public class TokenExchangeServiceDatabricksSqlImpl implements TokenExchangeServi
     private static final String TOKEN_PATH = "/oidc/v1/token";
     private static final long DEFAULT_EXPIRES_SECONDS = 3600L;
 
-    @Inject
-    DatabricksSqlTokenExchangeConfig config;
+    private DatabricksTokenExchangeConfig config;
+    private String providerLabel = OauthProviderLabel.DATABRICKS_SQL;
 
     @Inject
     OauthProxyMetrics oauthProxyMetrics;
@@ -62,41 +64,49 @@ public class TokenExchangeServiceDatabricksSqlImpl implements TokenExchangeServi
     MetricsRegionProvider metricsRegionProvider;
 
     @Inject
-    DatabricksSqlTokenClient databricksSqlTokenClient;
+    DatabricksTokenClient databricksTokenClient;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    public void setConfig(DatabricksTokenExchangeConfig config) {
+        this.config = config;
+    }
+
+    public void setProviderLabel(String providerLabel) {
+        this.providerLabel = providerLabel;
+    }
+
     @Override
     public AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO) {
-        throw new UnsupportedOperationException("Databricks SQL exchange uses getAccessTokenFromResourceAuthorizationServer");
+        throw new UnsupportedOperationException("Databricks exchange uses getAccessTokenFromResourceAuthorizationServer");
     }
 
     @Override
     public AuthorizationResultDO getAccessTokenFromResourceAuthorizationServer(TokenExchangeDO tokenExchangeDO) {
         if (tokenExchangeDO == null || tokenExchangeDO.tokenWrapper() == null) {
-            log.warn("Databricks SQL exchange: missing token wrapper");
+            log.warn("Databricks {} exchange: missing token wrapper", providerLabel);
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
         String idToken = StringUtils.trimToNull(tokenExchangeDO.tokenWrapper().idToken());
         if (idToken == null) {
-            log.warn("Databricks SQL exchange: missing Okta id_token");
+            log.warn("Databricks {} exchange: missing Okta id_token", providerLabel);
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
         String resource = tokenExchangeDO.resource();
-        Optional<DatabricksSqlWorkspaceResolver.DatabricksSqlWorkspace> resolved =
-                DatabricksSqlWorkspaceResolver.resolve(resource, config);
+        Optional<DatabricksWorkspaceResolver.DatabricksWorkspace> resolved =
+                DatabricksWorkspaceResolver.resolve(resource, config);
         if (resolved.isEmpty()) {
-            log.warn("Databricks SQL exchange: invalid or unsupported resource URI for workspace extraction");
+            log.warn("Databricks {} exchange: invalid or unsupported resource URI for workspace extraction", providerLabel);
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
-        DatabricksSqlWorkspaceResolver.DatabricksSqlWorkspace ws = resolved.get();
+        DatabricksWorkspaceResolver.DatabricksWorkspace ws = resolved.get();
         String oauthScope = StringUtils.trimToNull(config.oauthScope());
         if (oauthScope == null) {
-            log.warn("Databricks SQL exchange: oauth-scope is blank");
+            log.warn("Databricks {} exchange: oauth-scope is blank", providerLabel);
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
         if (scopeContainsOfflineAccess(oauthScope)) {
-            log.warn("Databricks SQL exchange: offline_access is not allowed in configured oauth-scope");
+            log.warn("Databricks {} exchange: offline_access is not allowed in configured oauth-scope", providerLabel);
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
 
@@ -104,11 +114,10 @@ public class TokenExchangeServiceDatabricksSqlImpl implements TokenExchangeServi
         String body = buildFormBody(idToken, oauthScope);
 
         long startNanos = System.nanoTime();
-        String providerLabel = OauthProviderLabel.DATABRICKS_SQL;
         String region = metricsRegionProvider.primaryRegion();
         try (var ignored = UpstreamHttpCallLabels.withLabels(providerLabel, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
-            DatabricksSqlTokenClient.DatabricksTokenHttpResponse response =
-                    databricksSqlTokenClient.postForm(URI.create(tokenUrl), body);
+            DatabricksTokenClient.DatabricksTokenHttpResponse response =
+                    databricksTokenClient.postForm(URI.create(tokenUrl), body);
             double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
             oauthProxyMetrics.recordUpstreamRequest(
                     providerLabel, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN, response.statusCode(), region, seconds);
@@ -116,7 +125,8 @@ public class TokenExchangeServiceDatabricksSqlImpl implements TokenExchangeServi
             String requestId = response.requestId().orElse(null);
             if (response.statusCode() != 200) {
                 log.warn(
-                        "Databricks SQL token exchange failed: status={} workspaceHost={} scope={} requestId={} bodySnippet={}",
+                        "Databricks {} token exchange failed: status={} workspaceHost={} scope={} requestId={} bodySnippet={}",
+                        providerLabel,
                         response.statusCode(),
                         ws.hostname(),
                         oauthScope,
@@ -127,15 +137,16 @@ public class TokenExchangeServiceDatabricksSqlImpl implements TokenExchangeServi
 
             DatabricksTokenJson parsed = objectMapper.readValue(response.body(), DatabricksTokenJson.class);
             if (parsed == null || StringUtils.isBlank(parsed.accessToken)) {
-                log.warn("Databricks SQL exchange: success status but missing access_token workspaceHost={} requestId={}",
-                        ws.hostname(), requestId);
+                log.warn("Databricks {} exchange: success status but missing access_token workspaceHost={} requestId={}",
+                        providerLabel, ws.hostname(), requestId);
                 return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
             }
             long ttl = parsed.expiresIn != null && parsed.expiresIn > 0 ? parsed.expiresIn : DEFAULT_EXPIRES_SECONDS;
             String returnedScope = StringUtils.isNotBlank(parsed.scope) ? parsed.scope.trim() : oauthScope;
             TokenWrapper out = new TokenWrapper(null, null, null, parsed.accessToken, null, ttl);
             log.info(
-                    "Databricks SQL token exchange ok: workspaceHost={} scope={} expiresIn={} requestId={}",
+                    "Databricks {} token exchange ok: workspaceHost={} scope={} expiresIn={} requestId={}",
+                    providerLabel,
                     ws.hostname(),
                     returnedScope,
                     ttl,
@@ -145,7 +156,7 @@ public class TokenExchangeServiceDatabricksSqlImpl implements TokenExchangeServi
             double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
             oauthProxyMetrics.recordUpstreamRequest(
                     providerLabel, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN, 0, region, seconds);
-            log.warn("Databricks SQL token exchange error: workspaceHost={} message={}", ws.hostname(), e.getMessage());
+            log.warn("Databricks {} token exchange error: workspaceHost={} message={}", providerLabel, ws.hostname(), e.getMessage());
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
     }
@@ -180,7 +191,7 @@ public class TokenExchangeServiceDatabricksSqlImpl implements TokenExchangeServi
 
     @Override
     public AuthorizationResultDO getAccessTokenFromResourceAuthorizationServerWithClientCredentials(TokenExchangeDO tokenExchangeDO) {
-        throw new UnsupportedOperationException("Databricks SQL exchange does not support client credentials");
+        throw new UnsupportedOperationException("Databricks exchange does not support client credentials");
     }
 
     @Override

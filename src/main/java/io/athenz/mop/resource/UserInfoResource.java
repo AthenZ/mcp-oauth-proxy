@@ -8,8 +8,12 @@ package io.athenz.mop.resource;
 
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
+import io.athenz.mop.service.OktaTokens;
+import io.athenz.mop.service.UpstreamRefreshException;
+import io.athenz.mop.service.UpstreamRefreshService;
 import io.athenz.mop.store.TokenStore;
 import io.athenz.mop.store.impl.aws.CrossRegionTokenStoreFallback;
+import io.athenz.mop.telemetry.ExchangeStep;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
 import io.athenz.mop.telemetry.OauthProviderLabel;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
@@ -34,6 +38,7 @@ import org.slf4j.LoggerFactory;
 @Path("/userinfo")
 public class UserInfoResource {
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+    private static final long TOKEN_STORE_TTL_GRACE_SECONDS = 300L;
 
     @Inject
     TokenStore tokenStore;
@@ -50,8 +55,14 @@ public class UserInfoResource {
     @Inject
     TelemetryRequestContext telemetryRequestContext;
 
+    @Inject
+    UpstreamRefreshService upstreamRefreshService;
+
     @ConfigProperty(name = "server.cross-region-fallback.region")
     Optional<String> fallbackRegionConfig;
+
+    @ConfigProperty(name = "server.athenz.user-prefix", defaultValue = "")
+    String userPrefix;
 
     @GET
     @Path("/")
@@ -130,26 +141,22 @@ public class UserInfoResource {
                 ? crossRegionFallback.getUserToken(user, AudienceConstants.PROVIDER_OKTA)
                 : tokenStore.getUserToken(user, AudienceConstants.PROVIDER_OKTA);
 
-        if (oktaToken == null) {
-            log.error("Okta token not found for user: {}", user);
-            return finishUserinfo(startNanos, providerLabel, false, 401, "server_error", "okta_row_missing",
+        String idToken = oktaToken != null ? oktaToken.idToken() : null;
+
+        if (idToken == null || idToken.isEmpty()) {
+            log.info("Okta id_token unavailable for user: {} (row={}); attempting upstream refresh",
+                    user, oktaToken != null ? "present" : "missing");
+            oktaToken = tryRefreshOktaToken(user);
+            idToken = oktaToken != null ? oktaToken.idToken() : null;
+        }
+
+        if (idToken == null || idToken.isEmpty()) {
+            log.error("Okta id_token still unavailable after refresh attempt for user: {}", user);
+            return finishUserinfo(startNanos, providerLabel, false, 401, "server_error", "okta_upstream_refresh_failed",
                     Response.status(Response.Status.UNAUTHORIZED)
                             .entity(Map.of(
                                     "error", "server_error",
                                     "error_description", "Okta token record not found"
-                            ))
-                            .type(MediaType.APPLICATION_JSON)
-                            .build());
-        }
-
-        String idToken = oktaToken.idToken();
-        if (idToken == null || idToken.isEmpty()) {
-            log.error("id_token is missing in Okta record for user: {}", user);
-            return finishUserinfo(startNanos, providerLabel, false, 401, "server_error", "id_token_missing",
-                    Response.status(Response.Status.UNAUTHORIZED)
-                            .entity(Map.of(
-                                    "error", "server_error",
-                                    "error_description", "id_token not available"
                             ))
                             .type(MediaType.APPLICATION_JSON)
                             .build());
@@ -167,6 +174,56 @@ public class UserInfoResource {
         oauthProxyMetrics.recordUserinfoDuration(oauthProvider, success, userinfoFailureReason, seconds);
         oauthProxyMetrics.recordUserinfoRequest(oauthProvider, success, httpStatus, errorType, userinfoFailureReason);
         return response;
+    }
+
+    /**
+     * Attempt to refresh the Okta id_token via the centralized upstream refresh store.
+     * Uses the same distributed lock and optimistic versioning as the /token refresh_token grant.
+     *
+     * @return refreshed Okta TokenWrapper (stored in token store), or null on any failure
+     */
+    private TokenWrapper tryRefreshOktaToken(String user) {
+        long t0 = System.nanoTime();
+        try {
+            String subject = (userPrefix != null && !userPrefix.isEmpty() && user.startsWith(userPrefix))
+                    ? user.substring(userPrefix.length())
+                    : user;
+            String providerUserId = AudienceConstants.PROVIDER_OKTA + "#" + subject;
+            OktaTokens oktaTokens = upstreamRefreshService.refreshUpstream(providerUserId);
+            if (oktaTokens == null || oktaTokens.idToken() == null || oktaTokens.idToken().isEmpty()) {
+                log.warn("Upstream Okta refresh returned no id_token for user: {}", user);
+                recordUserinfoUpstreamRefresh(t0, false);
+                return null;
+            }
+            long ttlSec = oktaTokens.expiresIn() > 0 ? oktaTokens.expiresIn() : 3600L;
+            long absoluteTtl = Instant.now().getEpochSecond() + ttlSec + TOKEN_STORE_TTL_GRACE_SECONDS;
+            TokenWrapper refreshed = new TokenWrapper(
+                    user,
+                    AudienceConstants.PROVIDER_OKTA,
+                    oktaTokens.idToken(),
+                    oktaTokens.accessToken(),
+                    oktaTokens.refreshToken(),
+                    absoluteTtl
+            );
+            tokenStore.storeUserToken(user, AudienceConstants.PROVIDER_OKTA, refreshed);
+            log.info("Stored refreshed Okta tokens for user: {} via /userinfo upstream refresh", user);
+            recordUserinfoUpstreamRefresh(t0, true);
+            return refreshed;
+        } catch (UpstreamRefreshException e) {
+            log.warn("Upstream Okta refresh failed for user {}: {}", user, e.getMessage());
+            recordUserinfoUpstreamRefresh(t0, false);
+            return null;
+        } catch (IllegalStateException e) {
+            log.warn("Could not acquire upstream refresh lock for user {}: {}", user, e.getMessage());
+            recordUserinfoUpstreamRefresh(t0, false);
+            return null;
+        }
+    }
+
+    private void recordUserinfoUpstreamRefresh(long startNanos, boolean success) {
+        double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
+        oauthProxyMetrics.recordExchangeStep(ExchangeStep.UPSTREAM_REFRESH, OauthProviderLabel.OKTA, success,
+                success ? null : "unauthorized", "", metricsRegionProvider.primaryRegion(), seconds);
     }
 
     /**

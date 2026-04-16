@@ -36,6 +36,7 @@ class ConfigServiceTest {
 
     /** Fake host for wildcard SQL MCP tests (not a real deployment). */
     private static final String DATABRICKS_SQL_MCP_BASE = "https://databricks-mcp.gateway.test:4444/v1/databricks-sql";
+    private static final String DATABRICKS_VS_MCP_BASE = "https://databricks-mcp.gateway.test:4444/v1/databricks-vector-search";
 
     @Mock
     private ResourceConfig resourceConfig;
@@ -302,5 +303,48 @@ class ConfigServiceTest {
         configService.init();
 
         assertNull(configService.getResourceMeta("https://databricks-mcp.gateway.test:4444/v1/other-sql/foo/mcp"));
+    }
+
+    @Test
+    void testGlobToRegex_MatchesDatabricksVectorSearchGatewayPath() {
+        Pattern p = ConfigService.globToRegex(DATABRICKS_VS_MCP_BASE + "/*/*/*/mcp");
+        String concrete = DATABRICKS_VS_MCP_BASE + "/dbc-44743f95-b8ca/my_catalog/my_schema/mcp";
+        assertTrue(p.matcher(concrete).matches());
+        assertFalse(p.matcher(DATABRICKS_VS_MCP_BASE + "/dbc-44743f95-b8ca/mcp").matches());
+        assertFalse(p.matcher(DATABRICKS_VS_MCP_BASE + "/dbc-44743f95-b8ca/catalog/mcp").matches());
+        assertFalse(p.matcher(DATABRICKS_VS_MCP_BASE + "/dbc-44743f95-b8ca/cat/sch/extra/mcp").matches());
+    }
+
+    @Test
+    void testGetResourceMeta_VectorSearchWildcardMapping_ResolvesAndCaches() {
+        ResourceConfig.ResourceMapping mapping = mock(ResourceConfig.ResourceMapping.class);
+        ResourceConfig.TokenConfig tokenConfig = mock(ResourceConfig.TokenConfig.class);
+        ResourceConfig.JAGConfig jagConfig = mock(ResourceConfig.JAGConfig.class);
+
+        when(mapping.uri()).thenReturn(DATABRICKS_VS_MCP_BASE + "/*/*/*/mcp");
+        when(mapping.scopes()).thenReturn(Collections.singletonList("s1"));
+        when(mapping.domain()).thenReturn("dom-vs");
+        when(mapping.token()).thenReturn(tokenConfig);
+        when(tokenConfig.idp()).thenReturn("idp-vs");
+        when(tokenConfig.as()).thenReturn("databricks-vector-search");
+        when(tokenConfig.audience()).thenReturn(Optional.of("databricks-vector-search"));
+        when(tokenConfig.jag()).thenReturn(jagConfig);
+        when(jagConfig.enabled()).thenReturn(false);
+        when(jagConfig.issuer()).thenReturn("okta");
+
+        when(resourceConfig.resourceMapping()).thenReturn(Collections.singletonList(mapping));
+        when(tokenExchangeServersConfig.endpoints()).thenReturn(Collections.emptyList());
+
+        configService.init();
+
+        String resource = DATABRICKS_VS_MCP_BASE + "/dbc-44743f95-b8ca/my_catalog/my_schema/mcp";
+        ResourceMeta first = configService.getResourceMeta(resource);
+        ResourceMeta second = configService.getResourceMeta(resource);
+
+        assertNotNull(first);
+        assertSame(first, second);
+        assertEquals("dom-vs", first.domain());
+        assertEquals("databricks-vector-search", first.authorizationServer());
+        assertEquals("databricks-vector-search", first.audience());
     }
 }

@@ -50,6 +50,13 @@ class OauthProviderLabelTest {
     }
 
     @Test
+    void normalize_databricksProviders_preservedLowercase() {
+        assertEquals(OauthProviderLabel.DATABRICKS_SQL, OauthProviderLabel.normalize("Databricks-Sql"));
+        assertEquals(OauthProviderLabel.DATABRICKS_VECTOR_SEARCH, OauthProviderLabel.normalize("Databricks-Vector-Search"));
+        assertEquals(OauthProviderLabel.DATABRICKS_VECTOR_SEARCH, OauthProviderLabel.normalize("DATABRICKS-VECTOR-SEARCH"));
+    }
+
+    @Test
     void normalize_unlistedProvider_returnsTrimmedLowercase() {
         assertEquals("custom-idp", OauthProviderLabel.normalize("custom-idp"));
         assertEquals("my_tenant_okta", OauthProviderLabel.normalize("  MY_TENANT_OKTA  "));

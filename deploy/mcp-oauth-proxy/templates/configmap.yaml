@@ -351,6 +351,12 @@ data:
           resource-path-prefix: {{ $dbxSql.resourcePathPrefix | default "/v1/databricks-sql/" | quote }}
           workspace-segment-pattern: {{ $dbxSql.workspaceSegmentPattern | default "^dbc-[a-zA-Z0-9.-]+$" | quote }}
           oauth-scope: {{ $dbxSql.oauthScope | default "sql" | quote }}
+        {{- $dbxVs := .Values.application.tokenExchange.databricksVectorSearch | default (dict) }}
+        databricks-vector-search:
+          workspace-host-template: {{ $dbxVs.workspaceHostTemplate | default "https://%s.cloud.databricks.com" | quote }}
+          resource-path-prefix: {{ $dbxVs.resourcePathPrefix | default "/v1/databricks-vector-search/" | quote }}
+          workspace-segment-pattern: {{ $dbxVs.workspaceSegmentPattern | default "^dbc-[a-zA-Z0-9.-]+$" | quote }}
+          oauth-scope: {{ $dbxVs.oauthScope | default "vector-search" | quote }}
         oktaServiceTypeApp:
           auth-server-url: {{ .Values.application.oktaServiceTypeApp.endpoint | quote }}
           client-id: {{ .Values.application.oktaServiceTypeApp.clientId | quote }}

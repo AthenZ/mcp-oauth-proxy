@@ -28,7 +28,7 @@ import java.util.Optional;
  * HTTP POST to Databricks workspace OIDC token endpoint (form body).
  */
 @ApplicationScoped
-public class DatabricksSqlTokenClient {
+public class DatabricksTokenClient {
 
     public record DatabricksTokenHttpResponse(int statusCode, String body, Optional<String> requestId) {}
 
