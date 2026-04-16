@@ -35,6 +35,7 @@ import com.nimbusds.jose.JWSHeader;
 import com.nimbusds.jose.crypto.MACSigner;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
+import java.time.Instant;
 import java.util.Date;
 
 import java.util.ArrayList;
@@ -64,7 +65,8 @@ class TokenStoreDynamodbImplTest {
     private static final String TEST_SUBJECT = "test-subject";
     private static final String TEST_PROVIDER = "https://test-provider.com";
     private static final String TEST_REFRESH_TOKEN = "refresh_token_value";
-    private static final Long TEST_TTL = 1735311600L;
+    private static final Long TEST_TTL = Instant.now().getEpochSecond() + 3600L;
+    private static final Long EXPIRED_TTL = Instant.now().getEpochSecond() - 60L;
 
     private TokenWrapper testToken;
     private String testIdToken;
@@ -313,8 +315,9 @@ class TokenStoreDynamodbImplTest {
         // Arrange
         String user1 = "user.alice";
         String user2 = "user.bob";
-        TokenWrapper token1 = new TokenWrapper(user1, TEST_PROVIDER, "id1", "access1", "refresh1", 123456L);
-        TokenWrapper token2 = new TokenWrapper(user2, TEST_PROVIDER, "id2", "access2", "refresh2", 789012L);
+        long futureTtl = Instant.now().getEpochSecond() + 7200L;
+        TokenWrapper token1 = new TokenWrapper(user1, TEST_PROVIDER, "id1", "access1", "refresh1", futureTtl);
+        TokenWrapper token2 = new TokenWrapper(user2, TEST_PROVIDER, "id2", "access2", "refresh2", futureTtl);
 
         PutItemResponse putItemResponse = (PutItemResponse) PutItemResponse.builder()
                 .sdkHttpResponse(mockHttpResponse)
@@ -404,5 +407,80 @@ class TokenStoreDynamodbImplTest {
         // Assert
         assertNull(result);
         verify(dynamoDbClient).query(any(QueryRequest.class));
+    }
+
+    @Test
+    void testGetUserToken_ExpiredToken_ReturnsNullAndDeletes() {
+        Map<String, AttributeValue> returnedItem = new HashMap<>();
+        returnedItem.put(TokenTableAttribute.USER.attr(), AttributeValue.builder().s(TEST_USER).build());
+        returnedItem.put(TokenTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(TEST_PROVIDER).build());
+        returnedItem.put(TokenTableAttribute.ID_TOKEN.attr(), AttributeValue.builder().s(testIdToken).build());
+        returnedItem.put(TokenTableAttribute.ACCESS_TOKEN.attr(), AttributeValue.builder().s(testAccessToken).build());
+        returnedItem.put(TokenTableAttribute.REFRESH_TOKEN.attr(), AttributeValue.builder().s(TEST_REFRESH_TOKEN).build());
+        returnedItem.put(TokenTableAttribute.TTL.attr(), AttributeValue.builder().n(EXPIRED_TTL.toString()).build());
+
+        GetItemResponse getItemResponse = (GetItemResponse) GetItemResponse.builder()
+                .item(returnedItem)
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.getItem(any(GetItemRequest.class))).thenReturn(getItemResponse);
+
+        DeleteItemResponse deleteItemResponse = (DeleteItemResponse) DeleteItemResponse.builder()
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.deleteItem(any(DeleteItemRequest.class))).thenReturn(deleteItemResponse);
+
+        TokenWrapper result = tokenStore.getUserToken(TEST_USER, TEST_PROVIDER);
+
+        assertNull(result);
+        verify(dynamoDbClient).deleteItem(any(DeleteItemRequest.class));
+    }
+
+    @Test
+    void testGetUserTokenByAccessTokenHash_ExpiredToken_ReturnsNullAndDeletes() {
+        String accessTokenHash = JwtUtils.hashAccessToken(testAccessToken);
+        Map<String, AttributeValue> returnedItem = new HashMap<>();
+        returnedItem.put(TokenTableAttribute.USER.attr(), AttributeValue.builder().s(TEST_USER).build());
+        returnedItem.put(TokenTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(TEST_PROVIDER).build());
+        returnedItem.put(TokenTableAttribute.ID_TOKEN.attr(), AttributeValue.builder().s(testIdToken).build());
+        returnedItem.put(TokenTableAttribute.ACCESS_TOKEN.attr(), AttributeValue.builder().s(testAccessToken).build());
+        returnedItem.put(TokenTableAttribute.REFRESH_TOKEN.attr(), AttributeValue.builder().s(TEST_REFRESH_TOKEN).build());
+        returnedItem.put(TokenTableAttribute.TTL.attr(), AttributeValue.builder().n(EXPIRED_TTL.toString()).build());
+
+        List<Map<String, AttributeValue>> itemsList = new ArrayList<>();
+        itemsList.add(returnedItem);
+        QueryResponse queryResponse = (QueryResponse) QueryResponse.builder()
+                .items(itemsList)
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.query(any(QueryRequest.class))).thenReturn(queryResponse);
+
+        DeleteItemResponse deleteItemResponse = (DeleteItemResponse) DeleteItemResponse.builder()
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.deleteItem(any(DeleteItemRequest.class))).thenReturn(deleteItemResponse);
+
+        TokenWrapper result = tokenStore.getUserTokenByAccessTokenHash(accessTokenHash);
+
+        assertNull(result);
+        verify(dynamoDbClient).deleteItem(any(DeleteItemRequest.class));
+    }
+
+    @Test
+    void testIsExpired_PastTtl_ReturnsTrue() {
+        TokenWrapper expired = new TokenWrapper("u", "p", null, "a", null, Instant.now().getEpochSecond() - 10);
+        assertTrue(expired.isExpired());
+    }
+
+    @Test
+    void testIsExpired_FutureTtl_ReturnsFalse() {
+        TokenWrapper valid = new TokenWrapper("u", "p", null, "a", null, Instant.now().getEpochSecond() + 3600);
+        assertFalse(valid.isExpired());
+    }
+
+    @Test
+    void testIsExpired_NullTtl_ReturnsFalse() {
+        TokenWrapper noTtl = new TokenWrapper("u", "p", null, "a", null, null);
+        assertFalse(noTtl.isExpired());
     }
 }
