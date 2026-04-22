@@ -378,6 +378,16 @@ server:
         - mcp_user
       splunk-token-audience: mcp
       token-expires-on: "+1h"
+    grafana:
+      admin-token-secret-key: grafana-api-prod
+      token-name-prefix: "mcp."
+      seconds-to-live: 3600
+      cleanup-enabled: true
+    evaluate:
+      audience: ${EVALUATE_ZTS_AUDIENCE:evaluateplus.k8s.evaluate-elide-production}
+      scopes:
+        - openid
+        - ${EVALUATE_ZTS_SCOPE:evaluateplus.k8s:role.evaluate-mcp-user}
     databricks-sql:
       workspace-host-template: "https://%s.cloud.databricks.com"
       resource-path-prefix: "/v1/databricks-sql/"
@@ -396,6 +406,13 @@ server:
         - name: splunk
           endpoint: ${SPLUNK_MGMT_URL:https://localhost:8089}
           username-claim: short_id
+        - name: grafana
+          endpoint: ${GRAFANA_API_URL:https://yahooinc.grafana.net}
+          username-claim: short_id
+          service-account-id: ${GRAFANA_SERVICE_ACCOUNT_ID:}
+        - name: evaluate
+          endpoint: ${EVALUATE_MCP_URL:}
+          username-claim: short_id
 
   resources:
     resource-mapping:
@@ -408,3 +425,10 @@ server:
           jag:
             enabled:
             issuer:
+
+"%cleanup":
+  quarkus:
+    http:
+      host-enabled: false
+    arc:
+      remove-unused-beans: false

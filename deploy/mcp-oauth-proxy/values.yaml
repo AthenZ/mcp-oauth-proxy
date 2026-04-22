@@ -299,6 +299,30 @@ oidc:
       - mcp:write
       - mcp:tools:call
 
+cleanup:
+  enabled: true
+  defaults:
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    backoffLimit: 2
+    activeDeadlineSeconds: 600
+    restartPolicy: OnFailure
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+  jobs:
+    - name: grafana
+      enabled: true
+      schedule: "*/15 * * * *"
+    - name: splunk
+      enabled: false
+      schedule: "0 * * * *"
+
 healthCheck:
   enabled: true
   livenessProbe:

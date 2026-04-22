@@ -42,6 +42,8 @@ public final class OauthProviderLabel {
     public static final String DATABRICKS_SQL = "databricks-sql";
     public static final String DATABRICKS_VECTOR_SEARCH = "databricks-vector-search";
     public static final String SLACK = "slack";
+    public static final String GRAFANA = "grafana";
+    public static final String EVALUATE = "evaluate";
 
     private OauthProviderLabel() {
     }
@@ -55,7 +57,7 @@ public final class OauthProviderLabel {
             case OKTA, GLEAN, GITHUB, EMBRACE, GOOGLE_DRIVE, GOOGLE_DOCS, GOOGLE_SHEETS,
                     GOOGLE_SLIDES, GOOGLE_GMAIL, GOOGLE_CALENDAR, GOOGLE_TASKS, GOOGLE_CHAT, GOOGLE_FORMS,
                     GOOGLE_KEEP, GOOGLE_MEET, GOOGLE_CLOUD_PLATFORM, ATLASSIAN, ATHENZ, GOOGLE_MONITORING,
-                    GOOGLE_LOGGING, DATABRICKS_SQL, DATABRICKS_VECTOR_SEARCH, SLACK -> s;
+                    GOOGLE_LOGGING, DATABRICKS_SQL, DATABRICKS_VECTOR_SEARCH, SLACK, GRAFANA, EVALUATE -> s;
             case "gcp-monitoring" -> GOOGLE_MONITORING;
             case "gcp-logging" -> GOOGLE_LOGGING;
             default -> s;

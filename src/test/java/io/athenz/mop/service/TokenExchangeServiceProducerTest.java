@@ -53,7 +53,13 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceSplunkImpl tokenExchangeServiceSplunkImpl;
 
     @Mock
+    private TokenExchangeServiceGrafanaImpl tokenExchangeServiceGrafanaImpl;
+
+    @Mock
     private TokenExchangeServiceSlackImpl tokenExchangeServiceSlackImpl;
+
+    @Mock
+    private TokenExchangeServiceEvaluateImpl tokenExchangeServiceEvaluateImpl;
 
     @Mock
     private Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
@@ -124,6 +130,13 @@ class TokenExchangeServiceProducerTest {
     }
 
     @Test
+    void testGetTokenExchangeServiceImplementation_Grafana() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("grafana");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceGrafanaImpl, result);
+    }
+
+    @Test
     void testGetTokenExchangeServiceImplementation_DatabricksSql() {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("databricks-sql");
         assertNotNull(result);
@@ -163,6 +176,13 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("slack");
         assertNotNull(result);
         assertSame(tokenExchangeServiceSlackImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_Evaluate() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("evaluate");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceEvaluateImpl, result);
     }
 
     @ParameterizedTest

@@ -136,7 +136,6 @@ public class AuthorizeResource extends BaseResource {
                             "Invalid or missing resource"))
                     .build(), oauthClient, false, "invalid_request");
         }
-
         // Extract subject from authenticated key (OIDC IdToken)
         String subject = idToken != null ? idToken.getSubject() : accessToken.getSubject();
         if (subject == null || subject.isEmpty()) {
