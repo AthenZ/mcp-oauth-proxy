@@ -18,6 +18,7 @@ package io.athenz.mop.config;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithName;
 import java.util.List;
+import java.util.Optional;
 
 @ConfigMapping(prefix = "server.token-exchange.remote-servers")
 public interface TokenExchangeServersConfig {
@@ -27,5 +28,12 @@ public interface TokenExchangeServersConfig {
         String endpoint();
         @WithName("username-claim")
         String usernameClaim();
+
+        /**
+         * Optional provider-specific service-account identifier (e.g. Grafana Cloud service account id embedded in
+         * {@code /api/serviceaccounts/{saId}/tokens}). Unused by providers that don't need it.
+         */
+        @WithName("service-account-id")
+        Optional<String> serviceAccountId();
     }
 }

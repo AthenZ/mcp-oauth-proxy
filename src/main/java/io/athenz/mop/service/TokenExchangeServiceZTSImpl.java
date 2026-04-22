@@ -37,6 +37,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 import java.lang.invoke.MethodHandles;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -134,10 +135,12 @@ public class TokenExchangeServiceZTSImpl implements TokenExchangeService {
         long t0 = System.nanoTime();
         log.info("getAccessTokenFromResourceAuthorizationServer: token exchange for Athenz id_token");
         try {
+            String audience = StringUtils.defaultIfBlank(
+                    tokenExchangeDO.namespace(), athenzTokenExchangeConfig.audience());
             OAuthTokenRequestBuilder builder = OAuthTokenRequestBuilder
                     .newBuilder(OAuthTokenRequestBuilder.OAUTH_GRANT_TOKEN_EXCHANGE)
                     .requestedTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_ID)
-                    .audience(athenzTokenExchangeConfig.audience())
+                    .audience(audience)
                     .roleNames(tokenExchangeDO.scopes())
                     .subjectTokenType(OAuthTokenRequestBuilder.OAUTH_TOKEN_TYPE_ID)
                     .subjectToken(tokenExchangeDO.tokenWrapper().idToken())

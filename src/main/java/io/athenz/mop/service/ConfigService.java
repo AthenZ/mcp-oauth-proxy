@@ -50,6 +50,8 @@ public class ConfigService {
 
     Map<String, String> remoteServerUsernameClaimMap = new HashMap<>();
 
+    Map<String, String> remoteServerServiceAccountIdMap = new HashMap<>();
+
     @PostConstruct
     void init() {
         for (ResourceConfig.ResourceMapping rm : resourceConfig.resourceMapping()) {
@@ -70,6 +72,7 @@ public class ConfigService {
         for (TokenExchangeServersConfig.RemoteServer rs : tokenExchangeServersConfig.endpoints()) {
             remoteServerMap.put(rs.name(), rs.endpoint());
             remoteServerUsernameClaimMap.put(rs.name(), rs.usernameClaim());
+            rs.serviceAccountId().ifPresent(saId -> remoteServerServiceAccountIdMap.put(rs.name(), saId));
         }
     }
 
@@ -79,6 +82,15 @@ public class ConfigService {
 
     public String getRemoteServerUsernameClaim(String key) {
         return remoteServerUsernameClaimMap.get(key);
+    }
+
+    /**
+     * @return provider-specific service-account id configured on the {@code remote-servers.endpoints[?name=key]}
+     * entry, or {@code null} when not set. Used by providers like Grafana whose token API is scoped to a
+     * service-account id.
+     */
+    public String getRemoteServerServiceAccountId(String key) {
+        return remoteServerServiceAccountIdMap.get(key);
     }
 
     public ResourceMeta getResourceMeta(String key) {

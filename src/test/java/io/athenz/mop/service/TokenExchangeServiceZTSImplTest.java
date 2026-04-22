@@ -586,6 +586,62 @@ class TokenExchangeServiceZTSImplTest {
     }
 
     @Test
+    void testGetAccessTokenFromResourceAuthorizationServer_IdTokenPath_UsesNamespaceAsAudience() {
+        List<String> scopes = Arrays.asList("scope1");
+        tokenExchangeDO = new TokenExchangeDO(
+                scopes,
+                "resource",
+                "evaluateplus.k8s.evaluate-elide-production",
+                "test-remote-server",
+                tokenWrapper,
+                RequestedZtsTokenType.ID_TOKEN
+        );
+
+        AccessTokenResponse mockResponse = new AccessTokenResponse();
+        mockResponse.setId_token("athenz-id-token-value");
+        mockResponse.setExpires_in(3600);
+        when(ztsClient.getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true))).thenReturn(mockResponse);
+
+        ArgumentCaptor<OAuthTokenRequestBuilder> captor = ArgumentCaptor.forClass(OAuthTokenRequestBuilder.class);
+
+        AuthorizationResultDO result = tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(tokenExchangeDO);
+
+        assertEquals(AuthResult.AUTHORIZED, result.authResult());
+        verify(ztsClient).getAccessToken(captor.capture(), eq(true));
+        String body = captor.getValue().getRequestBody();
+        assertTrue(body.contains("audience=evaluateplus.k8s.evaluate-elide-production"),
+                "audience should come from TokenExchangeDO.namespace; body=" + body);
+    }
+
+    @Test
+    void testGetAccessTokenFromResourceAuthorizationServer_IdTokenPath_FallsBackToAthenzAudienceWhenNamespaceBlank() {
+        List<String> scopes = Arrays.asList("scope1");
+        tokenExchangeDO = new TokenExchangeDO(
+                scopes,
+                "resource",
+                "   ",
+                "test-remote-server",
+                tokenWrapper,
+                RequestedZtsTokenType.ID_TOKEN
+        );
+
+        AccessTokenResponse mockResponse = new AccessTokenResponse();
+        mockResponse.setId_token("athenz-id-token-value");
+        mockResponse.setExpires_in(3600);
+        when(ztsClient.getAccessToken(any(OAuthTokenRequestBuilder.class), eq(true))).thenReturn(mockResponse);
+
+        ArgumentCaptor<OAuthTokenRequestBuilder> captor = ArgumentCaptor.forClass(OAuthTokenRequestBuilder.class);
+
+        AuthorizationResultDO result = tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(tokenExchangeDO);
+
+        assertEquals(AuthResult.AUTHORIZED, result.authResult());
+        verify(ztsClient).getAccessToken(captor.capture(), eq(true));
+        String body = captor.getValue().getRequestBody();
+        assertTrue(body.contains("audience=sys.auth.gcp"),
+                "audience should fall back to AthenzTokenExchangeConfig.audience(); body=" + body);
+    }
+
+    @Test
     void testGetAccessTokenFromResourceAuthorizationServer_IdTokenPath_NullIdToken_ReturnsUnauthorized() {
         List<String> scopes = Arrays.asList("scope1");
         tokenExchangeDO = new TokenExchangeDO(

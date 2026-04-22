@@ -57,6 +57,12 @@ class OauthProviderLabelTest {
     }
 
     @Test
+    void normalize_evaluate_preservedLowercase() {
+        assertEquals(OauthProviderLabel.EVALUATE, OauthProviderLabel.normalize("EVALUATE"));
+        assertEquals(OauthProviderLabel.EVALUATE, OauthProviderLabel.normalize(" Evaluate "));
+    }
+
+    @Test
     void normalize_unlistedProvider_returnsTrimmedLowercase() {
         assertEquals("custom-idp", OauthProviderLabel.normalize("custom-idp"));
         assertEquals("my_tenant_okta", OauthProviderLabel.normalize("  MY_TENANT_OKTA  "));

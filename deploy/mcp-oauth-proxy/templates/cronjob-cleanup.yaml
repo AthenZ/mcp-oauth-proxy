@@ -1,0 +1,114 @@
+{{/*
+Generic token-cleanup CronJob template. Emits one `batch/v1` CronJob per enabled entry in
+`.Values.cleanup.jobs`, all reusing the same Docker image and entrypoint as the serving Deployment.
+Dispatch into cleanup mode is driven purely by the `CRON_JOB_MODE=1` and `CRON_JOB_PROVIDER=<name>`
+env vars read by `io.athenz.mop.MopMain.run`; no args, no alternate image, no script wrapper.
+*/}}
+{{- if .Values.cleanup.enabled }}
+{{- $defaults := .Values.cleanup.defaults | default dict }}
+{{- range $job := .Values.cleanup.jobs }}
+{{- if $job.enabled }}
+{{- $merged := mergeOverwrite (deepCopy $defaults) $job }}
+{{- if not $merged.schedule }}
+{{- fail (printf "cleanup.jobs[%s]: 'schedule' is required (either on the job entry or under cleanup.defaults)" $job.name) }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ printf "%s-cleanup-%s" (include "mcp-oauth-proxy.fullname" $) $job.name | trunc 52 | trimSuffix "-" }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "mcp-oauth-proxy.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: cleanup
+    mcp.athenz.io/cleanup-provider: {{ $job.name | quote }}
+spec:
+  schedule: {{ $merged.schedule | quote }}
+  concurrencyPolicy: {{ $merged.concurrencyPolicy | default "Forbid" }}
+  successfulJobsHistoryLimit: {{ $merged.successfulJobsHistoryLimit | default 3 }}
+  failedJobsHistoryLimit: {{ $merged.failedJobsHistoryLimit | default 3 }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $merged.backoffLimit | default 2 }}
+      activeDeadlineSeconds: {{ $merged.activeDeadlineSeconds | default 600 }}
+      template:
+        metadata:
+          labels:
+            {{- include "mcp-oauth-proxy.selectorLabels" $ | nindent 12 }}
+            mcp.athenz.io/cleanup-provider: {{ $job.name | quote }}
+            athenz.io/service: {{ $.Values.athenz.service }}
+        spec:
+          restartPolicy: {{ $merged.restartPolicy | default "OnFailure" }}
+          serviceAccountName: {{ include "mcp-oauth-proxy.serviceAccountName" $ }}
+          securityContext:
+            {{- toYaml $.Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: cleanup
+              image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default $.Chart.AppVersion }}"
+              imagePullPolicy: {{ $.Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml $.Values.securityContext | nindent 16 }}
+              env:
+                - name: CRON_JOB_MODE
+                  value: "1"
+                - name: CRON_JOB_PROVIDER
+                  value: {{ $job.name | quote }}
+                - name: QUARKUS_CONFIG_LOCATIONS
+                  value: file:///deployments/config/application.yaml
+                - name: QUARKUS_PROFILE
+                  value: "{{ $.Values.application.environment }},cleanup"
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: CLOUD_ACCOUNT_ID
+                  value: {{ $.Values.application.cloudAccountId | quote }}
+              resources:
+                {{- toYaml ($merged.resources | default $.Values.resources) | nindent 16 }}
+              volumeMounts:
+                - name: tls-certificates
+                  mountPath: /var/tls
+                  readOnly: true
+                - name: athenz
+                  mountPath: /var/run/secrets/athenz.io
+                  readOnly: true
+                - name: config-volume
+                  mountPath: /deployments/config
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: cache
+                  mountPath: /home/quarkus/.cache
+          volumes:
+            - name: tls-certificates
+              secret:
+                secretName: {{ $.Values.application.tls.volume.secretName }}
+            - name: athenz
+              csi:
+                driver: csi.cert-manager.athenz.io
+                readOnly: true
+                volumeAttributes:
+                  csi.cert-manager.athenz.io/fs-group: {{ $.Values.athenz.fsGroup | quote }}
+            - name: config-volume
+              configMap:
+                name: {{ include "mcp-oauth-proxy.fullname" $ }}-config
+                defaultMode: 0755
+            - name: tmp
+              emptyDir: {}
+            - name: cache
+              emptyDir: {}
+          {{- with $.Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $.Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $.Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

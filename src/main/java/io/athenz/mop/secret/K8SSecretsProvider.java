@@ -55,6 +55,10 @@ public class K8SSecretsProvider implements CredentialsProvider {
     public static final String SECRET_DATA_KEY_SPLUNK_API_STAGE = "splunk-api-stage";
     public static final String SECRET_DATA_KEY_SPLUNK_API_PROD = "splunk-api-prod";
 
+    /** Kubernetes secret data keys for Grafana Cloud service-account admin tokens. */
+    public static final String SECRET_DATA_KEY_GRAFANA_API_STAGE = "grafana-api-stage";
+    public static final String SECRET_DATA_KEY_GRAFANA_API_PROD = "grafana-api-prod";
+
     /**
      * {@link #getCredentials} map key for the value read from {@link #SECRET_DATA_KEY_CLIENT_SECRET} (Okta OIDC
      * client secret).
@@ -97,6 +101,8 @@ public class K8SSecretsProvider implements CredentialsProvider {
         String oktaTokenExchangeClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_OKTA_TOKEN_EXCHANGE_CLIENT_SECRET);
         String splunkApiStage = decodeTrimmed(data, SECRET_DATA_KEY_SPLUNK_API_STAGE);
         String splunkApiProd = decodeTrimmed(data, SECRET_DATA_KEY_SPLUNK_API_PROD);
+        String grafanaApiStage = decodeTrimmed(data, SECRET_DATA_KEY_GRAFANA_API_STAGE);
+        String grafanaApiProd = decodeTrimmed(data, SECRET_DATA_KEY_GRAFANA_API_PROD);
 
         Map<String, String> map = new HashMap<>();
         map.put(CREDENTIALS_KEY_OKTA_CLIENT_SECRET, clientSecret);
@@ -108,6 +114,8 @@ public class K8SSecretsProvider implements CredentialsProvider {
         map.put(SECRET_DATA_KEY_OKTA_TOKEN_EXCHANGE_CLIENT_SECRET, oktaTokenExchangeClientSecret);
         map.put(SECRET_DATA_KEY_SPLUNK_API_STAGE, splunkApiStage);
         map.put(SECRET_DATA_KEY_SPLUNK_API_PROD, splunkApiProd);
+        map.put(SECRET_DATA_KEY_GRAFANA_API_STAGE, grafanaApiStage);
+        map.put(SECRET_DATA_KEY_GRAFANA_API_PROD, grafanaApiProd);
         return map;
     }
 

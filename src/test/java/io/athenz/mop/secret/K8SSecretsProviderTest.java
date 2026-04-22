@@ -47,6 +47,20 @@ class K8SSecretsProviderTest {
     }
 
     @Test
+    void credentialsMapFromData_includesGrafanaStageAndProd() {
+        Map<String, byte[]> data = new HashMap<>();
+        data.put(K8SSecretsProvider.SECRET_DATA_KEY_GRAFANA_API_STAGE,
+                "grafana-stage".getBytes(StandardCharsets.UTF_8));
+        data.put(K8SSecretsProvider.SECRET_DATA_KEY_GRAFANA_API_PROD,
+                "grafana-prod".getBytes(StandardCharsets.UTF_8));
+
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(data);
+
+        assertEquals("grafana-stage", m.get(K8SSecretsProvider.SECRET_DATA_KEY_GRAFANA_API_STAGE));
+        assertEquals("grafana-prod", m.get(K8SSecretsProvider.SECRET_DATA_KEY_GRAFANA_API_PROD));
+    }
+
+    @Test
     void credentialsMapFromData_trimsTrailingNewlineOnSplunkKeys() {
         Map<String, byte[]> data = new HashMap<>();
         data.put(

@@ -95,4 +95,16 @@ class ExchangedTokenUserinfoStoreProviderResolverTest {
                 AudienceConstants.PROVIDER_DATABRICKS_VECTOR_SEARCH,
                 resolver.resolve("https://evil.example/not-databricks/mcp", AudienceConstants.PROVIDER_DATABRICKS_VECTOR_SEARCH));
     }
+
+    @Test
+    void resolve_evaluate_returnsAudience() {
+        assertEquals(
+                AudienceConstants.PROVIDER_EVALUATE,
+                resolver.resolve("https://mcp-gateway.ouryahoo.com/v1/evaluate/mcp", AudienceConstants.PROVIDER_EVALUATE));
+    }
+
+    @Test
+    void storesExchangedTokenForUserinfo_includesEvaluate() {
+        assertEquals(true, AudienceConstants.storesExchangedTokenForUserinfo(AudienceConstants.PROVIDER_EVALUATE));
+    }
 }

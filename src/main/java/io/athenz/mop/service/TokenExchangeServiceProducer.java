@@ -69,7 +69,13 @@ public class TokenExchangeServiceProducer {
     TokenExchangeServiceSplunkImpl tokenExchangeServiceSplunkImpl;
 
     @Inject
+    TokenExchangeServiceGrafanaImpl tokenExchangeServiceGrafanaImpl;
+
+    @Inject
     TokenExchangeServiceSlackImpl tokenExchangeServiceSlackImpl;
+
+    @Inject
+    TokenExchangeServiceEvaluateImpl tokenExchangeServiceEvaluateImpl;
 
     private final Map<String, TokenExchangeService> googleWorkspaceServices = new HashMap<>();
     private final Map<String, TokenExchangeService> databricksServices = new HashMap<>();
@@ -113,7 +119,9 @@ public class TokenExchangeServiceProducer {
             case "athenz" -> tokenExchangeServiceZTSImpl;
             case "google-monitoring", "google-logging" -> tokenExchangeServiceGcpWorkforceImpl;
             case "splunk" -> tokenExchangeServiceSplunkImpl;
+            case "grafana" -> tokenExchangeServiceGrafanaImpl;
             case "slack" -> tokenExchangeServiceSlackImpl;
+            case "evaluate" -> tokenExchangeServiceEvaluateImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
         };
     }
