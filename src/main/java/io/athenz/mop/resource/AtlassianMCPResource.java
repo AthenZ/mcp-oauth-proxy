@@ -16,7 +16,7 @@
 package io.athenz.mop.resource;
 
 import io.athenz.mop.model.OAuth2AuthorizationRequest;
-import io.athenz.mop.service.AuthorizerService;
+import io.quarkus.oidc.AccessTokenCredential;
 import io.quarkus.oidc.RefreshToken;
 import io.quarkus.security.Authenticated;
 import jakarta.inject.Inject;
@@ -28,7 +28,6 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.lang.invoke.MethodHandles;
-import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,7 +40,7 @@ public class AtlassianMCPResource {
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
     @Inject
-    JsonWebToken accessToken;
+    AccessTokenCredential accessTokenCredential;
 
     @Inject
     RefreshToken refreshToken;
