@@ -107,4 +107,18 @@ class ExchangedTokenUserinfoStoreProviderResolverTest {
     void storesExchangedTokenForUserinfo_includesEvaluate() {
         assertEquals(true, AudienceConstants.storesExchangedTokenForUserinfo(AudienceConstants.PROVIDER_EVALUATE));
     }
+
+    @Test
+    void resolve_googleBigQuery_returnsAudience() {
+        assertEquals(
+                AudienceConstants.PROVIDER_GOOGLE_BIGQUERY,
+                resolver.resolve("https://mcp-gateway.ouryahoo.com/v1/gcp-bigquery/mcp", AudienceConstants.PROVIDER_GOOGLE_BIGQUERY));
+    }
+
+    @Test
+    void storesExchangedTokenForUserinfo_includesGcpWorkforceAudiences() {
+        assertEquals(true, AudienceConstants.storesExchangedTokenForUserinfo(AudienceConstants.PROVIDER_GOOGLE_MONITORING));
+        assertEquals(true, AudienceConstants.storesExchangedTokenForUserinfo(AudienceConstants.PROVIDER_GOOGLE_LOGGING));
+        assertEquals(true, AudienceConstants.storesExchangedTokenForUserinfo(AudienceConstants.PROVIDER_GOOGLE_BIGQUERY));
+    }
 }

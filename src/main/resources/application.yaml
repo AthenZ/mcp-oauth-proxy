@@ -411,7 +411,7 @@ server:
           username-claim: short_id
           service-account-id: ${GRAFANA_SERVICE_ACCOUNT_ID:}
         - name: evaluate
-          endpoint: ${EVALUATE_MCP_URL:}
+          endpoint: ${EVALUATE_MCP_URL:https://evaluate-elide-api.data.yahoo.com/}
           username-claim: short_id
 
   resources:

@@ -173,6 +173,25 @@ class ZMSServiceImplTest {
     }
 
     @Test
+    void testGetScopeForPrincipal_BigQueryRoleName_OnlyMatchingRoleIncluded() throws Exception {
+        String json =
+                "{\"resources\":[{\"assertions\":["
+                        + "{\"role\":\"bq-domain:role.gcp.fed.mcp.bigquery.user\","
+                        + "\"resource\":\"projects/p-bq/roles/fed.mcp.bigquery.user\","
+                        + "\"action\":\"gcp.assume_role\",\"effect\":\"ALLOW\"},"
+                        + "{\"role\":\"mon-domain:role.gcp.fed.mcp.monitoring.user\","
+                        + "\"resource\":\"projects/p-mon/roles/fed.mcp.monitoring.user\","
+                        + "\"action\":\"gcp.assume_role\",\"effect\":\"ALLOW\"}]}]}";
+
+        when(zmsAssumeRoleResourceClient.getAssumeRoleResourceJson("user.bq")).thenReturn(json);
+
+        GcpZmsPrincipalScope r = zmsService.getScopeForPrincipal("user.bq", "gcp.fed.mcp.bigquery.user");
+
+        assertEquals("bq-domain:role.gcp.fed.mcp.bigquery.user openid", r.scope());
+        assertEquals("p-bq", r.defaultBillingProject());
+    }
+
+    @Test
     void roleMarkersFromRaw_trimsAndSkipsBlanks() {
         assertEquals(List.of("role.a", "role.b"), ZMSServiceImpl.roleMarkersFromRaw(" a , , b "));
         assertTrue(ZMSServiceImpl.roleMarkersFromRaw("").isEmpty());

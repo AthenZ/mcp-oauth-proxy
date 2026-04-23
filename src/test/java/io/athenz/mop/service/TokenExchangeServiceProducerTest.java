@@ -123,6 +123,36 @@ class TokenExchangeServiceProducerTest {
     }
 
     @Test
+    void testGetTokenExchangeServiceImplementation_GoogleMonitoring() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-monitoring");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceGcpWorkforceImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_GoogleLogging() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-logging");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceGcpWorkforceImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_GoogleBigQuery() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-bigquery");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceGcpWorkforceImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_GcpWorkforceAudiences_SameInstance() {
+        TokenExchangeService monitoring = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-monitoring");
+        TokenExchangeService logging = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-logging");
+        TokenExchangeService bigquery = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-bigquery");
+        assertSame(monitoring, logging);
+        assertSame(monitoring, bigquery);
+    }
+
+    @Test
     void testGetTokenExchangeServiceImplementation_Splunk() {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("splunk");
         assertNotNull(result);

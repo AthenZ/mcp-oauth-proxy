@@ -117,7 +117,7 @@ public class TokenExchangeServiceProducer {
             case "okta" -> tokenExchangeServiceOktaImpl;
             case "glean" -> tokenExchangeServiceOktaImpl;
             case "athenz" -> tokenExchangeServiceZTSImpl;
-            case "google-monitoring", "google-logging" -> tokenExchangeServiceGcpWorkforceImpl;
+            case "google-monitoring", "google-logging", "google-bigquery" -> tokenExchangeServiceGcpWorkforceImpl;
             case "splunk" -> tokenExchangeServiceSplunkImpl;
             case "grafana" -> tokenExchangeServiceGrafanaImpl;
             case "slack" -> tokenExchangeServiceSlackImpl;

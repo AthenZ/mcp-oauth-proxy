@@ -47,6 +47,14 @@ class OauthProviderLabelTest {
     void normalize_gcpPathSlugs_mapToGoogleAudienceNames() {
         assertEquals(OauthProviderLabel.GOOGLE_MONITORING, OauthProviderLabel.normalize("gcp-monitoring"));
         assertEquals(OauthProviderLabel.GOOGLE_LOGGING, OauthProviderLabel.normalize("gcp-logging"));
+        assertEquals(OauthProviderLabel.GOOGLE_BIGQUERY, OauthProviderLabel.normalize("gcp-bigquery"));
+    }
+
+    @Test
+    void normalize_googleBigQueryAudience_preservedLowercase() {
+        assertEquals(OauthProviderLabel.GOOGLE_BIGQUERY, OauthProviderLabel.normalize("google-bigquery"));
+        assertEquals(OauthProviderLabel.GOOGLE_BIGQUERY, OauthProviderLabel.normalize("Google-BigQuery"));
+        assertEquals(OauthProviderLabel.GOOGLE_BIGQUERY, OauthProviderLabel.normalize("GOOGLE-BIGQUERY"));
     }
 
     @Test

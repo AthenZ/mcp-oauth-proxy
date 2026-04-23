@@ -12,9 +12,10 @@ import java.util.Locale;
  * Normalizes provider strings for the {@code oauth_provider} metric label: trim + lowercase.
  * Known IdPs map to canonical names; any other non-blank value is passed through (watch label cardinality).
  * <p>
- * GCP Monitoring/Logging MCPs use URL paths like {@code .../v1/gcp-monitoring/mcp}, but metrics use the
- * configured resource {@code audience} values {@code google-monitoring} and {@code google-logging}.
- * Path-style {@code gcp-monitoring} / {@code gcp-logging} inputs are aliased to those canonical names.
+ * GCP Monitoring/Logging/BigQuery MCPs use URL paths like {@code .../v1/gcp-monitoring/mcp}, but metrics
+ * use the configured resource {@code audience} values {@code google-monitoring}, {@code google-logging},
+ * and {@code google-bigquery}. Path-style {@code gcp-monitoring} / {@code gcp-logging} /
+ * {@code gcp-bigquery} inputs are aliased to those canonical names.
  */
 public final class OauthProviderLabel {
 
@@ -39,6 +40,7 @@ public final class OauthProviderLabel {
     public static final String ATHENZ = "athenz";
     public static final String GOOGLE_MONITORING = "google-monitoring";
     public static final String GOOGLE_LOGGING = "google-logging";
+    public static final String GOOGLE_BIGQUERY = "google-bigquery";
     public static final String DATABRICKS_SQL = "databricks-sql";
     public static final String DATABRICKS_VECTOR_SEARCH = "databricks-vector-search";
     public static final String SLACK = "slack";
@@ -57,9 +59,10 @@ public final class OauthProviderLabel {
             case OKTA, GLEAN, GITHUB, EMBRACE, GOOGLE_DRIVE, GOOGLE_DOCS, GOOGLE_SHEETS,
                     GOOGLE_SLIDES, GOOGLE_GMAIL, GOOGLE_CALENDAR, GOOGLE_TASKS, GOOGLE_CHAT, GOOGLE_FORMS,
                     GOOGLE_KEEP, GOOGLE_MEET, GOOGLE_CLOUD_PLATFORM, ATLASSIAN, ATHENZ, GOOGLE_MONITORING,
-                    GOOGLE_LOGGING, DATABRICKS_SQL, DATABRICKS_VECTOR_SEARCH, SLACK, GRAFANA, EVALUATE -> s;
+                    GOOGLE_LOGGING, GOOGLE_BIGQUERY, DATABRICKS_SQL, DATABRICKS_VECTOR_SEARCH, SLACK, GRAFANA, EVALUATE -> s;
             case "gcp-monitoring" -> GOOGLE_MONITORING;
             case "gcp-logging" -> GOOGLE_LOGGING;
+            case "gcp-bigquery" -> GOOGLE_BIGQUERY;
             default -> s;
         };
     }
