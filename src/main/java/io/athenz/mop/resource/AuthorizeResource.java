@@ -28,6 +28,7 @@ import io.athenz.mop.service.UpstreamRefreshService;
 import io.athenz.mop.telemetry.OauthClientLabel;
 import io.athenz.mop.telemetry.OauthProviderLabel;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.quarkus.oidc.AccessTokenCredential;
 import io.quarkus.oidc.IdToken;
 import io.quarkus.oidc.RefreshToken;
 import io.quarkus.oidc.UserInfo;
@@ -66,7 +67,7 @@ public class AuthorizeResource extends BaseResource {
     JsonWebToken idToken;
 
     @Inject
-    JsonWebToken accessToken;
+    AccessTokenCredential accessTokenCredential;
 
     @Inject
     RefreshToken refreshToken;
@@ -136,8 +137,9 @@ public class AuthorizeResource extends BaseResource {
                             "Invalid or missing resource"))
                     .build(), oauthClient, false, "invalid_request");
         }
-        // Extract subject from authenticated key (OIDC IdToken)
-        String subject = idToken != null ? idToken.getSubject() : accessToken.getSubject();
+        // Extract subject from authenticated key (OIDC IdToken). Fall back to userInfo
+        // when no id_token is present (the access token may be opaque and cannot be parsed here).
+        String subject = idToken != null ? idToken.getSubject() : (userInfo != null ? userInfo.getSubject() : null);
         if (subject == null || subject.isEmpty()) {
             log.error("Unable to extract subject from token");
             return recordAuthorizeRedirect(buildErrorRedirect(request.getRedirectUri(), request.getState(),
@@ -145,8 +147,20 @@ public class AuthorizeResource extends BaseResource {
                     "Unable to determine user identity"), oauthClient, false, "server_error");
         }
         ResourceMeta resourceMeta = configService.getResourceMeta(request.getResource());
+        if (resourceMeta == null) {
+            // Resource is not mapped to any configured MCP provider. Per RFC 8707 return 400
+            // with `invalid_target` so the client gets a structured OAuth error instead of a 500 / blank page.
+            log.warn("Unknown resource {} requested by client {}", request.getResource(), request.getClientId());
+            return recordAuthorizeRedirect(Response.status(Response.Status.BAD_REQUEST)
+                    .entity(OAuth2ErrorResponse.of(
+                            OAuth2ErrorResponse.ErrorCode.INVALID_TARGET,
+                            "Unknown or unregistered resource: " + request.getResource()))
+                    .type(MediaType.APPLICATION_JSON)
+                    .build(), oauthClient, false, "invalid_target");
+        }
 
-        String lookupKey = getUsername(userInfo, configService.getRemoteServerUsernameClaim(providerDefault), accessToken.getRawToken());
+        String rawAccessToken = accessTokenCredential != null ? accessTokenCredential.getToken() : null;
+        String lookupKey = getUsername(userInfo, configService.getRemoteServerUsernameClaim(providerDefault), rawAccessToken);
         String oidcRefreshToken = refreshToken != null ? refreshToken.getToken() : null;
         String refreshToStore = computeRefreshToStore(lookupKey, oidcRefreshToken);
         refreshToStore = preferCentralizedOktaUpstreamRefresh(subject, refreshToStore);
@@ -155,7 +169,7 @@ public class AuthorizeResource extends BaseResource {
         lookupKey,
         subject,
         idToken != null ? idToken.getRawToken() : null,
-        accessToken.getRawToken(),
+        rawAccessToken,
         refreshToStore,
         providerDefault);
         log.info("after storeToken call in AuthorizeResource Token issuer: {} subject: {} resourceMeta.idpServer: {}", providerDefault, subject,

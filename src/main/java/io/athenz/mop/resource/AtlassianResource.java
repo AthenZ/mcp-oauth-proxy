@@ -20,6 +20,7 @@ import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AuthCodeRegionResolver;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
+import io.quarkus.oidc.AccessTokenCredential;
 import io.quarkus.oidc.OidcSession;
 import io.quarkus.oidc.RefreshToken;
 import io.quarkus.oidc.UserInfo;
@@ -34,7 +35,6 @@ import jakarta.ws.rs.core.Response;
 import java.lang.invoke.MethodHandles;
 import java.util.Map;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,8 +50,9 @@ public class AtlassianResource extends BaseResource {
     @Inject
     AuthorizerService authorizerService;
 
+    // Use AccessTokenCredential (not JsonWebToken) so we tolerate opaque access tokens.
     @Inject
-    JsonWebToken accessToken;
+    AccessTokenCredential accessTokenCredential;
 
     @Inject
     RefreshToken refreshToken;
@@ -106,11 +107,12 @@ public class AtlassianResource extends BaseResource {
             TokenWrapper existing = authorizerService.getUserToken(lookupKey, PROVIDER);
             refreshToStore = (existing != null && existing.refreshToken() != null) ? existing.refreshToken() : null;
         }
+        String rawAccessToken = accessTokenCredential != null ? accessTokenCredential.getToken() : null;
         authorizerService.storeTokens(
             lookupKey,
             authorizationCode.getSubject(),
-            accessToken.getRawToken(),
-            accessToken.getRawToken(),
+            rawAccessToken,
+            rawAccessToken,
             refreshToStore,
             PROVIDER
         );
