@@ -16,6 +16,8 @@
 package io.athenz.mop.service;
 
 import io.athenz.mop.config.AthenzTokenExchangeConfig;
+import io.athenz.mop.config.GoogleWorkforceTokenExchangeConfig;
+import io.athenz.mop.config.GoogleWorkforceTokenExchangeConfig.ServiceConfig;
 import io.athenz.mop.model.AuthResult;
 import io.athenz.mop.model.GcpZmsPrincipalScope;
 import io.athenz.mop.model.AuthorizationResultDO;
@@ -33,15 +35,16 @@ import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.util.Arrays;
 import java.util.List;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Token exchange for GCP Monitoring and GCP Logging MCP: Okta id_token → ZMS scope →
- * Athenz id_token → Google STS access token. Same flow for both; Google scope is selected by audience.
- * {@code server.token-exchange.gcp-role-name} may list several comma-separated short role names;
- * ZMS assertions matching any of them are included in scope.
+ * Token exchange for GCP Workforce-backed MCPs (monitoring, logging, bigquery, ...): Okta id_token → ZMS scope →
+ * Athenz id_token → Google STS access token. Same flow for every audience; per-service scopes and role name(s)
+ * are resolved from {@code server.token-exchange.google-workforce.services.<audience>}. Each
+ * {@code gcp-role-name} entry may list several comma-separated short role names; ZMS assertions matching
+ * any of them are included in scope. Adding a new GCP MCP is a pure config change.
  */
 @ApplicationScoped
 public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeService {
@@ -49,6 +52,7 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
     private static final long DEFAULT_STS_TTL_SECONDS = 3600L;
+    private static final String DEFAULT_GCP_ROLE_NAME = "gcp.fed.mcp.user";
 
     @Inject
     ZMSServiceImpl zmsServiceImpl;
@@ -63,6 +67,9 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
     GoogleWorkforceTokenExchange googleWorkforceTokenExchange;
 
     @Inject
+    GoogleWorkforceTokenExchangeConfig googleWorkforceConfig;
+
+    @Inject
     ConfigService configService;
 
     @Inject
@@ -73,9 +80,6 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
 
     @Inject
     MetricsRegionProvider metricsRegionProvider;
-
-    @ConfigProperty(name = "server.token-exchange.gcp-role-name", defaultValue = "gcp.fed.mcp.user")
-    String gcpRoleName;
 
     @Override
     public AuthorizationResultDO getJWTAuthorizationGrantFromIdentityProvider(TokenExchangeDO tokenExchangeDO) {
@@ -100,10 +104,13 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
         String audience = resourceMeta.audience();
-        if (!AudienceConstants.PROVIDER_GOOGLE_MONITORING.equals(audience) && !AudienceConstants.PROVIDER_GOOGLE_LOGGING.equals(audience)) {
+        Map<String, ServiceConfig> services = googleWorkforceConfig.services();
+        ServiceConfig serviceConfig = services != null ? services.get(audience) : null;
+        if (serviceConfig == null) {
             log.warn("Google GCP exchange: unsupported audience: {}", audience);
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
+        String roleName = serviceConfig.gcpRoleName().orElse(DEFAULT_GCP_ROLE_NAME);
 
         Object shortIdObj = JwtUtils.getClaimFromToken(oktaIdToken, "short_id");
         String shortId = shortIdObj != null ? shortIdObj.toString().trim() : null;
@@ -112,7 +119,7 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
             return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
         }
         String roleMember = "user." + shortId;
-        GcpZmsPrincipalScope zmsScope = zmsServiceImpl.getScopeForPrincipal(roleMember, gcpRoleName);
+        GcpZmsPrincipalScope zmsScope = zmsServiceImpl.getScopeForPrincipal(roleMember, roleName);
         String scopeStr = zmsScope.scope();
         List<String> scopeList = (scopeStr != null && !scopeStr.isBlank())
                 ? Arrays.asList(scopeStr.split("\\s+"))
@@ -172,7 +179,7 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
 
     @Override
     public TokenWrapper refreshWithUpstreamToken(String upstreamRefreshToken) {
-        // Upstream for GCP Monitoring/Logging is Okta; refresh is performed by Okta exchange service.
+        // Upstream for GCP Workforce-backed MCPs is Okta; refresh is performed by the Okta exchange service.
         return null;
     }
 

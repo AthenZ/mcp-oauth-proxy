@@ -32,6 +32,7 @@ public final class AudienceConstants {
     public static final String PROVIDER_GLEAN = "glean";
     public static final String PROVIDER_GOOGLE_MONITORING = "google-monitoring";
     public static final String PROVIDER_GOOGLE_LOGGING = "google-logging";
+    public static final String PROVIDER_GOOGLE_BIGQUERY = "google-bigquery";
     public static final String PROVIDER_SPLUNK = "splunk";
     public static final String PROVIDER_GRAFANA = "grafana";
     public static final String PROVIDER_EVALUATE = "evaluate";
@@ -70,6 +71,7 @@ public final class AudienceConstants {
         return PROVIDER_GLEAN.equals(audience)
                 || PROVIDER_GOOGLE_MONITORING.equals(audience)
                 || PROVIDER_GOOGLE_LOGGING.equals(audience)
+                || PROVIDER_GOOGLE_BIGQUERY.equals(audience)
                 || PROVIDER_SPLUNK.equals(audience)
                 || PROVIDER_GRAFANA.equals(audience)
                 || PROVIDER_EVALUATE.equals(audience)

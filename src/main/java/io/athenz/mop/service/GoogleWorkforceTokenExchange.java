@@ -17,6 +17,7 @@ package io.athenz.mop.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.athenz.mop.config.GoogleWorkforceTokenExchangeConfig;
+import io.athenz.mop.config.GoogleWorkforceTokenExchangeConfig.ServiceConfig;
 import io.athenz.mop.model.GcpExchangeTokenRequest;
 import io.athenz.mop.model.GcpExchangeTokenResponse;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
@@ -40,6 +41,7 @@ import org.slf4j.LoggerFactory;
  * Exchanges Athenz id_token for Google STS access token via Workforce Pools.
  * STS only; no IAM Credentials API and no service account.
  * Uses the same request/response shape as ZTS GcpTokenProvider.getExchangeToken().
+ * Scopes are selected per audience from {@code server.token-exchange.google-workforce.services.<audience>.scopes}.
  */
 @ApplicationScoped
 public class GoogleWorkforceTokenExchange {
@@ -66,7 +68,7 @@ public class GoogleWorkforceTokenExchange {
      * Exchange Athenz id_token for Google STS access token.
      *
      * @param athenzIdToken raw Athenz ID token (JWT)
-     * @param audience      resource audience: {@link AudienceConstants#PROVIDER_GOOGLE_MONITORING} or {@link AudienceConstants#PROVIDER_GOOGLE_LOGGING} (selects scopes from config)
+     * @param audience      resource audience (must match a key under {@code google-workforce.services})
      * @return STS access token string, or null on failure
      */
     public String exchange(String athenzIdToken, String audience) {
@@ -81,11 +83,15 @@ public class GoogleWorkforceTokenExchange {
         if (athenzIdToken == null || athenzIdToken.isBlank() || audience == null || audience.isBlank()) {
             return null;
         }
-        List<String> scopeList = AudienceConstants.PROVIDER_GOOGLE_MONITORING.equals(audience)
-                ? config.scopesGoogleMonitoring()
-                : config.scopesGoogleLogging();
+        Map<String, ServiceConfig> services = config.services();
+        ServiceConfig serviceConfig = services != null ? services.get(audience) : null;
+        if (serviceConfig == null) {
+            log.warn("Google Workforce exchange: no service config for audience: {}", audience);
+            return null;
+        }
+        List<String> scopeList = serviceConfig.scopes();
         if (scopeList == null || scopeList.isEmpty()) {
-            log.warn("No scopes configured for audience: {}", audience);
+            log.warn("Google Workforce exchange: no scopes configured for audience: {}", audience);
             return null;
         }
         String scope = String.join(" ", scopeList);

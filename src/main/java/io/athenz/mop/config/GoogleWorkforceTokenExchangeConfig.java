@@ -18,7 +18,15 @@ package io.athenz.mop.config;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithName;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
+/**
+ * Generic per-service Google Workforce Pools configuration. Each entry under {@code services}
+ * is keyed by MCP audience (e.g. {@code google-monitoring}, {@code google-logging},
+ * {@code google-bigquery}) and carries its own {@code scopes} and {@code gcp-role-name}.
+ * Adding a new GCP MCP is a pure config change — no new code branch required.
+ */
 @ConfigMapping(prefix = "server.token-exchange.google-workforce")
 public interface GoogleWorkforceTokenExchangeConfig {
 
@@ -27,9 +35,12 @@ public interface GoogleWorkforceTokenExchangeConfig {
 
     String audience();
 
-    @WithName("scopes.google-monitoring")
-    List<String> scopesGoogleMonitoring();
+    Map<String, ServiceConfig> services();
 
-    @WithName("scopes.google-logging")
-    List<String> scopesGoogleLogging();
+    interface ServiceConfig {
+        List<String> scopes();
+
+        @WithName("gcp-role-name")
+        Optional<String> gcpRoleName();
+    }
 }

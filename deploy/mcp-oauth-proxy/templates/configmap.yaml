@@ -324,16 +324,19 @@ data:
         google-workforce:
           sts-token-url: {{ .Values.application.tokenExchange.googleWorkforce.stsTokenUrl | quote }}
           audience: {{ .Values.application.tokenExchange.googleWorkforce.audience | quote }}
-          scopes:
-            google-monitoring:
-            {{- range .Values.application.tokenExchange.googleWorkforce.scopes.googleMonitoring }}
-              - {{ . | quote }}
+          services:
+            {{- range $name, $svc := .Values.application.tokenExchange.googleWorkforce.services }}
+            {{- /* camelCase -> kebab-case: googleMonitoring -> google-monitoring, googleBigquery -> google-bigquery. Keys must use a single capital per word boundary. */ -}}
+            {{- $kebab := regexReplaceAll "([a-z0-9])([A-Z])" $name "$1-$2" | lower }}
+            {{ $kebab }}:
+              scopes:
+              {{- range $svc.scopes }}
+                - {{ . | quote }}
+              {{- end }}
+              {{- with $svc.gcpRoleName }}
+              gcp-role-name: {{ . | quote }}
+              {{- end }}
             {{- end }}
-            google-logging:
-            {{- range .Values.application.tokenExchange.googleWorkforce.scopes.googleLogging }}
-              - {{ . | quote }}
-            {{- end }}
-        gcp-role-name: {{ .Values.application.tokenExchange.gcpRoleName | default "gcp.fed.mcp.user" | quote }}
         {{- $splunk := .Values.application.tokenExchange.splunk | default (dict) }}
         splunk:
           admin-token-secret-key: {{ $splunk.adminTokenSecretKey | default "splunk-api-stage" | quote }}
@@ -405,7 +408,7 @@ data:
               username-claim: {{ $grafana.usernameClaim | default "short_id" | quote }}
               service-account-id: {{ $grafana.serviceAccountId | default "" | quote }}
             - name: evaluate
-              endpoint: {{ $evaluate.mcpEndpoint | default "" | quote }}
+              endpoint: {{ $evaluate.mcpEndpoint | default "https://evaluate-elide-api.data.yahoo.com/" | quote }}
               username-claim: {{ $evaluate.usernameClaim | default "short_id" | quote }}
             - name: slack
               endpoint: {{ .Values.oidc.slack.endpoint | quote }}
