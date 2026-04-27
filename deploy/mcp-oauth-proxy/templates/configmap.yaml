@@ -221,13 +221,13 @@ data:
       otel:
         enabled: {{ .Values.otel.enabled | default false }}
         metrics:
-          enabled: true
+          enabled: {{ .Values.otel.metrics.enabled | default true }}
         logs:
-          enabled: false
+          enabled: {{ .Values.otel.logs.enabled | default false }}
           handler:
-            enabled: false
+            enabled: {{ .Values.otel.logs.handler.enabled | default false }}
         instrument:
-          vertx-http: false
+          vertx-http: {{ .Values.otel.instrument.vertxHttp | default false }}
         resource:
           attributes: service.name={{ include "mcp-oauth-proxy.serviceVersion" . }},service.instance.id=${POD_NAME},cloud.account.id=${CLOUD_ACCOUNT_ID}
         exporter:
@@ -250,6 +250,18 @@ data:
 
     server:
       host: {{ .Values.application.host | quote }}
+      {{- with .Values.application.allowedRedirectUriPrefixes }}
+      allowed-redirect-uri-prefixes:
+        {{- range . }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.application.allowedRedirectUriExact }}
+      allowed-redirect-uri-exact:
+        {{- range . }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
       tls:
         certificate:
           path: {{ .Values.application.tls.certPath | quote }}
