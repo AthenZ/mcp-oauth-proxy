@@ -44,7 +44,9 @@ class RedirectUriValidatorTest {
         validator.allowedRedirectUriExact = Arrays.asList(
                 "https://claude.ai/api/mcp/auth_callback",
                 "https://claude.com/api/mcp/auth_callback",
-                "https://insiders.vscode.dev/redirect"
+                "https://insiders.vscode.dev/redirect",
+                "https://cursor.com/api/auth/mcp/oauth/callback",
+                "https://www.cursor.com/agents/mcp/oauth/callback"
         );
     }
 
@@ -300,6 +302,57 @@ class RedirectUriValidatorTest {
     }
 
     @Test
+    void testIsValidRedirectUri_ExactMatch_CursorComAllowed() {
+        assertTrue(validator.isValidRedirectUri("https://cursor.com/api/auth/mcp/oauth/callback"));
+        assertTrue(validator.isValidRedirectUri("https://cursor.com/api/auth/mcp/oauth/callback", "client-cursor"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_ExactMatch_CursorComRejectsNearMisses() {
+        // Subpaths must not match
+        assertFalse(validator.isValidRedirectUri("https://cursor.com/api/auth/mcp/oauth/callback/"));
+        assertFalse(validator.isValidRedirectUri("https://cursor.com/api/auth/mcp/oauth/callback/extra"));
+        // Query strings must not match (exact equality only)
+        assertFalse(validator.isValidRedirectUri("https://cursor.com/api/auth/mcp/oauth/callback?state=xyz"));
+        // Wrong path
+        assertFalse(validator.isValidRedirectUri("https://cursor.com/api/auth/mcp/oauth/other"));
+        assertFalse(validator.isValidRedirectUri("https://cursor.com/callback"));
+        // Wrong host / subdomain attack
+        assertFalse(validator.isValidRedirectUri("https://evil-cursor.com/api/auth/mcp/oauth/callback"));
+        assertFalse(validator.isValidRedirectUri("https://cursor.com.evil.com/api/auth/mcp/oauth/callback"));
+        assertFalse(validator.isValidRedirectUri("https://app.cursor.com/api/auth/mcp/oauth/callback"));
+        // Wrong scheme
+        assertFalse(validator.isValidRedirectUri("http://cursor.com/api/auth/mcp/oauth/callback"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_ExactMatch_CursorWwwAgentsAllowed() {
+        assertTrue(validator.isValidRedirectUri("https://www.cursor.com/agents/mcp/oauth/callback"));
+        assertTrue(validator.isValidRedirectUri("https://www.cursor.com/agents/mcp/oauth/callback", "client-cursor-agents"));
+    }
+
+    @Test
+    void testIsValidRedirectUri_ExactMatch_CursorWwwAgentsRejectsNearMisses() {
+        // Subpaths must not match
+        assertFalse(validator.isValidRedirectUri("https://www.cursor.com/agents/mcp/oauth/callback/"));
+        assertFalse(validator.isValidRedirectUri("https://www.cursor.com/agents/mcp/oauth/callback/extra"));
+        // Query strings must not match (exact equality only)
+        assertFalse(validator.isValidRedirectUri("https://www.cursor.com/agents/mcp/oauth/callback?state=xyz"));
+        // Wrong path
+        assertFalse(validator.isValidRedirectUri("https://www.cursor.com/agents/mcp/oauth/other"));
+        assertFalse(validator.isValidRedirectUri("https://www.cursor.com/callback"));
+        // Apex vs www must be tracked separately by exact-match list
+        // (apex cursor.com uses a different path, so this would also fail for that reason)
+        assertFalse(validator.isValidRedirectUri("https://cursor.com/agents/mcp/oauth/callback"));
+        // Wrong host / look-alikes
+        assertFalse(validator.isValidRedirectUri("https://evil-cursor.com/agents/mcp/oauth/callback"));
+        assertFalse(validator.isValidRedirectUri("https://www.cursor.com.evil.com/agents/mcp/oauth/callback"));
+        assertFalse(validator.isValidRedirectUri("https://app.www.cursor.com/agents/mcp/oauth/callback"));
+        // Wrong scheme
+        assertFalse(validator.isValidRedirectUri("http://www.cursor.com/agents/mcp/oauth/callback"));
+    }
+
+    @Test
     void testIsValidRedirectUri_ExactMatch_RejectsSubpathsAndNearMisses() {
         // Subpaths under exact URIs must not match
         assertFalse(validator.isValidRedirectUri("https://insiders.vscode.net/redirect/"));
@@ -317,7 +370,9 @@ class RedirectUriValidatorTest {
         List<String> uris = Arrays.asList(
                 "https://claude.ai/api/mcp/auth_callback",
                 "https://claude.com/api/mcp/auth_callback",
-                "https://insiders.vscode.dev/redirect"
+                "https://insiders.vscode.dev/redirect",
+                "https://cursor.com/api/auth/mcp/oauth/callback",
+                "https://www.cursor.com/agents/mcp/oauth/callback"
         );
         assertTrue(validator.validateRedirectUris(uris, "client-mcp"));
     }

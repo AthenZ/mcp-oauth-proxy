@@ -61,6 +61,14 @@ tolerations: []
 
 otel:
   enabled: false
+  metrics:
+    enabled: true
+  logs:
+    enabled: false
+    handler:
+      enabled: false
+  instrument:
+    vertxHttp: false
   collector:
     endpoint: http://otel-collector:4317
   instrumentation:
@@ -118,6 +126,20 @@ application:
   logging:
     level:
   host:
+  allowedRedirectUriPrefixes:
+    - http://localhost
+    - https://localhost
+    - http://127.0.0.1
+    - https://127.0.0.1
+    - cursor://anysphere.cursor-
+    - https://vscode.dev
+    - https://vscode.dev/
+  allowedRedirectUriExact:
+    - https://claude.ai/api/mcp/auth_callback
+    - https://claude.com/api/mcp/auth_callback
+    - https://insiders.vscode.dev/redirect
+    - https://cursor.com/api/auth/mcp/oauth/callback
+    - https://www.cursor.com/agents/mcp/oauth/callback
   zms:
     endpoint:
   zts:
