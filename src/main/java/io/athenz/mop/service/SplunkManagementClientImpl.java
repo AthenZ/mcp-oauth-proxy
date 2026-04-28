@@ -16,6 +16,9 @@
 package io.athenz.mop.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.athenz.mop.model.splunk.SplunkListTokenEntry;
+import io.athenz.mop.model.splunk.SplunkListTokensFeedResponse;
+import io.athenz.mop.model.splunk.SplunkTokenClaims;
 import io.athenz.mop.model.splunk.SplunkTokensFeedResponse;
 import io.athenz.mop.model.splunk.SplunkUsersFeedResponse;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -27,6 +30,7 @@ import java.net.URLEncoder;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -146,6 +150,90 @@ public class SplunkManagementClientImpl implements SplunkManagementClient {
         } catch (IOException e) {
             log.warn("Splunk mintToken error: {}", e.getMessage());
             return null;
+        }
+    }
+
+    @Override
+    public List<SplunkExpiredToken> listExpiredMcpTokens(
+            String mgmtBaseUrl, String adminBearer, String subjectPrefix, long nowEpochSeconds) {
+        String base = normalizeBase(mgmtBaseUrl);
+        if (base == null || StringUtils.isBlank(adminBearer) || StringUtils.isBlank(subjectPrefix)) {
+            return List.of();
+        }
+        try {
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(base + "/services/authorization/tokens?output_mode=json&count=0"))
+                    .header("Authorization", "Bearer " + adminBearer)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            HttpResponse<String> resp = splunkHttpExecutor.send(req);
+            int status = resp.statusCode();
+            if (status < 200 || status >= 300) {
+                log.warn("Splunk listExpiredMcpTokens failed: status={}", status);
+                return List.of();
+            }
+            SplunkListTokensFeedResponse feed =
+                    objectMapper.readValue(resp.body(), SplunkListTokensFeedResponse.class);
+            if (feed == null || feed.entry() == null || feed.entry().isEmpty()) {
+                return List.of();
+            }
+            List<SplunkExpiredToken> out = new ArrayList<>();
+            for (SplunkListTokenEntry e : feed.entry()) {
+                if (e == null || StringUtils.isBlank(e.name()) || e.content() == null) {
+                    continue;
+                }
+                SplunkTokenClaims claims = e.content().claims();
+                if (claims == null || claims.sub() == null) {
+                    continue;
+                }
+                if (!claims.sub().startsWith(subjectPrefix)) {
+                    continue;
+                }
+                if (claims.exp() >= nowEpochSeconds) {
+                    continue;
+                }
+                out.add(new SplunkExpiredToken(e.name(), claims.sub(), claims.exp()));
+            }
+            return out;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Splunk listExpiredMcpTokens error: {}", e.getMessage());
+            return List.of();
+        } catch (IOException e) {
+            log.warn("Splunk listExpiredMcpTokens error: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    @Override
+    public boolean deleteToken(String mgmtBaseUrl, String adminBearer, String tokenId) {
+        String base = normalizeBase(mgmtBaseUrl);
+        if (base == null || StringUtils.isBlank(adminBearer) || StringUtils.isBlank(tokenId)) {
+            return false;
+        }
+        try {
+            String path = "/services/authorization/tokens/" + urlEncodePath(tokenId) + "?output_mode=json";
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(base + path))
+                    .header("Authorization", "Bearer " + adminBearer)
+                    .header("Accept", "application/json")
+                    .DELETE()
+                    .build();
+            HttpResponse<String> resp = splunkHttpExecutor.send(req);
+            int status = resp.statusCode();
+            if (status < 200 || status >= 300) {
+                log.warn("Splunk deleteToken failed: status={} id={}", status, tokenId);
+                return false;
+            }
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Splunk deleteToken error id={}: {}", tokenId, e.getMessage());
+            return false;
+        } catch (IOException e) {
+            log.warn("Splunk deleteToken error id={}: {}", tokenId, e.getMessage());
+            return false;
         }
     }
 

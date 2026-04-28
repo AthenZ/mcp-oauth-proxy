@@ -264,6 +264,163 @@ class SplunkManagementClientImplTest {
         assertTrue(Thread.interrupted());
     }
 
+
+    @Test
+    void listExpiredMcpTokens_blankInputs_noHttpCall() throws Exception {
+        SplunkHttpExecutor exec = mock(SplunkHttpExecutor.class);
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertTrue(client.listExpiredMcpTokens("", BEARER, "mcp.", 100L).isEmpty());
+        assertTrue(client.listExpiredMcpTokens(BASE, "", "mcp.", 100L).isEmpty());
+        assertTrue(client.listExpiredMcpTokens(BASE, BEARER, "", 100L).isEmpty());
+        verify(exec, never()).send(any());
+    }
+
+    @Test
+    void listExpiredMcpTokens_hitsExpectedUrl() throws Exception {
+        SplunkHttpExecutor exec = req -> {
+            assertEquals("GET", req.method());
+            assertTrue(req.uri().toString().endsWith(
+                    "/services/authorization/tokens?output_mode=json&count=0"),
+                    "actual=" + req.uri());
+            return mockResponse(200, "{\"entry\":[]}");
+        };
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertTrue(client.listExpiredMcpTokens(BASE, BEARER, "mcp.", 100L).isEmpty());
+    }
+
+    @Test
+    void listExpiredMcpTokens_non2xx_returnsEmpty() throws Exception {
+        SplunkHttpExecutor exec = req -> mockResponse(500, "");
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertTrue(client.listExpiredMcpTokens(BASE, BEARER, "mcp.", 100L).isEmpty());
+    }
+
+    @Test
+    void listExpiredMcpTokens_filtersByPrefixAndExpiry() throws Exception {
+        // now=1000. Want only tokens whose sub starts with "mcp." AND exp<1000.
+        String json = "{\"entry\":["
+                + "{\"name\":\"id-keep1\",\"content\":{\"claims\":{\"sub\":\"mcp.alice\",\"exp\":900}}},"
+                + "{\"name\":\"id-livemcp\",\"content\":{\"claims\":{\"sub\":\"mcp.bob\",\"exp\":1500}}},"
+                + "{\"name\":\"id-otheruser\",\"content\":{\"claims\":{\"sub\":\"admin\",\"exp\":1}}},"
+                + "{\"name\":\"id-keep2\",\"content\":{\"claims\":{\"sub\":\"mcp.carol\",\"exp\":999}}},"
+                + "{\"name\":\"id-equalsexp\",\"content\":{\"claims\":{\"sub\":\"mcp.dan\",\"exp\":1000}}},"
+                + "{\"name\":\"id-noclaims\",\"content\":{}},"
+                + "{\"name\":\"id-blanksub\",\"content\":{\"claims\":{\"exp\":1}}},"
+                + "{\"name\":\"\",\"content\":{\"claims\":{\"sub\":\"mcp.x\",\"exp\":1}}}"
+                + "]}";
+        SplunkHttpExecutor exec = req -> mockResponse(200, json);
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+
+        List<SplunkManagementClient.SplunkExpiredToken> out =
+                client.listExpiredMcpTokens(BASE, BEARER, "mcp.", 1000L);
+
+        assertEquals(2, out.size());
+        assertEquals("id-keep1", out.get(0).id());
+        assertEquals("mcp.alice", out.get(0).sub());
+        assertEquals(900L, out.get(0).exp());
+        assertEquals("id-keep2", out.get(1).id());
+        assertEquals("mcp.carol", out.get(1).sub());
+    }
+
+    @Test
+    void listExpiredMcpTokens_invalidJson_returnsEmpty() throws Exception {
+        SplunkHttpExecutor exec = req -> mockResponse(200, "not-json");
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertTrue(client.listExpiredMcpTokens(BASE, BEARER, "mcp.", 1000L).isEmpty());
+    }
+
+    @Test
+    void listExpiredMcpTokens_ioException() throws Exception {
+        SplunkHttpExecutor exec = req -> {
+            throw new IOException("net");
+        };
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertTrue(client.listExpiredMcpTokens(BASE, BEARER, "mcp.", 1000L).isEmpty());
+    }
+
+    @Test
+    void listExpiredMcpTokens_interruptedException_restoresInterrupt() throws Exception {
+        SplunkHttpExecutor exec = req -> {
+            throw new InterruptedException("x");
+        };
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        Thread.interrupted();
+        assertTrue(client.listExpiredMcpTokens(BASE, BEARER, "mcp.", 1000L).isEmpty());
+        assertTrue(Thread.interrupted());
+    }
+
+    // ---------- deleteToken ----------
+
+    @Test
+    void deleteToken_blankInputs_noHttpCall() throws Exception {
+        SplunkHttpExecutor exec = mock(SplunkHttpExecutor.class);
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertFalse(client.deleteToken("", BEARER, "id"));
+        assertFalse(client.deleteToken(BASE, "", "id"));
+        assertFalse(client.deleteToken(BASE, BEARER, ""));
+        verify(exec, never()).send(any());
+    }
+
+    @Test
+    void deleteToken_2xx_success() throws Exception {
+        SplunkHttpExecutor exec = req -> {
+            assertEquals("DELETE", req.method());
+            assertTrue(req.uri().toString().startsWith(
+                    BASE + "/services/authorization/tokens/abc-123"),
+                    "actual=" + req.uri());
+            assertTrue(req.uri().toString().contains("output_mode=json"));
+            return mockResponse(200, "");
+        };
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertTrue(client.deleteToken(BASE, BEARER, "abc-123"));
+    }
+
+    @Test
+    void deleteToken_404_returnsFalse() throws Exception {
+        SplunkHttpExecutor exec = req -> mockResponse(404, "");
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertFalse(client.deleteToken(BASE, BEARER, "id"));
+    }
+
+    @Test
+    void deleteToken_500_returnsFalse() throws Exception {
+        SplunkHttpExecutor exec = req -> mockResponse(500, "");
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertFalse(client.deleteToken(BASE, BEARER, "id"));
+    }
+
+    @Test
+    void deleteToken_ioException_returnsFalse() throws Exception {
+        SplunkHttpExecutor exec = req -> {
+            throw new IOException("net");
+        };
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertFalse(client.deleteToken(BASE, BEARER, "id"));
+    }
+
+    @Test
+    void deleteToken_interruptedException_restoresInterrupt() throws Exception {
+        SplunkHttpExecutor exec = req -> {
+            throw new InterruptedException("x");
+        };
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        Thread.interrupted();
+        assertFalse(client.deleteToken(BASE, BEARER, "id"));
+        assertTrue(Thread.interrupted());
+    }
+
+    @Test
+    void deleteToken_urlEncodesSpecialChars() throws Exception {
+        SplunkHttpExecutor exec = req -> {
+            // space + slash should be percent-encoded in the path segment
+            String uri = req.uri().toString();
+            assertTrue(uri.contains("/services/authorization/tokens/a%20b%2Fc?"), "actual=" + uri);
+            return mockResponse(200, "");
+        };
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        assertTrue(client.deleteToken(BASE, BEARER, "a b/c"));
+    }
+
     @SuppressWarnings("unchecked")
     private static HttpResponse<String> mockResponse(int status, String body) {
         HttpResponse<String> r = mock(HttpResponse.class);
