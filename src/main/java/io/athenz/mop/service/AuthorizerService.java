@@ -68,6 +68,9 @@ public class AuthorizerService {
     @Inject
     ExchangedTokenUserinfoStoreProviderResolver exchangedTokenUserinfoStoreProviderResolver;
 
+    @Inject
+    UserTokenRegionResolver userTokenRegionResolver;
+
     public void storeTokens(String lookupKey, JsonWebToken idToken, JsonWebToken accessToken, RefreshToken refreshToken, String provider) {
         String user = userPrefix + accessToken.getName();
         storeTokens(
@@ -95,14 +98,18 @@ public class AuthorizerService {
     }
 
     public TokenWrapper getUserToken(String lookupKey, String provider) {
-        return tokenStore.getUserToken(lookupKey, provider);
+        return userTokenRegionResolver
+                .resolveByUserProvider(lookupKey, provider, UserTokenRegionResolver.CALL_SITE_AUTHORIZER_GET_USER_TOKEN)
+                .token();
     }
 
     public AuthorizationResultDO authorize(String subject, String scopes, String resource) {
         log.info("check authorization for subject: {} scopes: {} resource: {}", subject, scopes, resource);
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
         String provider = resourceMeta != null ? resourceMeta.idpServer() : configService.getDefaultIDP();
-        TokenWrapper token = tokenStore.getUserToken(subject, provider);
+        TokenWrapper token = userTokenRegionResolver
+                .resolveByUserProvider(subject, provider, UserTokenRegionResolver.CALL_SITE_AUTHORIZE_USER_TOKEN)
+                .token();
 
         if (token == null) {
             return new AuthorizationResultDO(AuthResult.EXPIRED, null);
