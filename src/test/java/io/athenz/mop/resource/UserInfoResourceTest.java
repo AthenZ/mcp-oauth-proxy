@@ -28,8 +28,9 @@ import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.service.OktaTokens;
 import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
+import io.athenz.mop.service.UserTokenRegionResolver;
+import io.athenz.mop.service.UserTokenResolution;
 import io.athenz.mop.store.TokenStore;
-import io.athenz.mop.store.impl.aws.CrossRegionTokenStoreFallback;
 import io.athenz.mop.telemetry.ExchangeStep;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
 import io.athenz.mop.telemetry.OauthProviderLabel;
@@ -39,7 +40,6 @@ import jakarta.ws.rs.core.Response;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentMatchers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -47,7 +47,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.lang.reflect.Field;
 import java.util.Date;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -80,7 +79,7 @@ class UserInfoResourceTest {
     private TokenStore tokenStore;
 
     @Mock
-    private CrossRegionTokenStoreFallback crossRegionFallback;
+    private UserTokenRegionResolver userTokenRegionResolver;
 
     @Mock
     private OauthProxyMetrics oauthProxyMetrics;
@@ -104,10 +103,6 @@ class UserInfoResourceTest {
     @BeforeEach
     void setUp() throws Exception {
         lenient().when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
-        lenient().when(crossRegionFallback.isActive()).thenReturn(false);
-        Field f = UserInfoResource.class.getDeclaredField("fallbackRegionConfig");
-        f.setAccessible(true);
-        f.set(userInfoResource, Optional.empty());
         Field up = UserInfoResource.class.getDeclaredField("userPrefix");
         up.setAccessible(true);
         up.set(userInfoResource, USER_PREFIX);
@@ -115,6 +110,16 @@ class UserInfoResourceTest {
         long ttl = System.currentTimeMillis() / 1000 + 3600;
         tokenWrapper = new TokenWrapper(USER, PROVIDER, idToken, ACCESS_TOKEN, "refresh", ttl);
         oktaTokenWrapper = new TokenWrapper(USER, PROVIDER, idToken, null, null, ttl);
+    }
+
+    private void stubResolveByHash(TokenWrapper token, boolean fromFallback) {
+        lenient().when(userTokenRegionResolver.resolveByAccessTokenHash(anyString(), anyString()))
+                .thenReturn(new UserTokenResolution(token, fromFallback));
+    }
+
+    private void stubResolveByUserProvider(String user, String provider, TokenWrapper token, boolean fromFallback) {
+        lenient().when(userTokenRegionResolver.resolveByUserProvider(eq(user), eq(provider), anyString()))
+                .thenReturn(new UserTokenResolution(token, fromFallback));
     }
 
     private static String createIdToken(String sub) throws Exception {
@@ -137,7 +142,7 @@ class UserInfoResourceTest {
 
         assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
         assertErrorBody(response, "invalid_token", "Missing or invalid Authorization header");
-        verify(tokenStore, never()).getUserTokenByAccessTokenHash(ArgumentMatchers.any());
+        verify(userTokenRegionResolver, never()).resolveByAccessTokenHash(anyString(), anyString());
     }
 
     @Test
@@ -146,61 +151,51 @@ class UserInfoResourceTest {
 
         assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
         assertErrorBody(response, "invalid_token", "Missing or invalid Authorization header");
-        verify(tokenStore, never()).getUserTokenByAccessTokenHash(ArgumentMatchers.any());
+        verify(userTokenRegionResolver, never()).resolveByAccessTokenHash(anyString(), anyString());
     }
 
     @Test
     void getUserInfo_tokenFoundInPrimary_returns200() {
-        when(tokenStore.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(tokenWrapper);
-        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(oktaTokenWrapper);
+        stubResolveByHash(tokenWrapper, false);
+        stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, false);
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
 
         assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
-        verify(tokenStore, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
-        verify(crossRegionFallback, never()).getUserTokenByAccessTokenHash(ArgumentMatchers.any());
+        verify(userTokenRegionResolver, times(1)).resolveByAccessTokenHash(anyString(),
+                eq(UserTokenRegionResolver.CALL_SITE_USERINFO_TOKEN_LOOKUP));
+        verify(userTokenRegionResolver, times(1)).resolveByUserProvider(eq(USER), eq(PROVIDER),
+                eq(UserTokenRegionResolver.CALL_SITE_USERINFO_OKTA_LOOKUP));
     }
 
     @Test
     void getUserInfo_tokenFoundInFallback_returns200() {
-        when(tokenStore.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
-        when(crossRegionFallback.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(tokenWrapper);
-        when(crossRegionFallback.getUserToken(USER, PROVIDER)).thenReturn(oktaTokenWrapper);
+        stubResolveByHash(tokenWrapper, true);
+        stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, true);
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
 
         assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
-        verify(tokenStore, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
-        verify(crossRegionFallback, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
-        verify(crossRegionFallback, times(1)).getUserToken(USER, PROVIDER);
+        verify(userTokenRegionResolver, times(1)).resolveByAccessTokenHash(anyString(),
+                eq(UserTokenRegionResolver.CALL_SITE_USERINFO_TOKEN_LOOKUP));
+        verify(userTokenRegionResolver, times(1)).resolveByUserProvider(eq(USER), eq(PROVIDER),
+                eq(UserTokenRegionResolver.CALL_SITE_USERINFO_OKTA_LOOKUP));
     }
 
     @Test
     void getUserInfo_tokenNotFound_returns401() {
-        when(tokenStore.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
-        when(crossRegionFallback.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
+        stubResolveByHash(null, false);
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
 
         assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
         assertErrorBody(response, "invalid_token", "Token not found");
-        verify(tokenStore, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
-        verify(crossRegionFallback, times(1)).getUserTokenByAccessTokenHash(ArgumentMatchers.anyString());
+        verify(userTokenRegionResolver, times(1)).resolveByAccessTokenHash(anyString(),
+                eq(UserTokenRegionResolver.CALL_SITE_USERINFO_TOKEN_LOOKUP));
+        // The exhausted-metric emission lives inside UserTokenRegionResolver and is covered by
+        // UserTokenRegionResolverTest. UserInfoResource itself no longer records it.
         verify(oauthProxyMetrics, never()).recordCrossRegionFallbackExhausted(
                 anyString(), anyString(), anyString(), anyString(), anyInt(), anyString());
-    }
-
-    @Test
-    void getUserInfo_tokenNotFound_crossRegionActive_recordsExhaustedMetric() {
-        when(crossRegionFallback.isActive()).thenReturn(true);
-        when(tokenStore.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
-        when(crossRegionFallback.getUserTokenByAccessTokenHash(ArgumentMatchers.anyString())).thenReturn(null);
-
-        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
-
-        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
-        verify(oauthProxyMetrics, times(1)).recordCrossRegionFallbackExhausted(
-                eq("unknown"), eq("userinfo_token_lookup"), eq("us-east-1"), eq("unknown"), eq(401), eq("not_found"));
     }
 
     @Test
@@ -208,8 +203,8 @@ class UserInfoResourceTest {
         String dbProvider = "databricks-sql-dbc-abc123.cloud.databricks.com";
         long ttl = System.currentTimeMillis() / 1000 + 3600;
         TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
-        when(tokenStore.getUserTokenByAccessTokenHash(anyString())).thenReturn(dbToken);
-        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(null);
+        stubResolveByHash(dbToken, false);
+        stubResolveByUserProvider(USER, PROVIDER, null, false);
         when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
                 .thenReturn(new OktaTokens("new_at", "new_rt", idToken, 3600));
 
@@ -227,8 +222,8 @@ class UserInfoResourceTest {
         String dbProvider = "databricks-sql-dbc-abc123.cloud.databricks.com";
         long ttl = System.currentTimeMillis() / 1000 + 3600;
         TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
-        when(tokenStore.getUserTokenByAccessTokenHash(anyString())).thenReturn(dbToken);
-        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(null);
+        stubResolveByHash(dbToken, false);
+        stubResolveByUserProvider(USER, PROVIDER, null, false);
         when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
                 .thenThrow(new UpstreamRefreshException("token revoked"));
 
@@ -247,8 +242,8 @@ class UserInfoResourceTest {
         String dbProvider = "databricks-sql-dbc-abc123.cloud.databricks.com";
         long ttl = System.currentTimeMillis() / 1000 + 3600;
         TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
-        when(tokenStore.getUserTokenByAccessTokenHash(anyString())).thenReturn(dbToken);
-        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(null);
+        stubResolveByHash(dbToken, false);
+        stubResolveByUserProvider(USER, PROVIDER, null, false);
         when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
                 .thenThrow(new IllegalStateException("lock not acquired"));
 
@@ -268,8 +263,8 @@ class UserInfoResourceTest {
         long ttl = System.currentTimeMillis() / 1000 + 3600;
         TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
         TokenWrapper oktaNoIdToken = new TokenWrapper(USER, PROVIDER, null, "old_at", null, ttl);
-        when(tokenStore.getUserTokenByAccessTokenHash(anyString())).thenReturn(dbToken);
-        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(oktaNoIdToken);
+        stubResolveByHash(dbToken, false);
+        stubResolveByUserProvider(USER, PROVIDER, oktaNoIdToken, false);
         when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
                 .thenReturn(new OktaTokens("new_at", "new_rt", idToken, 3600));
 
@@ -288,8 +283,8 @@ class UserInfoResourceTest {
         long ttl = System.currentTimeMillis() / 1000 + 3600;
         TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
         TokenWrapper oktaNoIdToken = new TokenWrapper(USER, PROVIDER, null, "old_at", null, ttl);
-        when(tokenStore.getUserTokenByAccessTokenHash(anyString())).thenReturn(dbToken);
-        when(tokenStore.getUserToken(USER, PROVIDER)).thenReturn(oktaNoIdToken);
+        stubResolveByHash(dbToken, false);
+        stubResolveByUserProvider(USER, PROVIDER, oktaNoIdToken, false);
         when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
                 .thenThrow(new UpstreamRefreshException("no upstream token"));
 

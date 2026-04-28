@@ -52,4 +52,12 @@ public interface SplunkTokenExchangeConfig {
     @WithName("allowed-roles")
     @WithDefault("yahoo_user,mcp_user")
     List<String> allowedRoles();
+
+    /**
+     * Master switch for the Splunk expired-token cleanup CronJob bean ({@code SplunkTokenCleaner}).
+     * When false the cleaner pod is a no-op even if Kubernetes triggered the Job.
+     */
+    @WithName("cleanup-enabled")
+    @WithDefault("true")
+    boolean cleanupEnabled();
 }

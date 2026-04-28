@@ -67,8 +67,16 @@ class AuthorizerServiceTest {
     @Mock
     private ExchangedTokenUserinfoStoreProviderResolver exchangedTokenUserinfoStoreProviderResolver;
 
+    @Mock
+    private UserTokenRegionResolver userTokenRegionResolver;
+
     @InjectMocks
     private AuthorizerService authorizerService;
+
+    private void stubResolveByUserProvider(String user, String provider, TokenWrapper token, boolean fromFallback) {
+        when(userTokenRegionResolver.resolveByUserProvider(eq(user), eq(provider), anyString()))
+                .thenReturn(new UserTokenResolution(token, fromFallback));
+    }
 
     @BeforeEach
     void setUp() {
@@ -198,7 +206,7 @@ class AuthorizerServiceTest {
                 Instant.now().getEpochSecond() + 300
         );
 
-        when(tokenStore.getUserToken(lookupKey, provider)).thenReturn(expectedToken);
+        stubResolveByUserProvider(lookupKey, provider, expectedToken, false);
 
         // When
         TokenWrapper result = authorizerService.getUserToken(lookupKey, provider);
@@ -206,7 +214,8 @@ class AuthorizerServiceTest {
         // Then
         assertNotNull(result);
         assertEquals(expectedToken, result);
-        verify(tokenStore).getUserToken(lookupKey, provider);
+        verify(userTokenRegionResolver).resolveByUserProvider(eq(lookupKey), eq(provider),
+                eq(UserTokenRegionResolver.CALL_SITE_AUTHORIZER_GET_USER_TOKEN));
     }
 
     @Test
@@ -227,7 +236,7 @@ class AuthorizerServiceTest {
         );
 
         when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
-        when(tokenStore.getUserToken(subject, provider)).thenReturn(token);
+        stubResolveByUserProvider(subject, provider, token, false);
 
         // When
         AuthorizationResultDO result = authorizerService.authorize(subject, scopes, resource);
@@ -252,7 +261,7 @@ class AuthorizerServiceTest {
         );
 
         when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
-        when(tokenStore.getUserToken(subject, provider)).thenReturn(null);
+        stubResolveByUserProvider(subject, provider, null, false);
 
         // When
         AuthorizationResultDO result = authorizerService.authorize(subject, scopes, resource);
@@ -261,6 +270,38 @@ class AuthorizerServiceTest {
         assertNotNull(result);
         assertEquals(AuthResult.EXPIRED, result.authResult());
         assertNull(result.token());
+    }
+
+    @Test
+    void testAuthorize_TokenFoundOnlyInPeerRegion_ReturnsAuthorized() {
+        // Given - simulates DynamoDB Global Tables replication lag where the row was just written in
+        // the peer region; AuthorizerService.authorize must return AUTHORIZED, not EXPIRED.
+        String subject = "test-subject";
+        String scopes = "read write";
+        String resource = "https://api.example.com";
+        String provider = AudienceConstants.PROVIDER_OKTA;
+
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read", "write"), "domain1", provider, "as1", false, null, ""
+        );
+
+        TokenWrapper token = new TokenWrapper(
+                "user.testuser", provider, "id-token", "access-token", "refresh-token",
+                Instant.now().getEpochSecond() + 300
+        );
+
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        stubResolveByUserProvider(subject, provider, token, true);
+
+        // When
+        AuthorizationResultDO result = authorizerService.authorize(subject, scopes, resource);
+
+        // Then
+        assertNotNull(result);
+        assertEquals(AuthResult.AUTHORIZED, result.authResult());
+        assertEquals(token, result.token());
+        verify(userTokenRegionResolver).resolveByUserProvider(eq(subject), eq(provider),
+                eq(UserTokenRegionResolver.CALL_SITE_AUTHORIZE_USER_TOKEN));
     }
 
     @Test
@@ -278,7 +319,7 @@ class AuthorizerServiceTest {
 
         when(configService.getResourceMeta(resource)).thenReturn(null);
         when(configService.getDefaultIDP()).thenReturn(defaultProvider);
-        when(tokenStore.getUserToken(subject, defaultProvider)).thenReturn(token);
+        stubResolveByUserProvider(subject, defaultProvider, token, false);
 
         // When
         AuthorizationResultDO result = authorizerService.authorize(subject, scopes, resource);
@@ -313,7 +354,7 @@ class AuthorizerServiceTest {
         when(access.getGranted()).thenReturn(true);
 
         when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
-        when(tokenStore.getUserToken(subject, provider)).thenReturn(token);
+        stubResolveByUserProvider(subject, provider, token, false);
         when(zmsClient.getAccessExt(
                 eq("mcp.access"),
                 eq("athenz.examples.agentic-ai:api-resource"),
@@ -359,7 +400,7 @@ class AuthorizerServiceTest {
         when(access.getGranted()).thenReturn(false);
 
         when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
-        when(tokenStore.getUserToken(subject, provider)).thenReturn(token);
+        stubResolveByUserProvider(subject, provider, token, false);
         when(zmsClient.getAccessExt(
                 eq("mcp.access"),
                 eq("athenz.examples.agentic-ai:api-resource"),

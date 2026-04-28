@@ -355,6 +355,7 @@ data:
           mirror-user-prefix: {{ $splunk.mirrorUserPrefix | default "mcp." | quote }}
           splunk-token-audience: {{ $splunk.splunkTokenAudience | default "mcp" | quote }}
           token-expires-on: {{ $splunk.tokenExpiresOn | default "+1h" | quote }}
+          cleanup-enabled: {{ $splunk.cleanupEnabled | default true }}
           {{- $allowedRoles := $splunk.allowedRoles | default (list "yahoo_user" "mcp_user") }}
           allowed-roles:
           {{- range $allowedRoles }}

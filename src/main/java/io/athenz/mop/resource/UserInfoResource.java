@@ -11,8 +11,9 @@ import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.service.OktaTokens;
 import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
+import io.athenz.mop.service.UserTokenRegionResolver;
+import io.athenz.mop.service.UserTokenResolution;
 import io.athenz.mop.store.TokenStore;
-import io.athenz.mop.store.impl.aws.CrossRegionTokenStoreFallback;
 import io.athenz.mop.telemetry.ExchangeStep;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
 import io.athenz.mop.telemetry.OauthProviderLabel;
@@ -30,7 +31,6 @@ import java.lang.invoke.MethodHandles;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,7 +44,7 @@ public class UserInfoResource {
     TokenStore tokenStore;
 
     @Inject
-    CrossRegionTokenStoreFallback crossRegionFallback;
+    UserTokenRegionResolver userTokenRegionResolver;
 
     @Inject
     OauthProxyMetrics oauthProxyMetrics;
@@ -57,9 +57,6 @@ public class UserInfoResource {
 
     @Inject
     UpstreamRefreshService upstreamRefreshService;
-
-    @ConfigProperty(name = "server.cross-region-fallback.region")
-    Optional<String> fallbackRegionConfig;
 
     @ConfigProperty(name = "server.athenz.user-prefix", defaultValue = "")
     String userPrefix;
@@ -86,21 +83,13 @@ public class UserInfoResource {
         log.info("Processing userinfo request");
 
         String accessTokenHash = JwtUtils.hashAccessToken(accessToken);
-        TokenWrapper tokenByHash = tokenStore.getUserTokenByAccessTokenHash(accessTokenHash);
-        boolean fromFallback = false;
-        if (tokenByHash == null) {
-            tokenByHash = crossRegionFallback.getUserTokenByAccessTokenHash(accessTokenHash);
-            fromFallback = (tokenByHash != null);
-        }
+        UserTokenResolution hashResolution = userTokenRegionResolver.resolveByAccessTokenHash(
+                accessTokenHash, UserTokenRegionResolver.CALL_SITE_USERINFO_TOKEN_LOOKUP);
+        TokenWrapper tokenByHash = hashResolution.token();
+        boolean fromFallback = hashResolution.resolvedFromFallback();
 
         if (tokenByHash == null) {
             log.warn("Token not found for userinfo lookup");
-            if (crossRegionFallback.isActive()) {
-                String primaryRegion = metricsRegionProvider.primaryRegion();
-                String fallbackRegion = fallbackRegionConfig.map(String::trim).filter(s -> !s.isEmpty()).orElse("unknown");
-                oauthProxyMetrics.recordCrossRegionFallbackExhausted("unknown", "userinfo_token_lookup",
-                        primaryRegion, fallbackRegion, 401, "not_found");
-            }
             return finishUserinfo(startNanos, "unknown", false, 401, "invalid_token", "token_not_found",
                     Response.status(Response.Status.UNAUTHORIZED)
                             .entity(Map.of(
@@ -130,16 +119,10 @@ public class UserInfoResource {
         telemetryRequestContext.setOauthProvider(providerLabel);
         log.info("Found token by hash for user: {}, provider: {} (fromFallback={})", user, tokenByHash.provider(), fromFallback);
 
-        if (fromFallback) {
-            String primaryRegion = metricsRegionProvider.primaryRegion();
-            String fallbackRegion = fallbackRegionConfig.map(String::trim).filter(s -> !s.isEmpty()).orElse("unknown");
-            oauthProxyMetrics.recordCrossRegionFallbackTriggered(providerLabel, "userinfo_token_lookup",
-                    primaryRegion, fallbackRegion);
-        }
-
-        TokenWrapper oktaToken = fromFallback
-                ? crossRegionFallback.getUserToken(user, AudienceConstants.PROVIDER_OKTA)
-                : tokenStore.getUserToken(user, AudienceConstants.PROVIDER_OKTA);
+        TokenWrapper oktaToken = userTokenRegionResolver
+                .resolveByUserProvider(user, AudienceConstants.PROVIDER_OKTA,
+                        UserTokenRegionResolver.CALL_SITE_USERINFO_OKTA_LOOKUP)
+                .token();
 
         String idToken = oktaToken != null ? oktaToken.idToken() : null;
 

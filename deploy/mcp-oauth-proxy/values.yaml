@@ -342,8 +342,8 @@ cleanup:
       enabled: true
       schedule: "*/15 * * * *"
     - name: splunk
-      enabled: false
-      schedule: "0 * * * *"
+      enabled: true
+      schedule: "30 */2 * * *"
 
 healthCheck:
   enabled: true

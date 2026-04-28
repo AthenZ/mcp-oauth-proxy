@@ -378,6 +378,7 @@ server:
         - mcp_user
       splunk-token-audience: mcp
       token-expires-on: "+1h"
+      cleanup-enabled: true
     grafana:
       admin-token-secret-key: grafana-api-prod
       token-name-prefix: "mcp."
