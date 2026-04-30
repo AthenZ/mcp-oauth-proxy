@@ -361,6 +361,10 @@ server:
       key-id: ${MOP_CROSS_REGION_FALLBACK_KMS_KEY_ID:}
     sts:
       role-arn: ${MOP_CROSS_REGION_FALLBACK_STS_ROLE_ARN:}
+    refresh-token:
+      table-name: ${MOP_CROSS_REGION_FALLBACK_REFRESH_TOKEN_TABLE_NAME:}
+    upstream-token:
+      table-name: ${MOP_CROSS_REGION_FALLBACK_UPSTREAM_TOKEN_TABLE_NAME:}
   secret:
     k8s:
       name:

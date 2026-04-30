@@ -18,6 +18,7 @@ package io.athenz.mop.service;
 import io.athenz.mop.config.UpstreamTokenConfig;
 import io.athenz.mop.model.UpstreamTokenRecord;
 import io.athenz.mop.store.UpstreamTokenStore;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -46,6 +47,12 @@ class UpstreamRefreshIntegrationTest {
     @Mock
     RefreshCoordinationService refreshCoordinationService;
 
+    @Mock
+    UpstreamTokenRegionResolver upstreamTokenRegionResolver;
+
+    @Mock
+    OauthProxyMetrics oauthProxyMetrics;
+
     @Test
     void secondProviderRefresh_usesLatestVersionAfterConflict() {
         lenient().when(upstreamTokenConfig.expirySeconds()).thenReturn(7776000L);
@@ -56,11 +63,16 @@ class UpstreamRefreshIntegrationTest {
         inject(svc, "oktaTokenClient", oktaTokenClient);
         inject(svc, "upstreamTokenConfig", upstreamTokenConfig);
         inject(svc, "refreshCoordinationService", refreshCoordinationService);
+        inject(svc, "upstreamTokenRegionResolver", upstreamTokenRegionResolver);
+        inject(svc, "oauthProxyMetrics", oauthProxyMetrics);
 
         String pid = AudienceConstants.PROVIDER_OKTA + "#user1";
         UpstreamTokenRecord v1 = new UpstreamTokenRecord(pid, "rt1", "", 1L, 0L, "", "");
         UpstreamTokenRecord v2 = new UpstreamTokenRecord(pid, "rt2", "", 2L, 0L, "", "");
-        when(upstreamTokenStore.get(pid)).thenReturn(Optional.of(v1), Optional.of(v2));
+        when(upstreamTokenRegionResolver.resolveByProviderUserId(pid)).thenReturn(
+                new UpstreamTokenResolution(v1, false),
+                new UpstreamTokenResolution(v2, false));
+        when(upstreamTokenRegionResolver.peerVersionForCas(pid)).thenReturn(Optional.empty());
         when(oktaTokenClient.refreshToken("rt1")).thenReturn(new OktaTokens("a1", "rt2", null, 3600));
         when(oktaTokenClient.refreshToken("rt2")).thenReturn(new OktaTokens("a2", "rt3", null, 3600));
         when(upstreamTokenStore.updateWithVersionCheck(pid, "rt2", 1L)).thenReturn(false);
@@ -69,7 +81,7 @@ class UpstreamRefreshIntegrationTest {
         OktaTokens out = svc.refreshUpstream(pid);
 
         assertEquals("a2", out.accessToken());
-        verify(upstreamTokenStore, times(2)).get(pid);
+        verify(upstreamTokenRegionResolver, times(2)).resolveByProviderUserId(pid);
     }
 
     private static void inject(Object target, String field, Object value) {

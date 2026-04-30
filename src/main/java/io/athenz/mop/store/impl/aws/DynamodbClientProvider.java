@@ -62,6 +62,34 @@ public class DynamodbClientProvider {
     public DynamoDbEncryptionInterceptor createEncryptionInterceptorForTokensTable(String tokensTableName, String tokensKmsKeyId) {
         final Map<String, DynamoDbTableEncryptionConfig> tableConfigs = new HashMap<>();
         tableConfigs.put(tokensTableName, buildTokensTableEncryptionConfig(tokensTableName, tokensKmsKeyId));
+        return wrapInInterceptor(tableConfigs);
+    }
+
+    /**
+     * Creates an encryption interceptor that covers the user-tokens table plus, when a non-blank
+     * name is supplied, the refresh-tokens and/or upstream-tokens tables. Used by the cross-region
+     * fallback client to read from the peer region's copy of any of the three tables under the
+     * shared MRK keyring.
+     */
+    public DynamoDbEncryptionInterceptor createEncryptionInterceptorForFallbackTables(
+            String tokensTableName,
+            String tokensKmsKeyId,
+            String refreshTokensTableName,
+            String upstreamTokensTableName) {
+        final Map<String, DynamoDbTableEncryptionConfig> tableConfigs = new HashMap<>();
+        if (tokensTableName != null && !tokensTableName.isBlank()) {
+            tableConfigs.put(tokensTableName, buildTokensTableEncryptionConfig(tokensTableName, tokensKmsKeyId));
+        }
+        if (refreshTokensTableName != null && !refreshTokensTableName.isBlank()) {
+            tableConfigs.put(refreshTokensTableName, buildRefreshTokensTableEncryptionConfig(refreshTokensTableName, tokensKmsKeyId));
+        }
+        if (upstreamTokensTableName != null && !upstreamTokensTableName.isBlank()) {
+            tableConfigs.put(upstreamTokensTableName, buildUpstreamTokensTableEncryptionConfig(upstreamTokensTableName, tokensKmsKeyId));
+        }
+        return wrapInInterceptor(tableConfigs);
+    }
+
+    private static DynamoDbEncryptionInterceptor wrapInInterceptor(Map<String, DynamoDbTableEncryptionConfig> tableConfigs) {
         return DynamoDbEncryptionInterceptor
                 .builder()
                 .config(
@@ -107,98 +135,93 @@ public class DynamodbClientProvider {
                 .build();
     }
 
+    private DynamoDbTableEncryptionConfig buildRefreshTokensTableEncryptionConfig(String refreshTokensTableName, String refreshKmsKeyId) {
+        final MaterialProviders matProv = MaterialProviders
+                .builder()
+                .MaterialProvidersConfig(MaterialProvidersConfig.builder().build())
+                .build();
+        final CreateAwsKmsMrkMultiKeyringInput keyringInput = CreateAwsKmsMrkMultiKeyringInput
+                .builder()
+                .generator(refreshKmsKeyId)
+                .build();
+        final IKeyring kmsKeyring = matProv.CreateAwsKmsMrkMultiKeyring(keyringInput);
+
+        final Map<String, CryptoAction> refreshAttributeActions = new HashMap<>();
+        refreshAttributeActions.put(RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.REFRESH_TOKEN_HASH.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.USER_ID.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.PROVIDER.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(), CryptoAction.ENCRYPT_AND_SIGN);
+        refreshAttributeActions.put(RefreshTableAttribute.STATUS.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.CLIENT_ID.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.PROVIDER_SUBJECT.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.ROTATED_FROM.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.REPLACED_BY.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.ROTATED_AT.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.ISSUED_AT.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.EXPIRES_AT.attr(), CryptoAction.SIGN_ONLY);
+        refreshAttributeActions.put(RefreshTableAttribute.TTL.attr(), CryptoAction.DO_NOTHING);
+
+        return DynamoDbTableEncryptionConfig
+                .builder()
+                .logicalTableName(refreshTokensTableName)
+                .partitionKeyName(RefreshTableAttribute.REFRESH_TOKEN_ID.attr())
+                .sortKeyName(RefreshTableAttribute.PROVIDER_USER_ID.attr())
+                .attributeActionsOnEncrypt(refreshAttributeActions)
+                .allowedUnsignedAttributes(List.of(RefreshTableAttribute.TTL.attr()))
+                .keyring(kmsKeyring)
+                .algorithmSuiteId(DBEAlgorithmSuiteId.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384_SYMSIG_HMAC_SHA384)
+                .build();
+    }
+
+    private DynamoDbTableEncryptionConfig buildUpstreamTokensTableEncryptionConfig(String upstreamTokensTableName, String upstreamKmsKeyId) {
+        final MaterialProviders matProv = MaterialProviders
+                .builder()
+                .MaterialProvidersConfig(MaterialProvidersConfig.builder().build())
+                .build();
+        final CreateAwsKmsMrkMultiKeyringInput keyringInput = CreateAwsKmsMrkMultiKeyringInput
+                .builder()
+                .generator(upstreamKmsKeyId)
+                .build();
+        final IKeyring kmsKeyring = matProv.CreateAwsKmsMrkMultiKeyring(keyringInput);
+
+        final Map<String, CryptoAction> upstreamAttributeActions = new HashMap<>();
+        upstreamAttributeActions.put(UpstreamTableAttribute.PROVIDER_USER_ID.attr(), CryptoAction.SIGN_ONLY);
+        upstreamAttributeActions.put(UpstreamTableAttribute.ENCRYPTED_OKTA_REFRESH_TOKEN.attr(), CryptoAction.ENCRYPT_AND_SIGN);
+        upstreamAttributeActions.put(UpstreamTableAttribute.LAST_ROTATED_AT.attr(), CryptoAction.SIGN_ONLY);
+        upstreamAttributeActions.put(UpstreamTableAttribute.VERSION.attr(), CryptoAction.SIGN_ONLY);
+        upstreamAttributeActions.put(UpstreamTableAttribute.CREATED_AT.attr(), CryptoAction.SIGN_ONLY);
+        upstreamAttributeActions.put(UpstreamTableAttribute.UPDATED_AT.attr(), CryptoAction.SIGN_ONLY);
+        upstreamAttributeActions.put(UpstreamTableAttribute.TTL.attr(), CryptoAction.DO_NOTHING);
+
+        return DynamoDbTableEncryptionConfig
+                .builder()
+                .logicalTableName(upstreamTokensTableName)
+                .partitionKeyName(UpstreamTableAttribute.PROVIDER_USER_ID.attr())
+                .attributeActionsOnEncrypt(upstreamAttributeActions)
+                .allowedUnsignedAttributes(List.of(UpstreamTableAttribute.TTL.attr()))
+                .keyring(kmsKeyring)
+                .algorithmSuiteId(DBEAlgorithmSuiteId.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384_SYMSIG_HMAC_SHA384)
+                .build();
+    }
+
     private DynamoDbEncryptionInterceptor getDynamoDbEncryptionInterceptor() {
         final Map<String, DynamoDbTableEncryptionConfig> tableConfigs = new HashMap<>();
         tableConfigs.put(tableName, buildTokensTableEncryptionConfig(tableName, kmsKeyId));
 
         if (refreshTokenTableName != null && !refreshTokenTableName.isBlank()) {
-            final MaterialProviders matProv = MaterialProviders
-                    .builder()
-                    .MaterialProvidersConfig(MaterialProvidersConfig.builder().build())
-                    .build();
-            final CreateAwsKmsMrkMultiKeyringInput keyringInput = CreateAwsKmsMrkMultiKeyringInput
-                    .builder()
-                    .generator(kmsKeyId)
-                    .build();
-            final IKeyring kmsKeyring = matProv.CreateAwsKmsMrkMultiKeyring(keyringInput);
-
-            final Map<String, CryptoAction> refreshAttributeActions = new HashMap<>();
-            refreshAttributeActions.put(RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.REFRESH_TOKEN_HASH.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.USER_ID.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.PROVIDER.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(), CryptoAction.ENCRYPT_AND_SIGN);
-            refreshAttributeActions.put(RefreshTableAttribute.STATUS.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.CLIENT_ID.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.PROVIDER_SUBJECT.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.ROTATED_FROM.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.REPLACED_BY.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.ROTATED_AT.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.ISSUED_AT.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.EXPIRES_AT.attr(), CryptoAction.SIGN_ONLY);
-            refreshAttributeActions.put(RefreshTableAttribute.TTL.attr(), CryptoAction.DO_NOTHING);
-
-            tableConfigs.put(
-                    refreshTokenTableName,
-                    DynamoDbTableEncryptionConfig
-                            .builder()
-                            .logicalTableName(refreshTokenTableName)
-                            .partitionKeyName(RefreshTableAttribute.REFRESH_TOKEN_ID.attr())
-                            .sortKeyName(RefreshTableAttribute.PROVIDER_USER_ID.attr())
-                            .attributeActionsOnEncrypt(refreshAttributeActions)
-                            .allowedUnsignedAttributes(List.of(RefreshTableAttribute.TTL.attr()))
-                            .keyring(kmsKeyring)
-                            .algorithmSuiteId(DBEAlgorithmSuiteId.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384_SYMSIG_HMAC_SHA384)
-                            .build()
-            );
+            tableConfigs.put(refreshTokenTableName,
+                    buildRefreshTokensTableEncryptionConfig(refreshTokenTableName, kmsKeyId));
         }
 
         if (upstreamTokenTableName != null && !upstreamTokenTableName.isBlank()) {
-            final MaterialProviders matProvUpstream = MaterialProviders
-                    .builder()
-                    .MaterialProvidersConfig(MaterialProvidersConfig.builder().build())
-                    .build();
-            final CreateAwsKmsMrkMultiKeyringInput upstreamKeyringInput = CreateAwsKmsMrkMultiKeyringInput
-                    .builder()
-                    .generator(kmsKeyId)
-                    .build();
-            final IKeyring upstreamKmsKeyring = matProvUpstream.CreateAwsKmsMrkMultiKeyring(upstreamKeyringInput);
-
-            final Map<String, CryptoAction> upstreamAttributeActions = new HashMap<>();
-            upstreamAttributeActions.put(UpstreamTableAttribute.PROVIDER_USER_ID.attr(), CryptoAction.SIGN_ONLY);
-            upstreamAttributeActions.put(UpstreamTableAttribute.ENCRYPTED_OKTA_REFRESH_TOKEN.attr(), CryptoAction.ENCRYPT_AND_SIGN);
-            upstreamAttributeActions.put(UpstreamTableAttribute.LAST_ROTATED_AT.attr(), CryptoAction.SIGN_ONLY);
-            upstreamAttributeActions.put(UpstreamTableAttribute.VERSION.attr(), CryptoAction.SIGN_ONLY);
-            upstreamAttributeActions.put(UpstreamTableAttribute.CREATED_AT.attr(), CryptoAction.SIGN_ONLY);
-            upstreamAttributeActions.put(UpstreamTableAttribute.UPDATED_AT.attr(), CryptoAction.SIGN_ONLY);
-            upstreamAttributeActions.put(UpstreamTableAttribute.TTL.attr(), CryptoAction.DO_NOTHING);
-
-            tableConfigs.put(
-                    upstreamTokenTableName,
-                    DynamoDbTableEncryptionConfig
-                            .builder()
-                            .logicalTableName(upstreamTokenTableName)
-                            .partitionKeyName(UpstreamTableAttribute.PROVIDER_USER_ID.attr())
-                            .attributeActionsOnEncrypt(upstreamAttributeActions)
-                            .allowedUnsignedAttributes(List.of(UpstreamTableAttribute.TTL.attr()))
-                            .keyring(upstreamKmsKeyring)
-                            .algorithmSuiteId(DBEAlgorithmSuiteId.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384_SYMSIG_HMAC_SHA384)
-                            .build()
-            );
+            tableConfigs.put(upstreamTokenTableName,
+                    buildUpstreamTokensTableEncryptionConfig(upstreamTokenTableName, kmsKeyId));
         }
 
-        return DynamoDbEncryptionInterceptor
-                        .builder()
-                        .config(
-                                DynamoDbTablesEncryptionConfig
-                                        .builder()
-                                        .tableEncryptionConfigs(tableConfigs)
-                                        .build()
-                        )
-                        .build();
-
+        return wrapInInterceptor(tableConfigs);
     }
 
     @Produces

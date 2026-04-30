@@ -59,14 +59,23 @@ public class UpstreamTokenStoreDynamoDbImpl implements UpstreamTokenStore {
 
     @Override
     public Optional<UpstreamTokenRecord> get(String providerUserId) {
+        return getWithClient(dynamoDbClient, upstreamTokenConfig.tableName(), providerUserId);
+    }
+
+    /**
+     * Strongly-consistent read of an upstream-token row using the supplied client and table.
+     * Used by the primary store and by {@code CrossRegionTokenStoreFallback} to consult the peer
+     * region's table with the same marshalling.
+     */
+    public static Optional<UpstreamTokenRecord> getWithClient(DynamoDbClient client, String table, String providerUserId) {
         if (providerUserId == null || providerUserId.isEmpty()) {
             return Optional.empty();
         }
         Map<String, AttributeValue> key = new HashMap<>();
         key.put(UpstreamTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(providerUserId).build());
-        var resp = dynamoDbClient.getItem(
+        var resp = client.getItem(
                 GetItemRequest.builder()
-                        .tableName(upstreamTokenConfig.tableName())
+                        .tableName(table)
                         .key(key)
                         .consistentRead(true)
                         .build());
@@ -150,7 +159,7 @@ public class UpstreamTokenStoreDynamoDbImpl implements UpstreamTokenStore {
         return item;
     }
 
-    private UpstreamTokenRecord fromItem(Map<String, AttributeValue> item) {
+    private static UpstreamTokenRecord fromItem(Map<String, AttributeValue> item) {
         String providerUserId = s(item, UpstreamTableAttribute.PROVIDER_USER_ID.attr());
         String token = s(item, UpstreamTableAttribute.ENCRYPTED_OKTA_REFRESH_TOKEN.attr());
         String lastRotated = s(item, UpstreamTableAttribute.LAST_ROTATED_AT.attr());

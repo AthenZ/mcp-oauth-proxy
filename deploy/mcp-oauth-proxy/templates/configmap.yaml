@@ -219,15 +219,6 @@ data:
             verify-access-token-with-user-info: false
 
       otel:
-        enabled: {{ .Values.otel.enabled | default false }}
-        metrics:
-          enabled: {{ .Values.otel.metrics.enabled | default true }}
-        logs:
-          enabled: {{ .Values.otel.logs.enabled | default false }}
-          handler:
-            enabled: {{ .Values.otel.logs.handler.enabled | default false }}
-        instrument:
-          vertx-http: {{ .Values.otel.instrument.vertxHttp | default false }}
         resource:
           attributes: service.name={{ include "mcp-oauth-proxy.serviceVersion" . }},service.instance.id=${POD_NAME},cloud.account.id=${CLOUD_ACCOUNT_ID}
         exporter:
@@ -321,6 +312,14 @@ data:
           key-id: {{ .Values.application.crossRegionFallback.kmsKeyId | quote }}
         sts:
           role-arn: {{ .Values.application.crossRegionFallback.stsRoleArn | quote }}
+        {{- if .Values.application.crossRegionFallback.refreshTokenTableName }}
+        refresh-token:
+          table-name: {{ .Values.application.crossRegionFallback.refreshTokenTableName | quote }}
+        {{- end }}
+        {{- if .Values.application.crossRegionFallback.upstreamTokenTableName }}
+        upstream-token:
+          table-name: {{ .Values.application.crossRegionFallback.upstreamTokenTableName | quote }}
+        {{- end }}
         {{- end }}
       secret:
         k8s:

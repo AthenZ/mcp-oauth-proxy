@@ -86,29 +86,47 @@ public class TokenStoreAsyncDynamodbImpl implements TokenStoreAsync {
 
     @Override
     public Uni<AuthorizationCodeTokensDO> getTokenAsync(String id, String provider) {
+        return Uni.createFrom().item(() -> getTokenSync(dynamoDbClient, tableName, id, provider, objectMapper))
+                .flatMap(opt -> {
+                    if (opt == null) {
+                        log.error("No auth code tokens found for id {}, resource {}", id, provider);
+                        return Uni.createFrom().failure(new RuntimeException("No auth code tokens found for id " + id));
+                    }
+                    return Uni.createFrom().item(opt);
+                });
+    }
+
+    /**
+     * Synchronous get of an {@code auth_tokens_json} row. Returns {@code null} on miss; throws
+     * {@code RuntimeException} on JSON unmarshal failure. Used by both the async wrapper above and
+     * by {@code CrossRegionTokenStoreFallback} to consult the peer region's table with the same
+     * marshalling logic.
+     */
+    static AuthorizationCodeTokensDO getTokenSync(DynamoDbClient client, String table, String id, String provider, ObjectMapper om) {
         Map<String, AttributeValue> key = Map.of(
                 TokenTableAttribute.USER.attr(), AttributeValue.builder().s(id).build(),
                 TokenTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(provider).build()
         );
         GetItemRequest req = GetItemRequest.builder()
-                .tableName(tableName)
+                .tableName(table)
                 .key(key)
                 .consistentRead(true)
                 .build();
-        return Uni.createFrom().item(() -> dynamoDbClient.getItem(req)).flatMap(resp -> {
-            Map<String, AttributeValue> item = resp.item();
-            if (item == null || item.isEmpty()) {
-                log.error("No auth code tokens found for id {}, resource {}", id, provider);
-                return Uni.createFrom().failure(new RuntimeException("No auth code tokens found for id " + id));
-            }
-            String authTokensJson = item.get(TokenTableAttribute.AUTH_TOKENS_JSON.attr()).s();
-            try {
-                return Uni.createFrom().item(objectMapper.readValue(authTokensJson, AuthorizationCodeTokensDO.class));
-            } catch (JsonProcessingException e) {
-                log.error("unable to unmarshal auth code tokens: {}", e.getMessage());
-                return Uni.createFrom().failure(e);
-            }
-        });
+        var resp = client.getItem(req);
+        Map<String, AttributeValue> item = resp.item();
+        if (item == null || item.isEmpty()) {
+            return null;
+        }
+        AttributeValue jsonAttr = item.get(TokenTableAttribute.AUTH_TOKENS_JSON.attr());
+        if (jsonAttr == null || jsonAttr.s() == null) {
+            return null;
+        }
+        try {
+            return om.readValue(jsonAttr.s(), AuthorizationCodeTokensDO.class);
+        } catch (JsonProcessingException e) {
+            log.error("unable to unmarshal auth code tokens: {}", e.getMessage());
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
