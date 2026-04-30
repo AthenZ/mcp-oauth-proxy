@@ -365,6 +365,8 @@ server:
       table-name: ${MOP_CROSS_REGION_FALLBACK_REFRESH_TOKEN_TABLE_NAME:}
     upstream-token:
       table-name: ${MOP_CROSS_REGION_FALLBACK_UPSTREAM_TOKEN_TABLE_NAME:}
+    refresh-token-and-upstream:
+      enabled: ${MOP_CROSS_REGION_FALLBACK_REFRESH_TOKEN_AND_UPSTREAM_ENABLED:true}
   secret:
     k8s:
       name:

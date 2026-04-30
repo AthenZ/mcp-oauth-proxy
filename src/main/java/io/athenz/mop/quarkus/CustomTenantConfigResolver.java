@@ -54,7 +54,7 @@ public class CustomTenantConfigResolver implements TenantConfigResolver {
                                          OidcRequestContext<OidcTenantConfig> requestContext) {
 
         String path = routingContext.request().path();
-        if (routingContext.request().path().startsWith("/atlassian-mcp")) {
+        if (path.startsWith("/atlassian-mcp")) {
             log.info("Atlassian-mcp oidc tenant config based on registered client");
             OidcClientRegistration tenantClientReg = clientRegs.getClientRegistration("atlassian-mcp");
             log.info("Found atlassian-mcp client registration: {}", tenantClientReg != null);

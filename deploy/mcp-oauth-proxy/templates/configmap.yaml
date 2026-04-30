@@ -320,6 +320,8 @@ data:
         upstream-token:
           table-name: {{ .Values.application.crossRegionFallback.upstreamTokenTableName | quote }}
         {{- end }}
+        refresh-token-and-upstream:
+          enabled: {{ .Values.application.crossRegionFallback.refreshTokenAndUpstreamEnabled | default true }}
         {{- end }}
       secret:
         k8s:

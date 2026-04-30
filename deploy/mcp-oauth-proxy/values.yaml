@@ -167,6 +167,7 @@ application:
     stsRoleArn: ""
     refreshTokenTableName: ""
     upstreamTokenTableName: ""
+    refreshTokenAndUpstreamEnabled: true
   aws:
     dynamoDbTable:
     kmsKeyId:

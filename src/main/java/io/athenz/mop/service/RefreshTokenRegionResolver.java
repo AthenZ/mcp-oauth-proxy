@@ -76,7 +76,7 @@ public class RefreshTokenRegionResolver {
         if (local != null) {
             return new RefreshTokenResolution(local, false);
         }
-        if (!crossRegionFallback.isActive()) {
+        if (!crossRegionFallback.isRefreshAndUpstreamActive()) {
             return new RefreshTokenResolution(null, false);
         }
         RefreshTokenRecord peer = crossRegionFallback.lookupRefreshTokenByHash(hash);
@@ -94,7 +94,7 @@ public class RefreshTokenRegionResolver {
      * the peer for {@code rotate}'s PK preflight without duplicating local read code.
      */
     public Map<String, AttributeValue> resolveItemByPrimaryKey(String refreshTokenId, String providerUserId) {
-        if (!crossRegionFallback.isActive()) {
+        if (!crossRegionFallback.isRefreshAndUpstreamActive()) {
             return null;
         }
         Map<String, AttributeValue> peer = crossRegionFallback.getRefreshTokenItemByPrimaryKey(refreshTokenId, providerUserId);
@@ -114,7 +114,7 @@ public class RefreshTokenRegionResolver {
     public RefreshTokenResolution resolveBestUpstream(String userId, String provider) {
         RefreshTokenRecord local = RefreshTokenStoreDynamodbHelpers.queryBestUpstreamRefresh(
                 dynamoDbClient, tableName, userId, provider);
-        if (!crossRegionFallback.isActive()) {
+        if (!crossRegionFallback.isRefreshAndUpstreamActive()) {
             return new RefreshTokenResolution(local, false);
         }
         RefreshTokenRecord peer = crossRegionFallback.queryBestUpstreamRefresh(userId, provider);

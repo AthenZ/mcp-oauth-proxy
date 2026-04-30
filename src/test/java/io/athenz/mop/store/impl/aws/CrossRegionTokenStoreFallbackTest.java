@@ -71,6 +71,8 @@ class CrossRegionTokenStoreFallbackTest {
         setField(fallback, "fallbackUpstreamTokenTableName", Optional.of("fallback-upstream-tokens"));
         setField(fallback, "fallbackUpstreamTokenTableNameResolved", "fallback-upstream-tokens");
         setField(fallback, "fallbackRegion", Optional.of("us-west-2"));
+        // Default to "new sub-flag enabled" so existing refresh/upstream tests behave as before.
+        setField(fallback, "refreshAndUpstreamEnabled", true);
         // Same @InjectMocks instance across tests: reset peer client and mock invocations
         setField(fallback, "fallbackClient", null);
         clearInvocations(tokenStoreDynamodb, dynamodbClientProvider, fallbackClient, oauthProxyMetrics);
@@ -305,5 +307,39 @@ class CrossRegionTokenStoreFallbackTest {
     @Test
     void testGetTokenAsync_WhenFallbackClientNull_ReturnsNull() {
         assertNull(fallback.getTokenAsync("id1", AudienceConstants.PROVIDER_OKTA));
+    }
+
+    @Test
+    void testIsRefreshAndUpstreamActive_RequiresBothFlags() throws Exception {
+        setField(fallback, "enabled", true);
+        setField(fallback, "refreshAndUpstreamEnabled", true);
+        assertTrue(fallback.isRefreshAndUpstreamActive());
+
+        setField(fallback, "enabled", true);
+        setField(fallback, "refreshAndUpstreamEnabled", false);
+        assertFalse(fallback.isRefreshAndUpstreamActive());
+
+        setField(fallback, "enabled", false);
+        setField(fallback, "refreshAndUpstreamEnabled", true);
+        assertFalse(fallback.isRefreshAndUpstreamActive());
+    }
+
+    @Test
+    void testRefreshAndUpstreamSubFlag_DisablesNewPathsButLeavesUserTokenPath() throws Exception {
+        setFallbackClient(fallbackClient);
+        setField(fallback, "refreshAndUpstreamEnabled", false);
+
+        assertNull(fallback.lookupRefreshTokenByHash("hash"));
+        assertNull(fallback.getRefreshTokenItemByPrimaryKey("id1", "okta#u1"));
+        assertNull(fallback.queryBestUpstreamRefresh("u1", AudienceConstants.PROVIDER_OKTA));
+        assertTrue(fallback.getUpstreamToken("okta#u1").isEmpty());
+        verify(fallbackClient, never()).query(any(QueryRequest.class));
+        verify(fallbackClient, never()).getItem(any(GetItemRequest.class));
+
+        TokenWrapper expected = new TokenWrapper("k", AudienceConstants.PROVIDER_OKTA, "id", "a", "r", 3600L);
+        when(tokenStoreDynamodb.getUserTokenByAccessTokenHash(eq(fallbackClient), eq("fallback-table"), any()))
+                .thenReturn(expected);
+        TokenWrapper result = fallback.getUserTokenByAccessTokenHash("hash");
+        assertSame(expected, result);
     }
 }

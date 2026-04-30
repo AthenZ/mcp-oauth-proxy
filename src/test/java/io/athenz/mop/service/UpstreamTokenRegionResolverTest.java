@@ -85,7 +85,7 @@ class UpstreamTokenRegionResolverTest {
     @Test
     void resolveByProviderUserId_localMissPeerHit_recordsTriggered() {
         when(upstreamTokenStore.get(OKTA_PID_U1)).thenReturn(Optional.empty());
-        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         when(crossRegionFallback.getUpstreamToken(OKTA_PID_U1)).thenReturn(Optional.of(rec(5)));
 
         UpstreamTokenResolution r = resolver.resolveByProviderUserId(OKTA_PID_U1);
@@ -102,7 +102,7 @@ class UpstreamTokenRegionResolverTest {
     @Test
     void resolveByProviderUserId_bothMiss_recordsExhausted() {
         when(upstreamTokenStore.get(OKTA_PID_U1)).thenReturn(Optional.empty());
-        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         when(crossRegionFallback.getUpstreamToken(OKTA_PID_U1)).thenReturn(Optional.empty());
 
         UpstreamTokenResolution r = resolver.resolveByProviderUserId(OKTA_PID_U1);
@@ -120,7 +120,7 @@ class UpstreamTokenRegionResolverTest {
     @Test
     void resolveByProviderUserId_fallbackInactive_returnsLocalOnly() {
         when(upstreamTokenStore.get(OKTA_PID_U1)).thenReturn(Optional.empty());
-        when(crossRegionFallback.isActive()).thenReturn(false);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(false);
 
         UpstreamTokenResolution r = resolver.resolveByProviderUserId(OKTA_PID_U1);
 
@@ -131,7 +131,7 @@ class UpstreamTokenRegionResolverTest {
 
     @Test
     void peerVersionForCas_returnsPeerVersionWhenActiveAndPresent() {
-        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         when(crossRegionFallback.getUpstreamToken(OKTA_PID_U1)).thenReturn(Optional.of(rec(8)));
 
         Optional<Long> v = resolver.peerVersionForCas(OKTA_PID_U1);
@@ -142,7 +142,7 @@ class UpstreamTokenRegionResolverTest {
 
     @Test
     void peerVersionForCas_returnsEmpty_whenInactive() {
-        when(crossRegionFallback.isActive()).thenReturn(false);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(false);
 
         Optional<Long> v = resolver.peerVersionForCas(OKTA_PID_U1);
 
@@ -152,7 +152,7 @@ class UpstreamTokenRegionResolverTest {
 
     @Test
     void peerVersionForCas_returnsEmpty_whenPeerMisses() {
-        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         when(crossRegionFallback.getUpstreamToken(OKTA_PID_U1)).thenReturn(Optional.empty());
 
         Optional<Long> v = resolver.peerVersionForCas(OKTA_PID_U1);

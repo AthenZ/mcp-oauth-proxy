@@ -70,7 +70,7 @@ public class UpstreamTokenRegionResolver {
         if (local.isPresent()) {
             return new UpstreamTokenResolution(local.get(), false);
         }
-        if (!crossRegionFallback.isActive()) {
+        if (!crossRegionFallback.isRefreshAndUpstreamActive()) {
             return new UpstreamTokenResolution(null, false);
         }
         Optional<UpstreamTokenRecord> peer = crossRegionFallback.getUpstreamToken(providerUserId);
@@ -89,7 +89,7 @@ public class UpstreamTokenRegionResolver {
      * strictly newer.
      */
     public Optional<Long> peerVersionForCas(String providerUserId) {
-        if (!crossRegionFallback.isActive()) {
+        if (!crossRegionFallback.isRefreshAndUpstreamActive()) {
             return Optional.empty();
         }
         Optional<UpstreamTokenRecord> peer = crossRegionFallback.getUpstreamToken(providerUserId);

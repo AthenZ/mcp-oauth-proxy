@@ -55,6 +55,18 @@ public class CrossRegionTokenStoreFallback {
     @ConfigProperty(name = "server.cross-region-fallback.enabled", defaultValue = "false")
     boolean enabled;
 
+    /**
+     * Independent kill switch for the refresh-token + upstream-token cross-region read paths added
+     * in the cross-region read fallback expansion (drobles fix). Defaults to {@code true} so
+     * existing prod deploys with the master flag {@link #enabled} on do not have to set anything new
+     * to keep the new behavior. Flip to {@code false} to disable the new paths while leaving the
+     * original user-tokens fallback (auth-code resolution, /userinfo, MoP /token auth-code lookup)
+     * untouched.
+     */
+    @ConfigProperty(name = "server.cross-region-fallback.refresh-token-and-upstream.enabled",
+            defaultValue = "true")
+    boolean refreshAndUpstreamEnabled;
+
     @ConfigProperty(name = "server.cross-region-fallback.region")
     Optional<String> fallbackRegion;
 
@@ -96,6 +108,17 @@ public class CrossRegionTokenStoreFallback {
      */
     public boolean isActive() {
         return enabled;
+    }
+
+    /**
+     * True when both the master fallback flag and the refresh-token / upstream-token sub-flag are
+     * on. Independent kill switch for the new (drobles-fix) refresh-token and upstream-token
+     * cross-region read paths. Region resolvers in the refresh-token / upstream-token paths gate on
+     * this so the new behavior can be disabled without disabling the original user-tokens
+     * fallback.
+     */
+    public boolean isRefreshAndUpstreamActive() {
+        return enabled && refreshAndUpstreamEnabled;
     }
 
     @PostConstruct
@@ -254,7 +277,7 @@ public class CrossRegionTokenStoreFallback {
      * failed to build, or the row was not found.
      */
     public RefreshTokenRecord lookupRefreshTokenByHash(String hash) {
-        if (fallbackClient == null || fallbackRefreshTokenTableNameResolved == null) {
+        if (!refreshAndUpstreamEnabled || fallbackClient == null || fallbackRefreshTokenTableNameResolved == null) {
             return null;
         }
         try {
@@ -279,7 +302,7 @@ public class CrossRegionTokenStoreFallback {
      * miss, fallback disabled, refresh-token table not configured for fallback, or any failure.
      */
     public Map<String, AttributeValue> getRefreshTokenItemByPrimaryKey(String refreshTokenId, String providerUserId) {
-        if (fallbackClient == null || fallbackRefreshTokenTableNameResolved == null) {
+        if (!refreshAndUpstreamEnabled || fallbackClient == null || fallbackRefreshTokenTableNameResolved == null) {
             return null;
         }
         try {
@@ -304,7 +327,7 @@ public class CrossRegionTokenStoreFallback {
      * non-revoked, unexpired record. Returns {@code null} on miss / failure / fallback disabled.
      */
     public RefreshTokenRecord queryBestUpstreamRefresh(String userId, String provider) {
-        if (fallbackClient == null || fallbackRefreshTokenTableNameResolved == null) {
+        if (!refreshAndUpstreamEnabled || fallbackClient == null || fallbackRefreshTokenTableNameResolved == null) {
             return null;
         }
         try {
@@ -331,7 +354,7 @@ public class CrossRegionTokenStoreFallback {
      * fallback, or any failure.
      */
     public Optional<UpstreamTokenRecord> getUpstreamToken(String providerUserId) {
-        if (fallbackClient == null || fallbackUpstreamTokenTableNameResolved == null) {
+        if (!refreshAndUpstreamEnabled || fallbackClient == null || fallbackUpstreamTokenTableNameResolved == null) {
             return Optional.empty();
         }
         try {

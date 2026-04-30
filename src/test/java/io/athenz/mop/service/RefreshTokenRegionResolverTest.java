@@ -107,7 +107,7 @@ class RefreshTokenRegionResolverTest {
     void resolveByHash_localMissPeerHit_recordsTriggered() {
         when(dynamoDbClient.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of()).build());
-        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         RefreshTokenRecord peer = new RefreshTokenRecord("id-peer", OKTA_PID_U1, "u1", "c1",
                 AudienceConstants.PROVIDER_OKTA, "s", null, RefreshTableConstants.STATUS_ACTIVE, "f1", null, null,
                 0L, 200L, 99999L, 99999L);
@@ -128,7 +128,7 @@ class RefreshTokenRegionResolverTest {
     void resolveByHash_bothMiss_recordsExhausted() {
         when(dynamoDbClient.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of()).build());
-        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         when(crossRegionFallback.lookupRefreshTokenByHash("h")).thenReturn(null);
 
         RefreshTokenResolution r = resolver.resolveByHash("h");
@@ -147,7 +147,7 @@ class RefreshTokenRegionResolverTest {
     void resolveByHash_fallbackInactive_doesNotConsultPeerOrEmitMetrics() {
         when(dynamoDbClient.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of()).build());
-        when(crossRegionFallback.isActive()).thenReturn(false);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(false);
 
         RefreshTokenResolution r = resolver.resolveByHash("h");
 
@@ -158,7 +158,7 @@ class RefreshTokenRegionResolverTest {
 
     @Test
     void resolveItemByPrimaryKey_fallbackInactive_returnsNull() {
-        when(crossRegionFallback.isActive()).thenReturn(false);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(false);
 
         Map<String, AttributeValue> item = resolver.resolveItemByPrimaryKey("id1", OKTA_PID_U1);
 
@@ -168,7 +168,7 @@ class RefreshTokenRegionResolverTest {
 
     @Test
     void resolveItemByPrimaryKey_peerHit_recordsTriggered() {
-        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         Map<String, AttributeValue> peerItem = activeItem("id-peer");
         when(crossRegionFallback.getRefreshTokenItemByPrimaryKey("id1", OKTA_PID_U1)).thenReturn(peerItem);
 
@@ -188,7 +188,7 @@ class RefreshTokenRegionResolverTest {
         Map<String, AttributeValue> localItem = activeItem("id-local");
         when(dynamoDbClient.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of(localItem)).build());
-        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         // Peer record with higher issued_at
         RefreshTokenRecord peer = new RefreshTokenRecord("id-peer", OKTA_PID_U1, "u1", "c1",
                 AudienceConstants.PROVIDER_OKTA, "s", "enc-peer", RefreshTableConstants.STATUS_ACTIVE,
@@ -221,7 +221,7 @@ class RefreshTokenRegionResolverTest {
                 RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(System.currentTimeMillis() / 1000 + 3600)).build());
         when(dynamoDbClient.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of(localItem)).build());
-        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         RefreshTokenRecord peer = new RefreshTokenRecord("id-peer", OKTA_PID_U1, "u1", "c1",
                 AudienceConstants.PROVIDER_OKTA, "s", "enc-peer", RefreshTableConstants.STATUS_ACTIVE,
                 "f1", null, null, 0L, 100L, 99999L, 99999L);
@@ -241,7 +241,7 @@ class RefreshTokenRegionResolverTest {
     void resolveBestUpstream_recordsExhausted_whenBothMiss() {
         when(dynamoDbClient.query(any(QueryRequest.class)))
                 .thenReturn(QueryResponse.builder().items(List.of()).build());
-        when(crossRegionFallback.isActive()).thenReturn(true);
+        when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         when(crossRegionFallback.queryBestUpstreamRefresh(anyString(), anyString())).thenReturn(null);
 
         RefreshTokenResolution r = resolver.resolveBestUpstream("u1", AudienceConstants.PROVIDER_OKTA);
