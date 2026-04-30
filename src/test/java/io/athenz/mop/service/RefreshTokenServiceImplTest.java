@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import static org.mockito.Mockito.lenient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
@@ -397,5 +398,66 @@ class RefreshTokenServiceImplTest {
                 .thenReturn(GetItemResponse.builder().build());
         RefreshTokenRecord record = service.getByPrimaryKey("id1", "okta#user1");
         assertNull(record);
+    }
+
+    @Test
+    void validate_returnsActive_whenRowOnlyInPeerRegion() {
+        RefreshTokenRegionResolver resolver = org.mockito.Mockito.mock(RefreshTokenRegionResolver.class);
+        service.refreshTokenRegionResolver = resolver;
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        RefreshTokenRecord peerRecord = new RefreshTokenRecord(
+                "id1", OKTA_PID_USER1, "user1", "client1", AudienceConstants.PROVIDER_OKTA, "sub1",
+                null, RefreshTableConstants.STATUS_ACTIVE, "f1", null, null,
+                0L, now, now + 3600, now + 3600);
+        lenient().when(resolver.resolveByHash(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(new RefreshTokenResolution(peerRecord, true));
+
+        RefreshTokenValidationResult result = service.validate(token, "client1");
+        assertEquals(RefreshTokenValidationResult.Status.ACTIVE, result.status());
+        assertNotNull(result.record());
+        assertEquals("user1", result.record().userId());
+    }
+
+    @Test
+    void getUpstreamRefreshToken_picksBestAcrossRegions() {
+        RefreshTokenRegionResolver resolver = org.mockito.Mockito.mock(RefreshTokenRegionResolver.class);
+        service.refreshTokenRegionResolver = resolver;
+        long now = System.currentTimeMillis() / 1000;
+        RefreshTokenRecord peerRecord = new RefreshTokenRecord(
+                "id-peer", OKTA_PID_USER1, "user1", "c1", AudienceConstants.PROVIDER_OKTA, "sub",
+                "enc-peer-newer", RefreshTableConstants.STATUS_ACTIVE, "f1", null, null,
+                0L, now + 100, now + 7200, now + 7200);
+        lenient().when(resolver.resolveBestUpstream("user1", AudienceConstants.PROVIDER_OKTA))
+                .thenReturn(new RefreshTokenResolution(peerRecord, true));
+
+        String result = service.getUpstreamRefreshToken("user1", AudienceConstants.PROVIDER_OKTA);
+        assertEquals("enc-peer-newer", result);
+    }
+
+    @Test
+    void getByPrimaryKey_findsInPeerWhenLocalMissing() {
+        RefreshTokenRegionResolver resolver = org.mockito.Mockito.mock(RefreshTokenRegionResolver.class);
+        service.refreshTokenRegionResolver = resolver;
+        long now = System.currentTimeMillis() / 1000;
+        when(dynamoDbClient.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().build());
+        Map<String, AttributeValue> peerItem = new HashMap<>();
+        peerItem.put(RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build());
+        peerItem.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(OKTA_PID_USER1).build());
+        peerItem.put(RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build());
+        peerItem.put(RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("c1").build());
+        peerItem.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build());
+        peerItem.put(RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build());
+        peerItem.put(RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), AttributeValue.builder().s("f1").build());
+        peerItem.put(RefreshTableAttribute.ISSUED_AT.attr(), AttributeValue.builder().n(String.valueOf(now)).build());
+        peerItem.put(RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build());
+        peerItem.put(RefreshTableAttribute.TTL.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build());
+        lenient().when(resolver.resolveItemByPrimaryKey("id1", OKTA_PID_USER1)).thenReturn(peerItem);
+
+        RefreshTokenRecord record = service.getByPrimaryKey("id1", OKTA_PID_USER1);
+        assertNotNull(record);
+        assertEquals("id1", record.refreshTokenId());
+        assertEquals("user1", record.userId());
     }
 }

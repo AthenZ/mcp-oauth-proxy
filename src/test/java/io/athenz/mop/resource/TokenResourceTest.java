@@ -21,7 +21,9 @@ import io.athenz.mop.service.AuthorizationCodeService;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RefreshTokenService;
+import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
+import io.athenz.mop.service.UpstreamRefreshTransientException;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
 import io.athenz.mop.telemetry.TelemetryProviderResolver;
@@ -244,5 +246,99 @@ class TokenResourceTest {
         assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
         verify(authorizerService).getUserToken(OKTA_SUBJECT, PROVIDER);
         verify(upstreamRefreshService).storeInitialUpstreamToken(AudienceConstants.PROVIDER_OKTA + "#" + OKTA_SUBJECT, "wrapper-upstream-rt");
+    }
+
+    @Test
+    void refreshTokenGrant_whenUpstreamTransientCrossRegion_returns503AndDoesNotRevokeFamily() {
+        OAuth2TokenRequest request = new OAuth2TokenRequest();
+        request.setGrantType("refresh_token");
+        request.setRefreshToken("rt_validToken");
+        request.setClientId(CLIENT_ID);
+        request.setResource(RESOURCE);
+
+        String oktaProviderUserId = AudienceConstants.PROVIDER_OKTA + "#" + OKTA_SUBJECT;
+        RefreshTokenRecord record = new RefreshTokenRecord(
+                "refresh-id-1",
+                oktaProviderUserId,
+                USER_ID,
+                CLIENT_ID,
+                PROVIDER,
+                OKTA_SUBJECT,
+                "encrypted-upstream",
+                "ACTIVE",
+                TOKEN_FAMILY_ID,
+                null,
+                null,
+                0L,
+                System.currentTimeMillis() / 1000,
+                System.currentTimeMillis() / 1000 + 7776000L,
+                System.currentTimeMillis() / 1000 + 7776000L + 604800L
+        );
+
+        when(refreshTokenService.lookupUserIdAndProviderForLock(eq("rt_validToken"), eq(CLIENT_ID)))
+                .thenReturn(Optional.of(new RefreshTokenLockKey(USER_ID, PROVIDER)));
+        when(refreshTokenService.validate(eq("rt_validToken"), eq(CLIENT_ID)))
+                .thenReturn(RefreshTokenValidationResult.active(record));
+        when(refreshTokenService.rotate(eq("rt_validToken"), eq(CLIENT_ID)))
+                .thenReturn(new RefreshTokenRotateResult("rt_newToken", "refresh-id-2", oktaProviderUserId));
+        when(upstreamRefreshService.refreshUpstream(oktaProviderUserId))
+                .thenThrow(new UpstreamRefreshTransientException("peer ahead; replication pending"));
+
+        Response response = tokenResource.generateTokenOAuth2(request);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        OAuth2ErrorResponse body = (OAuth2ErrorResponse) response.getEntity();
+        assertNotNull(body);
+        assertEquals(OAuth2ErrorResponse.ErrorCode.INVALID_GRANT, body.error());
+        // CRITICAL: a transient cross-region replication lag must NOT revoke the user's refresh-token family.
+        verify(refreshTokenService, never()).revokeFamily(any());
+        verify(authorizerService, never()).cleanupAfterTerminalUpstreamRefreshFailure(any(), any(), any());
+    }
+
+    @Test
+    void refreshTokenGrant_whenUpstreamTerminalFailure_returns400AndRevokesFamily() {
+        OAuth2TokenRequest request = new OAuth2TokenRequest();
+        request.setGrantType("refresh_token");
+        request.setRefreshToken("rt_validToken");
+        request.setClientId(CLIENT_ID);
+        request.setResource(RESOURCE);
+
+        String oktaProviderUserId = AudienceConstants.PROVIDER_OKTA + "#" + OKTA_SUBJECT;
+        RefreshTokenRecord record = new RefreshTokenRecord(
+                "refresh-id-1",
+                oktaProviderUserId,
+                USER_ID,
+                CLIENT_ID,
+                PROVIDER,
+                OKTA_SUBJECT,
+                "encrypted-upstream",
+                "ACTIVE",
+                TOKEN_FAMILY_ID,
+                null,
+                null,
+                0L,
+                System.currentTimeMillis() / 1000,
+                System.currentTimeMillis() / 1000 + 7776000L,
+                System.currentTimeMillis() / 1000 + 7776000L + 604800L
+        );
+
+        when(refreshTokenService.lookupUserIdAndProviderForLock(eq("rt_validToken"), eq(CLIENT_ID)))
+                .thenReturn(Optional.of(new RefreshTokenLockKey(USER_ID, PROVIDER)));
+        when(refreshTokenService.validate(eq("rt_validToken"), eq(CLIENT_ID)))
+                .thenReturn(RefreshTokenValidationResult.active(record));
+        when(refreshTokenService.rotate(eq("rt_validToken"), eq(CLIENT_ID)))
+                .thenReturn(new RefreshTokenRotateResult("rt_newToken", "refresh-id-2", oktaProviderUserId));
+        when(upstreamRefreshService.refreshUpstream(oktaProviderUserId))
+                .thenThrow(new UpstreamRefreshException("Upstream Okta token revoked"));
+
+        Response response = tokenResource.generateTokenOAuth2(request);
+
+        assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), response.getStatus());
+        OAuth2ErrorResponse body = (OAuth2ErrorResponse) response.getEntity();
+        assertNotNull(body);
+        assertEquals(OAuth2ErrorResponse.ErrorCode.INVALID_GRANT, body.error());
+        // Terminal upstream failure: family is revoked and cleanup is invoked.
+        verify(refreshTokenService).revokeFamily(TOKEN_FAMILY_ID);
+        verify(authorizerService).cleanupAfterTerminalUpstreamRefreshFailure(USER_ID, PROVIDER, "encrypted-upstream");
     }
 }

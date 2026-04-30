@@ -61,14 +61,6 @@ tolerations: []
 
 otel:
   enabled: false
-  metrics:
-    enabled: true
-  logs:
-    enabled: false
-    handler:
-      enabled: false
-  instrument:
-    vertxHttp: false
   collector:
     endpoint: http://otel-collector:4317
   instrumentation:
@@ -173,6 +165,9 @@ application:
     tableName: ""
     kmsKeyId: ""
     stsRoleArn: ""
+    refreshTokenTableName: ""
+    upstreamTokenTableName: ""
+    refreshTokenAndUpstreamEnabled: true
   aws:
     dynamoDbTable:
     kmsKeyId:

@@ -16,7 +16,9 @@
 package io.athenz.mop.store.impl.aws;
 
 import io.athenz.mop.model.AuthorizationCode;
+import io.athenz.mop.model.RefreshTokenRecord;
 import io.athenz.mop.model.TokenWrapper;
+import io.athenz.mop.model.UpstreamTokenRecord;
 import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,9 +27,16 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
+import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -57,6 +66,13 @@ class CrossRegionTokenStoreFallbackTest {
         MockitoAnnotations.openMocks(this);
         setField(fallback, "fallbackTableName", Optional.of("fallback-table"));
         setField(fallback, "fallbackTableNameResolved", "fallback-table");
+        setField(fallback, "fallbackRefreshTokenTableName", Optional.of("fallback-refresh-tokens"));
+        setField(fallback, "fallbackRefreshTokenTableNameResolved", "fallback-refresh-tokens");
+        setField(fallback, "fallbackUpstreamTokenTableName", Optional.of("fallback-upstream-tokens"));
+        setField(fallback, "fallbackUpstreamTokenTableNameResolved", "fallback-upstream-tokens");
+        setField(fallback, "fallbackRegion", Optional.of("us-west-2"));
+        // Default to "new sub-flag enabled" so existing refresh/upstream tests behave as before.
+        setField(fallback, "refreshAndUpstreamEnabled", true);
         // Same @InjectMocks instance across tests: reset peer client and mock invocations
         setField(fallback, "fallbackClient", null);
         clearInvocations(tokenStoreDynamodb, dynamodbClientProvider, fallbackClient, oauthProxyMetrics);
@@ -180,5 +196,150 @@ class CrossRegionTokenStoreFallbackTest {
         setFallbackClient(fallbackClient);
         fallback.deleteAuthCode("c1", AudienceConstants.PROVIDER_OKTA);
         verify(tokenStoreDynamodb).deleteAuthCode(fallbackClient, "fallback-table", "c1", AudienceConstants.PROVIDER_OKTA);
+    }
+
+    @Test
+    void testLookupRefreshTokenByHash_WhenFallbackClientNull_ReturnsNull() {
+        assertNull(fallback.lookupRefreshTokenByHash("hash"));
+    }
+
+    @Test
+    void testLookupRefreshTokenByHash_WhenItemFound_ReturnsRecord() throws Exception {
+        setFallbackClient(fallbackClient);
+        Map<String, AttributeValue> item = Map.of(
+                RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build(),
+                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#u1").build(),
+                RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("u1").build(),
+                RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("c1").build(),
+                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build(),
+                RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build());
+        when(fallbackClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(item)).build());
+
+        RefreshTokenRecord record = fallback.lookupRefreshTokenByHash("hash");
+        assertNotNull(record);
+        assertEquals("id1", record.refreshTokenId());
+    }
+
+    @Test
+    void testLookupRefreshTokenByHash_WhenStoreThrows_ReturnsNull() throws Exception {
+        setFallbackClient(fallbackClient);
+        when(fallbackClient.query(any(QueryRequest.class))).thenThrow(new RuntimeException("DynamoDB"));
+        assertNull(fallback.lookupRefreshTokenByHash("hash"));
+        verify(oauthProxyMetrics).recordCrossRegionDynamoFailure(eq("lookupRefreshTokenByHash"), any(), any());
+    }
+
+    @Test
+    void testGetRefreshTokenItemByPrimaryKey_WhenFallbackClientNull_ReturnsNull() {
+        assertNull(fallback.getRefreshTokenItemByPrimaryKey("id1", "okta#u1"));
+    }
+
+    @Test
+    void testGetRefreshTokenItemByPrimaryKey_WhenItemFound_ReturnsItem() throws Exception {
+        setFallbackClient(fallbackClient);
+        Map<String, AttributeValue> item = Map.of(
+                RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id1").build(),
+                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#u1").build());
+        when(fallbackClient.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().item(item).build());
+
+        Map<String, AttributeValue> result = fallback.getRefreshTokenItemByPrimaryKey("id1", "okta#u1");
+        assertNotNull(result);
+        assertEquals("id1", result.get(RefreshTableAttribute.REFRESH_TOKEN_ID.attr()).s());
+    }
+
+    @Test
+    void testQueryBestUpstreamRefresh_WhenFallbackClientNull_ReturnsNull() {
+        assertNull(fallback.queryBestUpstreamRefresh("u1", AudienceConstants.PROVIDER_OKTA));
+    }
+
+    @Test
+    void testQueryBestUpstreamRefresh_PicksHighestIssuedAt() throws Exception {
+        setFallbackClient(fallbackClient);
+        long now = Instant.now().getEpochSecond();
+        Map<String, AttributeValue> older = Map.of(
+                RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("old").build(),
+                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#u1").build(),
+                RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("u1").build(),
+                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build(),
+                RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build(),
+                RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(), AttributeValue.builder().s("enc-old").build(),
+                RefreshTableAttribute.ISSUED_AT.attr(), AttributeValue.builder().n(String.valueOf(now - 100)).build(),
+                RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build());
+        Map<String, AttributeValue> newer = Map.of(
+                RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("new").build(),
+                RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#u1").build(),
+                RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("u1").build(),
+                RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build(),
+                RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build(),
+                RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(), AttributeValue.builder().s("enc-new").build(),
+                RefreshTableAttribute.ISSUED_AT.attr(), AttributeValue.builder().n(String.valueOf(now)).build(),
+                RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build());
+        when(fallbackClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(older, newer)).build());
+
+        RefreshTokenRecord record = fallback.queryBestUpstreamRefresh("u1", AudienceConstants.PROVIDER_OKTA);
+        assertNotNull(record);
+        assertEquals("new", record.refreshTokenId());
+        assertEquals("enc-new", record.encryptedUpstreamRefreshToken());
+    }
+
+    @Test
+    void testGetUpstreamToken_WhenFallbackClientNull_ReturnsEmpty() {
+        assertTrue(fallback.getUpstreamToken("okta#u1").isEmpty());
+    }
+
+    @Test
+    void testGetUpstreamToken_WhenItemFound_ReturnsRecord() throws Exception {
+        setFallbackClient(fallbackClient);
+        Map<String, AttributeValue> item = Map.of(
+                UpstreamTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("okta#u1").build(),
+                UpstreamTableAttribute.ENCRYPTED_OKTA_REFRESH_TOKEN.attr(), AttributeValue.builder().s("enc").build(),
+                UpstreamTableAttribute.VERSION.attr(), AttributeValue.builder().n("7").build());
+        when(fallbackClient.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().item(item).build());
+
+        Optional<UpstreamTokenRecord> result = fallback.getUpstreamToken("okta#u1");
+        assertTrue(result.isPresent());
+        assertEquals(7L, result.get().version());
+    }
+
+    @Test
+    void testGetTokenAsync_WhenFallbackClientNull_ReturnsNull() {
+        assertNull(fallback.getTokenAsync("id1", AudienceConstants.PROVIDER_OKTA));
+    }
+
+    @Test
+    void testIsRefreshAndUpstreamActive_RequiresBothFlags() throws Exception {
+        setField(fallback, "enabled", true);
+        setField(fallback, "refreshAndUpstreamEnabled", true);
+        assertTrue(fallback.isRefreshAndUpstreamActive());
+
+        setField(fallback, "enabled", true);
+        setField(fallback, "refreshAndUpstreamEnabled", false);
+        assertFalse(fallback.isRefreshAndUpstreamActive());
+
+        setField(fallback, "enabled", false);
+        setField(fallback, "refreshAndUpstreamEnabled", true);
+        assertFalse(fallback.isRefreshAndUpstreamActive());
+    }
+
+    @Test
+    void testRefreshAndUpstreamSubFlag_DisablesNewPathsButLeavesUserTokenPath() throws Exception {
+        setFallbackClient(fallbackClient);
+        setField(fallback, "refreshAndUpstreamEnabled", false);
+
+        assertNull(fallback.lookupRefreshTokenByHash("hash"));
+        assertNull(fallback.getRefreshTokenItemByPrimaryKey("id1", "okta#u1"));
+        assertNull(fallback.queryBestUpstreamRefresh("u1", AudienceConstants.PROVIDER_OKTA));
+        assertTrue(fallback.getUpstreamToken("okta#u1").isEmpty());
+        verify(fallbackClient, never()).query(any(QueryRequest.class));
+        verify(fallbackClient, never()).getItem(any(GetItemRequest.class));
+
+        TokenWrapper expected = new TokenWrapper("k", AudienceConstants.PROVIDER_OKTA, "id", "a", "r", 3600L);
+        when(tokenStoreDynamodb.getUserTokenByAccessTokenHash(eq(fallbackClient), eq("fallback-table"), any()))
+                .thenReturn(expected);
+        TokenWrapper result = fallback.getUserTokenByAccessTokenHash("hash");
+        assertSame(expected, result);
     }
 }

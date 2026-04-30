@@ -24,6 +24,7 @@ import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RefreshTokenService;
 import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
+import io.athenz.mop.service.UpstreamRefreshTransientException;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
 import io.athenz.mop.telemetry.OauthClientLabel;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
@@ -393,6 +394,18 @@ public class TokenResource {
                         return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient,
                                 Response.status(Response.Status.SERVICE_UNAVAILABLE)
                                         .entity(OAuth2ErrorResponse.of(OAuth2ErrorResponse.ErrorCode.SERVER_ERROR,
+                                                "Temporarily unavailable; please retry"))
+                                        .build());
+                    } catch (UpstreamRefreshTransientException e) {
+                        // Cross-region replication lag (peer rotated the upstream token; local pod
+                        // hasn't seen it yet even after a brief in-process wait). The user's MoP
+                        // refresh-token family is still valid — do NOT revoke. Return 401 so the
+                        // client retries; the next attempt typically lands after replication.
+                        log.warn("refresh_token grant: transient upstream refresh failure (replication lag): {}", e.getMessage());
+                        return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient,
+                                Response.status(Response.Status.UNAUTHORIZED)
+                                        .entity(OAuth2ErrorResponse.of(
+                                                OAuth2ErrorResponse.ErrorCode.INVALID_GRANT,
                                                 "Temporarily unavailable; please retry"))
                                         .build());
                     } catch (UpstreamRefreshException e) {

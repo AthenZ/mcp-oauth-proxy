@@ -45,6 +45,17 @@ public class OauthProxyMetrics {
     private static final AttributeKey<String> OPERATION = AttributeKey.stringKey("operation");
     private static final AttributeKey<String> USERINFO_FAILURE_REASON = AttributeKey.stringKey("userinfo_failure_reason");
 
+    private static final List<String> CROSS_REGION_FALLBACK_CALL_SITES = List.of(
+            "authorize_user_token",
+            "authorizer_get_user_token",
+            "userinfo_token_lookup",
+            "userinfo_okta_lookup",
+            "refresh_token_validate",
+            "refresh_token_get_pk",
+            "refresh_token_get_upstream",
+            "upstream_token_get",
+            "auth_code_tokens_get");
+
     private Meter meter;
     private LongCounter httpErrors4xx;
     private LongCounter httpErrors5xx;
@@ -68,6 +79,8 @@ public class OauthProxyMetrics {
     private LongCounter authorizeRedirectTotal;
     private DoubleHistogram userinfoDurationSeconds;
     private LongCounter authCodeValidationTotal;
+    private LongCounter upstreamTokenCasAbortedPeerNewerTotal;
+    private LongCounter upstreamTokenReplicationWaitTotal;
 
     @PostConstruct
     void init() {
@@ -114,6 +127,13 @@ public class OauthProxyMetrics {
                 .build();
 
         authCodeValidationTotal = meter.counterBuilder("mop_auth_code_validation_total").build();
+
+        upstreamTokenCasAbortedPeerNewerTotal = meter
+                .counterBuilder("mop_upstream_token_cas_aborted_peer_newer_total")
+                .build();
+        upstreamTokenReplicationWaitTotal = meter
+                .counterBuilder("mop_upstream_token_replication_wait_total")
+                .build();
     }
 
     /**
@@ -153,6 +173,31 @@ public class OauthProxyMetrics {
         userinfoDurationSeconds.record(0.0, empty);
 
         authCodeValidationTotal.add(0, empty);
+        upstreamTokenCasAbortedPeerNewerTotal.add(0, empty);
+
+        Attributes replWaitSucceeded = Attributes.builder().put(OUTCOME, "succeeded").build();
+        Attributes replWaitStillStale = Attributes.builder().put(OUTCOME, "still_stale").build();
+        upstreamTokenReplicationWaitTotal.add(0, replWaitSucceeded);
+        upstreamTokenReplicationWaitTotal.add(0, replWaitStillStale);
+
+        for (String callSite : CROSS_REGION_FALLBACK_CALL_SITES) {
+            Attributes triggeredAttrs = Attributes.builder()
+                    .put(OAUTH_PROVIDER, OauthProviderLabel.UNKNOWN)
+                    .put(OAUTH_OPERATION, callSite)
+                    .put(PRIMARY_REGION, "")
+                    .put(FALLBACK_REGION, "")
+                    .build();
+            crossRegionFallbackTriggeredTotal.add(0, triggeredAttrs);
+            Attributes exhaustedAttrs = Attributes.builder()
+                    .put(OAUTH_PROVIDER, OauthProviderLabel.UNKNOWN)
+                    .put(OAUTH_OPERATION, callSite)
+                    .put(PRIMARY_REGION, "")
+                    .put(FALLBACK_REGION, "")
+                    .put(HTTP_STATUS, "401")
+                    .put(ERROR_TYPE, "not_found")
+                    .build();
+            crossRegionFallbackExhaustedTotal.add(0, exhaustedAttrs);
+        }
 
         for (ExchangeStep step : ExchangeStep.values()) {
             Attributes stepAttrs = Attributes.builder()
@@ -393,6 +438,26 @@ public class OauthProxyMetrics {
             b.put(USERINFO_FAILURE_REASON, userinfoFailureReason);
         }
         userinfoDurationSeconds.record(seconds, b.build());
+    }
+
+    /**
+     * Increment when {@code UpstreamRefreshService} aborts the local centralized-Okta-refresh CAS
+     * write because the cross-region peer carries a newer {@code version}, or because the row is
+     * only present in the peer region. The local pod skips both the Okta refresh call and the
+     * local CAS in this case; replication is expected to catch up before the next /token call.
+     */
+    public void recordUpstreamTokenCasAbortedPeerNewer(String providerUserId) {
+        upstreamTokenCasAbortedPeerNewerTotal.add(1, Attributes.empty());
+    }
+
+    /**
+     * Record the outcome of an in-process replication wait performed by
+     * {@code UpstreamRefreshService} when it detects the peer region has a newer view of the
+     * upstream-token row. {@code outcome} should be {@code "succeeded"} (peer caught up locally
+     * after the sleep) or {@code "still_stale"} (we still see the peer ahead and abort transient).
+     */
+    public void recordUpstreamTokenReplicationWait(String outcome) {
+        upstreamTokenReplicationWaitTotal.add(1, Attributes.builder().put(OUTCOME, outcome).build());
     }
 
     /**

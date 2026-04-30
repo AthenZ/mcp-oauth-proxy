@@ -16,6 +16,7 @@
 package io.athenz.mop.quarkus;
 
 import io.athenz.mop.model.AuthorizationCodeTokensDO;
+import io.athenz.mop.service.AuthCodeTokensRegionResolver;
 import io.athenz.mop.store.TokenStoreAsync;
 import io.quarkus.arc.Unremovable;
 import io.quarkus.oidc.AuthorizationCodeTokens;
@@ -46,6 +47,9 @@ public class CustomTokenStateManager implements TokenStateManager {
     @Inject
     TokenStoreAsync tokenStore;
 
+    @Inject
+    AuthCodeTokensRegionResolver authCodeTokensRegionResolver;
+
     private static final String STORE_KEY_PREFIX = "oidc:token:";
 
     @ConfigProperty(name = "server.token-exchange.idp")
@@ -69,7 +73,7 @@ public class CustomTokenStateManager implements TokenStateManager {
     public Uni<AuthorizationCodeTokens> getTokens(RoutingContext routingContext, OidcTenantConfig oidcConfig, String tokenState, OidcRequestContext<AuthorizationCodeTokens> requestContext) {
         String provider = getProviderFromOidcConfig(oidcConfig);
         log.info("Getting tokens for {}, provider: {}", tokenState, provider);
-        return tokenStore.getTokenAsync(tokenState, provider).
+        return authCodeTokensRegionResolver.resolve(tokenState, provider).
         onItem().ifNotNull().transform(tokenDO -> {
             AuthorizationCodeTokens tokens = new AuthorizationCodeTokens();
             tokens.setAccessToken(tokenDO.getAccessToken());

@@ -21,6 +21,7 @@ import io.athenz.mop.model.RefreshTokenRotateResult;
 import io.athenz.mop.model.RefreshTokenValidationResult;
 import io.athenz.mop.store.impl.aws.RefreshTableAttribute;
 import io.athenz.mop.store.impl.aws.RefreshTableConstants;
+import io.athenz.mop.store.impl.aws.RefreshTokenStoreDynamodbHelpers;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
@@ -40,7 +41,6 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
-import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.Put;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
@@ -60,6 +60,15 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
 
     @Inject
     DynamoDbClient dynamoDbClient;
+
+    /**
+     * Optional cross-region resolver. When the bean is present (always in production), reads on
+     * {@code refresh_token_hash} (validate / replay / lock-key lookup), {@code refresh_token_id}
+     * primary-key fetch (rotate), and the user-provider GSI (getUpstreamRefreshToken) consult the
+     * peer region's table after a local miss. Writes (rotate / store / revokeFamily) stay local.
+     */
+    @Inject
+    RefreshTokenRegionResolver refreshTokenRegionResolver;
 
     @ConfigProperty(name = "server.refresh-token.table-name")
     String tableName;
@@ -302,32 +311,9 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         if (userId == null || userId.isEmpty() || provider == null || provider.isEmpty()) {
             return null;
         }
-        QueryResponse response = dynamoDbClient.query(QueryRequest.builder()
-            .tableName(tableName)
-            .indexName(RefreshTableConstants.GSI_USER_PROVIDER)
-            .keyConditionExpression(
-                RefreshTableAttribute.USER_ID.attr() + " = :uid AND " + RefreshTableAttribute.PROVIDER.attr() + " = :prov")
-            .expressionAttributeValues(Map.of(
-                ":uid", AttributeValue.builder().s(userId).build(),
-                ":prov", AttributeValue.builder().s(provider).build()))
-            .build());
-        if (response.items() == null || response.items().isEmpty()) {
-            return null;
-        }
-        long now = System.currentTimeMillis() / 1000;
-        RefreshTokenRecord best = null;
-        for (Map<String, AttributeValue> item : response.items()) {
-            RefreshTokenRecord record = itemToRecord(item);
-            if (record.expiresAt() > 0 && now > record.expiresAt()) {
-                continue;
-            }
-            if (RefreshTableConstants.STATUS_REVOKED.equals(record.status())) {
-                continue;
-            }
-            if (best == null || record.issuedAt() > best.issuedAt()) {
-                best = record;
-            }
-        }
+        RefreshTokenRecord best = refreshTokenRegionResolver != null
+                ? refreshTokenRegionResolver.resolveBestUpstream(userId, provider).record()
+                : RefreshTokenStoreDynamodbHelpers.queryBestUpstreamRefresh(dynamoDbClient, tableName, userId, provider);
         if (best == null || best.encryptedUpstreamRefreshToken() == null || best.encryptedUpstreamRefreshToken().isEmpty()) {
             return null;
         }
@@ -335,16 +321,15 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
     }
 
     private RefreshTokenRecord lookupByHash(String hash) {
-        QueryResponse response = dynamoDbClient.query(QueryRequest.builder()
-            .tableName(tableName)
-            .indexName(RefreshTableConstants.GSI_REFRESH_TOKEN_HASH)
-            .keyConditionExpression(RefreshTableAttribute.REFRESH_TOKEN_HASH.attr() + " = :h")
-            .expressionAttributeValues(Map.of(":h", AttributeValue.builder().s(hash).build()))
-            .build());
-        int count = response.items() != null ? response.items().size() : 0;
-        log.debug("lookupByHash: GSI query returned {} item(s) (hash redacted)", count);
-        if (count == 0) return null;
-        return itemToRecord(response.items().get(0));
+        if (refreshTokenRegionResolver != null) {
+            RefreshTokenResolution resolution = refreshTokenRegionResolver.resolveByHash(hash);
+            log.debug("lookupByHash: resolver returned record={} fromFallback={} (hash redacted)",
+                    resolution.record() != null, resolution.resolvedFromFallback());
+            return resolution.record();
+        }
+        RefreshTokenRecord record = RefreshTokenStoreDynamodbHelpers.lookupByHash(dynamoDbClient, tableName, hash);
+        log.debug("lookupByHash: returned record={} (hash redacted)", record != null);
+        return record;
     }
 
     @Override
@@ -421,53 +406,23 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
 
     public RefreshTokenRecord getByPrimaryKey(String refreshTokenId, String providerUserId) {
         Map<String, AttributeValue> item = getItemByPrimaryKey(refreshTokenId, providerUserId);
-        return item == null ? null : itemToRecord(item);
+        return item == null ? null : RefreshTokenStoreDynamodbHelpers.itemToRecord(item);
     }
 
+    /**
+     * Local-then-peer PK lookup. Used by {@code rotate} so a row that was just rotated/written in
+     * the peer region is still found here even if the global-table replication has not landed
+     * locally yet. Returns {@code null} when both regions miss.
+     */
     private Map<String, AttributeValue> getItemByPrimaryKey(String refreshTokenId, String providerUserId) {
-        Map<String, AttributeValue> key = Map.of(
-            RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s(refreshTokenId).build(),
-            RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(providerUserId).build()
-        );
-        var getResponse = dynamoDbClient.getItem(GetItemRequest.builder().tableName(tableName).key(key).build());
-        if (getResponse.item() == null || getResponse.item().isEmpty()) return null;
-        return getResponse.item();
-    }
-
-    private static RefreshTokenRecord itemToRecord(Map<String, AttributeValue> item) {
-        return new RefreshTokenRecord(
-            getS(item, RefreshTableAttribute.REFRESH_TOKEN_ID.attr()),
-            getS(item, RefreshTableAttribute.PROVIDER_USER_ID.attr()),
-            getS(item, RefreshTableAttribute.USER_ID.attr()),
-            getS(item, RefreshTableAttribute.CLIENT_ID.attr()),
-            getS(item, RefreshTableAttribute.PROVIDER.attr()),
-            getS(item, RefreshTableAttribute.PROVIDER_SUBJECT.attr()),
-            getS(item, RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr()),
-            getS(item, RefreshTableAttribute.STATUS.attr()),
-            getS(item, RefreshTableAttribute.TOKEN_FAMILY_ID.attr()),
-            getS(item, RefreshTableAttribute.ROTATED_FROM.attr()),
-            getS(item, RefreshTableAttribute.REPLACED_BY.attr()),
-            getN(item, RefreshTableAttribute.ROTATED_AT.attr(), 0L),
-            getN(item, RefreshTableAttribute.ISSUED_AT.attr(), 0L),
-            getN(item, RefreshTableAttribute.EXPIRES_AT.attr(), 0L),
-            getN(item, RefreshTableAttribute.TTL.attr(), 0L)
-        );
-    }
-
-    private static String getS(Map<String, AttributeValue> item, String key) {
-        if (!item.containsKey(key)) return null;
-        AttributeValue v = item.get(key);
-        return v == null || v.s() == null ? null : v.s();
-    }
-
-    private static long getN(Map<String, AttributeValue> item, String key, long def) {
-        if (!item.containsKey(key)) return def;
-        AttributeValue v = item.get(key);
-        if (v == null || v.n() == null) return def;
-        try {
-            return Long.parseLong(v.n());
-        } catch (NumberFormatException e) {
-            return def;
+        Map<String, AttributeValue> local = RefreshTokenStoreDynamodbHelpers.getItemByPrimaryKey(
+                dynamoDbClient, tableName, refreshTokenId, providerUserId);
+        if (local != null) {
+            return local;
         }
+        if (refreshTokenRegionResolver != null) {
+            return refreshTokenRegionResolver.resolveItemByPrimaryKey(refreshTokenId, providerUserId);
+        }
+        return null;
     }
 }
