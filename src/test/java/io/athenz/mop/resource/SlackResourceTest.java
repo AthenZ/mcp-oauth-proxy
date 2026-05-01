@@ -41,6 +41,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -152,7 +153,7 @@ class SlackResourceTest {
 
         assertEquals(Response.Status.SEE_OTHER.getStatusCode(), response.getStatus());
         verify(authorizerService).storeTokens(
-                eq(LOOKUP_KEY), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN), eq(REFRESH_TOKEN), eq("slack"));
+                eq(LOOKUP_KEY), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN), eq(REFRESH_TOKEN), eq("slack"), eq("client-1"));
         verify(oidcSession).logout();
     }
 
@@ -172,7 +173,7 @@ class SlackResourceTest {
 
         assertEquals(Response.Status.SEE_OTHER.getStatusCode(), response.getStatus());
         verify(authorizerService).storeTokens(
-                eq(LOOKUP_KEY), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN), eq("existing-upstream-refresh"), eq("slack"));
+                eq(LOOKUP_KEY), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN), eq("existing-upstream-refresh"), eq("slack"), eq("client-1"));
     }
 
     @Test
@@ -189,7 +190,7 @@ class SlackResourceTest {
         Response response = slackResource.authorize(STATE);
 
         assertEquals(Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(), response.getStatus());
-        verify(authorizerService, never()).storeTokens(any(), any(), any(), any(), any(), any());
+        verify(authorizerService, never()).storeTokens(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
         verify(oidcSession).logout();
     }
 
@@ -210,7 +211,7 @@ class SlackResourceTest {
 
         assertEquals(Response.Status.SEE_OTHER.getStatusCode(), response.getStatus());
         verify(authorizerService).storeTokens(
-                eq(LOOKUP_KEY), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN), eq("brand-new-refresh"), eq("slack"));
+                eq(LOOKUP_KEY), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN), eq("brand-new-refresh"), eq("slack"), eq("client-1"));
     }
 
     @Test

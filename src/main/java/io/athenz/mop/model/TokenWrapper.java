@@ -23,8 +23,14 @@ public record TokenWrapper(
         String idToken,
         String accessToken,
         String refreshToken,
-        Long ttl
+        Long ttl,
+        String clientId
 ) {
+    public TokenWrapper(String key, String provider, String idToken, String accessToken,
+                        String refreshToken, Long ttl) {
+        this(key, provider, idToken, accessToken, refreshToken, ttl, null);
+    }
+
     public boolean isExpired() {
         return ttl != null && ttl <= Instant.now().getEpochSecond();
     }

@@ -71,7 +71,36 @@ public class AuthorizerService {
     @Inject
     UserTokenRegionResolver userTokenRegionResolver;
 
+    @Inject
+    RefreshCoordinationService refreshCoordinationService;
+
+    @Inject
+    RefreshTokenService refreshTokenService;
+
+    /**
+     * Compose the DynamoDB partition-key value for a per-MCP-client bearer row in
+     * {@code mcp-oauth-proxy-tokens}. Falls back to the bare {@code user} when {@code clientId}
+     * is null/blank so unauthenticated edge paths degrade to today's behavior. Sanitizes any
+     * '#' in {@code clientId} (defense-in-depth; DCR registration also rejects '#').
+     */
+    static String compositeUserKey(String clientId, String user) {
+        if (clientId == null || clientId.isEmpty()) {
+            return user;
+        }
+        String safeClientId = clientId.indexOf('#') >= 0 ? clientId.replace("#", "_") : clientId;
+        return safeClientId + "#" + user;
+    }
+
+    /**
+     * Backward-compatible overload that delegates with {@code clientId=null}. Only writes the
+     * bare {@code (lookupKey, provider)} row. New callers should pass {@code clientId} via the
+     * 6-arg overload so a per-client bearer row is also written.
+     */
     public void storeTokens(String lookupKey, JsonWebToken idToken, JsonWebToken accessToken, RefreshToken refreshToken, String provider) {
+        storeTokens(lookupKey, idToken, accessToken, refreshToken, provider, null);
+    }
+
+    public void storeTokens(String lookupKey, JsonWebToken idToken, JsonWebToken accessToken, RefreshToken refreshToken, String provider, String clientId) {
         String user = userPrefix + accessToken.getName();
         storeTokens(
                 user,
@@ -79,12 +108,28 @@ public class AuthorizerService {
                 idToken != null ? idToken.getRawToken() : null,
                 accessToken.getRawToken(),
                 refreshToken != null ? refreshToken.getToken() : null,
-                provider
+                provider,
+                clientId
         );
     }
 
+    /**
+     * Store both the bare upstream-session-marker row {@code (lookupKey, provider)} (used by
+     * AuthorizeResource to skip upstream OAuth on subsequent MCP clients and by TokenResource's
+     * upstream-RT inheritance chain) AND a per-MCP-client bearer row
+     * {@code (clientId#lookupKey, provider)} (resolved by /userinfo via the access_token_hash GSI).
+     * When {@code clientId} is null/empty (legacy callers), only the bare row is written.
+     */
+    /**
+     * Backward-compatible overload that delegates with {@code clientId=null}. Only writes the
+     * bare {@code (lookupKey, provider)} row. Prefer the 7-arg overload for new callers.
+     */
     public void storeTokens(String user, String lookupKey, String idToken, String accessToken, String refreshToken, String provider) {
-        log.info("storing tokens for lookupKey: {} and user: {} from provider: {}", lookupKey, user, provider);
+        storeTokens(user, lookupKey, idToken, accessToken, refreshToken, provider, null);
+    }
+
+    public void storeTokens(String user, String lookupKey, String idToken, String accessToken, String refreshToken, String provider, String clientId) {
+        log.info("storing tokens for lookupKey: {} and user: {} from provider: {} (clientId={})", lookupKey, user, provider, clientId);
         long nowSeconds = Instant.now().getEpochSecond();
         TokenWrapper cachedToken = new TokenWrapper(
                 user,
@@ -95,11 +140,30 @@ public class AuthorizerService {
                 nowSeconds + ttl + TOKEN_STORE_TTL_GRACE_SECONDS
         );
         tokenStore.storeUserToken(lookupKey, provider, cachedToken);
+        if (clientId != null && !clientId.isEmpty()) {
+            tokenStore.storeUserToken(lookupKey, provider, clientId, cachedToken);
+            log.info("Also stored per-client bearer row for lookupKey: {} provider: {} clientId: {}", lookupKey, provider, clientId);
+        }
     }
 
     public TokenWrapper getUserToken(String lookupKey, String provider) {
         return userTokenRegionResolver
                 .resolveByUserProvider(lookupKey, provider, UserTokenRegionResolver.CALL_SITE_AUTHORIZER_GET_USER_TOKEN)
+                .token();
+    }
+
+    /**
+     * Read the per-MCP-client bearer row {@code (clientId#lookupKey, provider)} if present.
+     * Returns {@code null} when {@code clientId} is null/empty (no composite key to construct)
+     * or when no such row exists.
+     */
+    public TokenWrapper getUserTokenForClient(String lookupKey, String provider, String clientId) {
+        if (clientId == null || clientId.isEmpty()) {
+            return null;
+        }
+        return userTokenRegionResolver
+                .resolveByUserProvider(compositeUserKey(clientId, lookupKey), provider,
+                        UserTokenRegionResolver.CALL_SITE_AUTHORIZER_GET_USER_TOKEN)
                 .token();
     }
 
@@ -129,7 +193,15 @@ public class AuthorizerService {
         return new AuthorizationResultDO(AuthResult.AUTHORIZED, token);
     }
 
+    /**
+     * Backward-compatible overload (no clientId; per-client bearer row not written). Prefer
+     * the 5-arg variant.
+     */
     public TokenResponse getTokenFromAuthorizationServer(String subject, String scopes, String resource, TokenWrapper token) {
+        return getTokenFromAuthorizationServer(subject, scopes, resource, token, null);
+    }
+
+    public TokenResponse getTokenFromAuthorizationServer(String subject, String scopes, String resource, TokenWrapper token, String clientId) {
         TokenResponse tokenResponse;
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
         if (resourceMeta == null) {
@@ -183,7 +255,7 @@ public class AuthorizerService {
 
             log.info("non token-exchange response: ttl: {}", atDO.token().ttl());
 
-            storeExchangedTokenByAudienceIfNeeded(resource, token, atDO.token());
+            storeExchangedTokenByAudienceIfNeeded(resource, token, atDO.token(), clientId);
 
             tokenResponse = new TokenResponse(
                     atDO.token().accessToken(),
@@ -210,7 +282,7 @@ public class AuthorizerService {
      * @param oktaToken The original Okta token containing the user/subject
      * @param exchangedToken The token obtained from token exchange
      */
-    private void storeExchangedTokenByAudienceIfNeeded(String resource, TokenWrapper oktaToken, TokenWrapper exchangedToken) {
+    private void storeExchangedTokenByAudienceIfNeeded(String resource, TokenWrapper oktaToken, TokenWrapper exchangedToken, String clientId) {
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
         if (resourceMeta == null || resourceMeta.audience() == null) {
             return;
@@ -220,7 +292,7 @@ public class AuthorizerService {
             return;
         }
         String storeProvider = exchangedTokenUserinfoStoreProviderResolver.resolve(resource, audience);
-        log.info("Storing exchanged token for user: {} provider: {}", oktaToken.key(), storeProvider);
+        log.info("Storing exchanged token for user: {} provider: {} clientId: {}", oktaToken.key(), storeProvider, clientId);
 
         long nowSeconds = Instant.now().getEpochSecond();
         long absoluteTtl = nowSeconds + (exchangedToken.ttl() != null ? exchangedToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
@@ -234,8 +306,15 @@ public class AuthorizerService {
                 absoluteTtl
         );
 
-        tokenStore.storeUserToken(oktaToken.key(), storeProvider, toStore);
-        log.info("Successfully stored token for user: {} provider: {} with ttl: {}", oktaToken.key(), storeProvider, toStore.ttl());
+        if (clientId != null && !clientId.isEmpty()) {
+            tokenStore.storeUserToken(oktaToken.key(), storeProvider, clientId, toStore);
+        } else {
+            // Defensive fallback for callers that have not yet been threaded with clientId.
+            // /userinfo will resolve via access_token_hash GSI in either case; the bare row
+            // form keeps today's behavior for legacy invocations.
+            tokenStore.storeUserToken(oktaToken.key(), storeProvider, toStore);
+        }
+        log.info("Successfully stored token for user: {} provider: {} clientId: {} with ttl: {}", oktaToken.key(), storeProvider, clientId, toStore.ttl());
     }
 
     /**
@@ -250,7 +329,7 @@ public class AuthorizerService {
      * @param returnedToken  The token we are returning to the client (may be exchanged or same as upstream)
      */
     private void storeRefreshedAccessToken(String resource, String userId, String provider,
-                                          TokenWrapper upstreamToken, TokenWrapper returnedToken) {
+                                          TokenWrapper upstreamToken, TokenWrapper returnedToken, String clientId) {
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
         String storeProvider;
         TokenWrapper toStore;
@@ -281,7 +360,11 @@ public class AuthorizerService {
             );
             log.info("Storing returned token for subject: {} provider: {} so /userinfo can resolve it", userId, storeProvider);
         }
-        tokenStore.storeUserToken(userId, storeProvider, toStore);
+        if (clientId != null && !clientId.isEmpty()) {
+            tokenStore.storeUserToken(userId, storeProvider, clientId, toStore);
+        } else {
+            tokenStore.storeUserToken(userId, storeProvider, toStore);
+        }
     }
 
     /**
@@ -297,12 +380,46 @@ public class AuthorizerService {
      * @param upstreamRefreshToken    decrypted upstream refresh token from refresh table
      * @return RefreshAndTokenResult with new access token and new upstream refresh (if IDP returned one), or null on failure
      */
+    /**
+     * Backward-compatible overload (no clientId; per-client bearer row not written). Prefer
+     * the 5-arg variant.
+     */
     public RefreshAndTokenResult refreshUpstreamAndGetToken(String userId, String provider, String resource,
                                                            String upstreamRefreshToken) {
+        return refreshUpstreamAndGetToken(userId, provider, resource, upstreamRefreshToken, null);
+    }
+
+    public RefreshAndTokenResult refreshUpstreamAndGetToken(String userId, String provider, String resource,
+                                                           String upstreamRefreshToken, String clientId) {
         if (StringUtils.isBlank(upstreamRefreshToken)) {
             log.warn("refreshUpstreamAndGetToken: no upstream refresh token for user {} provider {}", userId, provider);
             return null;
         }
+        // Generalized per-(provider, user) distributed lock: serialize concurrent refresh calls
+        // for the same upstream identity across all MCP clients so the IdP only sees one refresh
+        // per "burst" and the rotated RT is propagated atomically. Same pattern UpstreamRefreshService
+        // applies for Okta; here we extend it to all OIDC providers (Google Workspace, GitHub, Slack,
+        // Embrace, Atlassian).
+        String lockKey = provider + "#" + userId;
+        try {
+            refreshCoordinationService.acquireUpstream(lockKey);
+        } catch (IllegalStateException e) {
+            log.warn("refreshUpstreamAndGetToken: could not acquire upstream lock for {}: {}", lockKey, e.getMessage());
+            return null;
+        }
+        try {
+            return refreshUpstreamAndGetTokenLocked(userId, provider, resource, upstreamRefreshToken, clientId);
+        } finally {
+            try {
+                refreshCoordinationService.releaseUpstream(lockKey);
+            } catch (Exception e) {
+                log.warn("refreshUpstreamAndGetToken: lock release failed for {}: {}", lockKey, e.getMessage());
+            }
+        }
+    }
+
+    private RefreshAndTokenResult refreshUpstreamAndGetTokenLocked(String userId, String provider, String resource,
+                                                                   String upstreamRefreshToken, String clientId) {
         TokenExchangeService exchangeService = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
         TokenWrapper newToken = exchangeService.refreshWithUpstreamToken(upstreamRefreshToken);
         if (newToken == null) {
@@ -341,7 +458,7 @@ public class AuthorizerService {
             log.warn("Token exchange after refresh failed for user {} resource {}", userId, resource);
             return null;
         }
-        storeRefreshedAccessToken(resource, userId, provider, toStore, atDO.token());
+        storeRefreshedAccessToken(resource, userId, provider, toStore, atDO.token(), clientId);
         String scopeStr = tokenResponseScope(atDO, resourceMeta);
         TokenResponse tokenResponse = new TokenResponse(
                 atDO.token().accessToken(),
@@ -357,7 +474,15 @@ public class AuthorizerService {
      * Does not return a new upstream refresh for per-row refresh table updates — upstream is only in the
      * centralized store.
      */
+    /**
+     * Backward-compatible overload (no clientId; per-client bearer row not written). Prefer the
+     * 5-arg variant.
+     */
     public RefreshAndTokenResult completeRefreshWithOktaTokens(String userId, String provider, String resource, OktaTokens oktaTokens) {
+        return completeRefreshWithOktaTokens(userId, provider, resource, oktaTokens, null);
+    }
+
+    public RefreshAndTokenResult completeRefreshWithOktaTokens(String userId, String provider, String resource, OktaTokens oktaTokens, String clientId) {
         if (oktaTokens == null) {
             return null;
         }
@@ -389,7 +514,7 @@ public class AuthorizerService {
             log.warn("Token exchange after centralized Okta refresh failed for user {} resource {}", userId, resource);
             return null;
         }
-        storeRefreshedAccessToken(resource, userId, provider, toStore, atDO.token());
+        storeRefreshedAccessToken(resource, userId, provider, toStore, atDO.token(), clientId);
         String scopeStr = tokenResponseScope(atDO, resourceMeta);
         TokenResponse tokenResponse = new TokenResponse(
                 atDO.token().accessToken(),
@@ -398,6 +523,117 @@ public class AuthorizerService {
                 scopeStr
         );
         return new RefreshAndTokenResult(tokenResponse, null);
+    }
+
+    /**
+     * Warm auth-code path for passthrough providers (Google Workspace, GitHub, Slack, Embrace,
+     * Atlassian, Okta-as-default): when a second/third MCP client (e.g. Claude or Codex) joins
+     * an existing upstream session that was originally cold-bootstrapped by another client (e.g.
+     * Cursor), the bare row {@code (userId, provider)} carries an access token minted for that
+     * other client. Returning it as-is would resolve via /userinfo's GSI to a row whose partition
+     * key collides across clients, so we instead mint a fresh upstream bearer for the current
+     * MCP client by calling {@code refreshWithUpstreamToken(bareUpstreamRT)} under the
+     * generalized per-{@code (provider, user)} distributed lock, then write it into a per-client
+     * bearer row {@code (clientId#userId, provider)}.
+     *
+     * <p>Each call to {@code refreshWithUpstreamToken} causes the OIDC provider to mint a fresh
+     * signed access token even when the same upstream RT is replayed, so three concurrent warm
+     * clients yield three distinct bearers with three distinct {@code access_token_hash} values
+     * — no GSI collision.
+     *
+     * <p>If the upstream rotates the RT during this call, we propagate the new RT into the bare
+     * row (keeps {@code AuthorizeResource:193} session marker / inheritance fresh) and into all
+     * sibling MoP refresh-token rows for {@code (userId, provider)} so other clients' refresh
+     * grants don't fail with a stale upstream RT.
+     *
+     * @return the fresh per-client bearer wrapped in a {@link TokenResponse}, or {@code null} if
+     *         the upstream refresh failed (caller should fall back to the existing path or
+     *         surface a 401).
+     */
+    public TokenResponse mintBearerForWarmCacheClient(String userId, String provider, String resource, String clientId,
+                                                       String sharedUpstreamRefreshToken) {
+        if (clientId == null || clientId.isEmpty()) {
+            log.warn("mintBearerForWarmCacheClient called with empty clientId; refusing to mint a bearer that would land in a bare row");
+            return null;
+        }
+        if (sharedUpstreamRefreshToken == null || sharedUpstreamRefreshToken.isEmpty()) {
+            log.warn("mintBearerForWarmCacheClient: no shared upstream refresh token for user {} provider {}; cannot mint", userId, provider);
+            return null;
+        }
+        String lockKey = provider + "#" + userId;
+        try {
+            refreshCoordinationService.acquireUpstream(lockKey);
+        } catch (IllegalStateException e) {
+            log.warn("mintBearerForWarmCacheClient: could not acquire upstream lock for {}: {}", lockKey, e.getMessage());
+            return null;
+        }
+        try {
+            TokenExchangeService exchangeService = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
+            TokenWrapper newToken;
+            try {
+                newToken = exchangeService.refreshWithUpstreamToken(sharedUpstreamRefreshToken);
+            } catch (Exception e) {
+                log.warn("mintBearerForWarmCacheClient: refreshWithUpstreamToken threw for user {} provider {}: {}",
+                        userId, provider, e.getMessage());
+                return null;
+            }
+            if (newToken == null) {
+                log.warn("mintBearerForWarmCacheClient: refreshWithUpstreamToken returned null for user {} provider {}", userId, provider);
+                return null;
+            }
+            long nowSeconds = Instant.now().getEpochSecond();
+            long absoluteTtl = nowSeconds + (newToken.ttl() != null ? newToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
+            String rotatedUpstreamRefresh = StringUtils.isNotBlank(newToken.refreshToken()) ? newToken.refreshToken() : null;
+            String effectiveUpstreamRefresh = rotatedUpstreamRefresh != null ? rotatedUpstreamRefresh : sharedUpstreamRefreshToken;
+
+            // Refresh the bare row so AuthorizeResource:193 / firstNonEmpty inheritance see the
+            // freshest upstream session marker (access_token + possibly rotated RT). Do NOT use
+            // the per-client overload here: the bare row has no clientId.
+            TokenWrapper bareRowUpdate = new TokenWrapper(
+                    userId,
+                    provider,
+                    newToken.idToken(),
+                    newToken.accessToken(),
+                    effectiveUpstreamRefresh,
+                    absoluteTtl
+            );
+            tokenStore.storeUserToken(userId, provider, bareRowUpdate);
+
+            TokenWrapper perClientRow = new TokenWrapper(
+                    userId,
+                    provider,
+                    newToken.idToken(),
+                    newToken.accessToken(),
+                    effectiveUpstreamRefresh,
+                    absoluteTtl
+            );
+            tokenStore.storeUserToken(userId, provider, clientId, perClientRow);
+
+            if (rotatedUpstreamRefresh != null) {
+                try {
+                    refreshTokenService.updateUpstreamRefreshForAllRowsWithUserAndProvider(userId, provider, rotatedUpstreamRefresh);
+                } catch (Exception e) {
+                    log.warn("mintBearerForWarmCacheClient: failed to propagate rotated upstream RT to refresh-token rows for user {} provider {}: {}",
+                            userId, provider, e.getMessage());
+                }
+            }
+
+            log.info("mintBearerForWarmCacheClient: minted fresh bearer for user {} provider {} clientId {} (rotatedUpstreamRT={})",
+                    userId, provider, clientId, rotatedUpstreamRefresh != null);
+
+            return new TokenResponse(
+                    newToken.accessToken(),
+                    TOKEN_TYPE,
+                    newToken.ttl() != null ? newToken.ttl() : 3600L,
+                    null
+            );
+        } finally {
+            try {
+                refreshCoordinationService.releaseUpstream(lockKey);
+            } catch (Exception e) {
+                log.warn("mintBearerForWarmCacheClient: lock release failed for {}: {}", lockKey, e.getMessage());
+            }
+        }
     }
 
     /**

@@ -18,7 +18,23 @@ package io.athenz.mop.store;
 import io.athenz.mop.model.TokenWrapper;
 
 public interface TokenStore {
+    /**
+     * Store a per-MCP-client bearer row. Composes the partition-key value as
+     * "<clientId>#<user>" so multiple MCP clients (Cursor, Claude, Codex) can each
+     * have their own bearer for the same (user, provider) without overwriting each
+     * other. /userinfo's access_token_hash GSI then resolves each client's bearer
+     * to its own row.
+     */
+    void storeUserToken(String user, String provider, String clientId, TokenWrapper token);
+
+    /**
+     * Store a row that is NOT scoped to an MCP client (e.g. the upstream-IDP
+     * session marker / refresh-token cache row used by AuthorizeResource and the
+     * upstream-refresh-inheritance lookup, or the Okta SSO row refreshed by
+     * /userinfo's own internal Okta refresh path).
+     */
     void storeUserToken(String user, String provider, TokenWrapper token);
+
     TokenWrapper getUserToken(String user, String provider);
     TokenWrapper getUserTokenByAccessTokenHash(String accessTokenHash);
 

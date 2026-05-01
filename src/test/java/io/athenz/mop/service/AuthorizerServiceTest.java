@@ -70,6 +70,12 @@ class AuthorizerServiceTest {
     @Mock
     private UserTokenRegionResolver userTokenRegionResolver;
 
+    @Mock
+    private RefreshCoordinationService refreshCoordinationService;
+
+    @Mock
+    private RefreshTokenService refreshTokenService;
+
     @InjectMocks
     private AuthorizerService authorizerService;
 
@@ -974,5 +980,148 @@ class AuthorizerServiceTest {
         assertEquals("exchanged-access-token", result.tokenResponse().accessToken());
         assertNull(result.newUpstreamRefreshToken());
         verify(tokenStore, times(2)).storeUserToken(eq("user1"), eq(AudienceConstants.PROVIDER_OKTA), any(TokenWrapper.class));
+    }
+
+    // -- compositeUserKey + per-client storeTokens + warm-mint tests --------------------------
+
+    @Test
+    void compositeUserKey_nullClientId_returnsBareUser() {
+        assertEquals("u", AuthorizerService.compositeUserKey(null, "u"));
+    }
+
+    @Test
+    void compositeUserKey_emptyClientId_returnsBareUser() {
+        assertEquals("u", AuthorizerService.compositeUserKey("", "u"));
+    }
+
+    @Test
+    void compositeUserKey_normalClientId_prefixes() {
+        assertEquals("Cursor#u", AuthorizerService.compositeUserKey("Cursor", "u"));
+    }
+
+    @Test
+    void compositeUserKey_clientIdWithHash_sanitizes() {
+        assertEquals("Cur_sor#u", AuthorizerService.compositeUserKey("Cur#sor", "u"));
+    }
+
+    @Test
+    void storeTokens_withClientId_writesBareRowAndPerClientRow() {
+        String lookupKey = "test-lookup";
+        String provider = AudienceConstants.PROVIDER_OKTA;
+
+        authorizerService.storeTokens("user.bob", lookupKey, "id", "access", "refresh", provider, "Cursor");
+
+        verify(tokenStore).storeUserToken(eq(lookupKey), eq(provider), any(TokenWrapper.class));
+        verify(tokenStore).storeUserToken(eq(lookupKey), eq(provider), eq("Cursor"), any(TokenWrapper.class));
+    }
+
+    @Test
+    void storeTokens_withNullClientId_writesOnlyBareRow() {
+        String lookupKey = "test-lookup";
+        String provider = AudienceConstants.PROVIDER_OKTA;
+
+        authorizerService.storeTokens("user.bob", lookupKey, "id", "access", "refresh", provider, null);
+
+        verify(tokenStore).storeUserToken(eq(lookupKey), eq(provider), any(TokenWrapper.class));
+        verify(tokenStore, never()).storeUserToken(any(), any(), anyString(), any(TokenWrapper.class));
+    }
+
+    @Test
+    void mintBearerForWarmCacheClient_returnsNullWhenClientIdEmpty() {
+        TokenResponse result = authorizerService.mintBearerForWarmCacheClient(
+                "u1", "google-docs", "https://r", "", "upstream-rt");
+        assertNull(result, "Empty clientId must refuse to mint a bearer (would land in a bare row)");
+        verifyNoInteractions(refreshCoordinationService);
+    }
+
+    @Test
+    void mintBearerForWarmCacheClient_returnsNullWhenSharedRefreshTokenBlank() {
+        TokenResponse result = authorizerService.mintBearerForWarmCacheClient(
+                "u1", "google-docs", "https://r", "Cursor", "");
+        assertNull(result);
+        verifyNoInteractions(refreshCoordinationService);
+    }
+
+    @Test
+    void mintBearerForWarmCacheClient_acquiresLockMintsAndWritesPerClientRow() {
+        String userId = "u1";
+        String provider = "google-docs";
+        String resource = "https://r";
+        String clientId = "Claude";
+        String upstreamRt = "shared-upstream-rt";
+
+        TokenWrapper minted = new TokenWrapper(userId, provider, "id-claude", "access-claude", null, 3600L);
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider)).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.refreshWithUpstreamToken(upstreamRt)).thenReturn(minted);
+
+        TokenResponse result = authorizerService.mintBearerForWarmCacheClient(
+                userId, provider, resource, clientId, upstreamRt);
+
+        assertNotNull(result);
+        assertEquals("access-claude", result.accessToken());
+        assertEquals("Bearer", result.tokenType());
+        verify(refreshCoordinationService).acquireUpstream(provider + "#" + userId);
+        verify(refreshCoordinationService).releaseUpstream(provider + "#" + userId);
+        // Bare row updated with the freshly-minted upstream session marker
+        verify(tokenStore).storeUserToken(eq(userId), eq(provider), any(TokenWrapper.class));
+        // Per-client row written so /userinfo's GSI lookup resolves deterministically for Claude
+        verify(tokenStore).storeUserToken(eq(userId), eq(provider), eq(clientId), any(TokenWrapper.class));
+        // No rotated RT (minted.refreshToken is null) so propagation is skipped
+        verify(refreshTokenService, never()).updateUpstreamRefreshForAllRowsWithUserAndProvider(any(), any(), any());
+    }
+
+    @Test
+    void mintBearerForWarmCacheClient_propagatesRotatedRefreshTokenAcrossSiblingRows() {
+        String userId = "u1";
+        String provider = "embrace";
+        String clientId = "Claude";
+        String oldRt = "old-rt";
+        String newRt = "rotated-rt";
+
+        TokenWrapper minted = new TokenWrapper(userId, provider, "id", "new-access", newRt, 3600L);
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider)).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.refreshWithUpstreamToken(oldRt)).thenReturn(minted);
+
+        TokenResponse result = authorizerService.mintBearerForWarmCacheClient(
+                userId, provider, "https://r", clientId, oldRt);
+
+        assertNotNull(result);
+        verify(refreshTokenService).updateUpstreamRefreshForAllRowsWithUserAndProvider(userId, provider, newRt);
+    }
+
+    @Test
+    void mintBearerForWarmCacheClient_returnsNullWhenLockNotAcquired() {
+        doThrow(new IllegalStateException("lock contention")).when(refreshCoordinationService)
+                .acquireUpstream(anyString());
+
+        TokenResponse result = authorizerService.mintBearerForWarmCacheClient(
+                "u1", "google-docs", "https://r", "Cursor", "rt");
+
+        assertNull(result);
+        verify(tokenStore, never()).storeUserToken(any(), any(), anyString(), any(TokenWrapper.class));
+        verify(refreshCoordinationService, never()).releaseUpstream(any());
+    }
+
+    @Test
+    void mintBearerForWarmCacheClient_returnsNullWhenRefreshFails_andStillReleasesLock() {
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-docs")).thenReturn(tokenExchangeService);
+        when(tokenExchangeService.refreshWithUpstreamToken("rt")).thenReturn(null);
+
+        TokenResponse result = authorizerService.mintBearerForWarmCacheClient(
+                "u1", "google-docs", "https://r", "Cursor", "rt");
+
+        assertNull(result);
+        verify(refreshCoordinationService).acquireUpstream("google-docs#u1");
+        verify(refreshCoordinationService).releaseUpstream("google-docs#u1");
+        verify(tokenStore, never()).storeUserToken(any(), any(), anyString(), any(TokenWrapper.class));
+    }
+
+    @Test
+    void refreshUpstreamAndGetToken_acquiresAndReleasesLockEvenOnNullToken() {
+        // Empty upstreamRefreshToken short-circuits before lock acquisition.
+        RefreshAndTokenResult r = authorizerService.refreshUpstreamAndGetToken(
+                "u1", AudienceConstants.PROVIDER_OKTA, "https://r", "");
+        assertNull(r);
+        verifyNoInteractions(refreshCoordinationService);
     }
 }

@@ -221,7 +221,8 @@ public class TokenResource {
         Response response = getTokenFromResourceAuthorizationServer(
                 authCode.getSubject(),
                 authCode.getScope(),
-                authCode.getResource()
+                authCode.getResource(),
+                clientId
         );
         if (response.getStatus() != 200 || response.getEntity() == null) {
             return recordTokenGrant(resourceForMetrics, "authorization_code", t0, oauthClient, response);
@@ -330,7 +331,8 @@ public class TokenResource {
         // Subject is the authenticated client
         String subject = clientId;
 
-        Response r = getTokenFromResourceAuthorizationServer(subject, request.getScope(), resource);
+        // For client_credentials, the mTLS-authenticated client_id IS the calling MCP client.
+        Response r = getTokenFromResourceAuthorizationServer(subject, request.getScope(), resource, clientId);
         return recordTokenGrant(resource, "client_credentials", t0, oauthClient, r);
     }
 
@@ -388,7 +390,7 @@ public class TokenResource {
                     try {
                         var oktaTokens = upstreamRefreshService.refreshUpstream(providerUserId);
                         refreshResult = authorizerService.completeRefreshWithOktaTokens(
-                                userId, provider, request.getResource(), oktaTokens);
+                                userId, provider, request.getResource(), oktaTokens, request.getClientId());
                     } catch (IllegalStateException e) {
                         log.warn("refresh_token grant: upstream refresh lock not acquired: {}", e.getMessage());
                         return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient,
@@ -422,7 +424,8 @@ public class TokenResource {
                             userId,
                             provider,
                             request.getResource(),
-                            result.record().encryptedUpstreamRefreshToken()
+                            result.record().encryptedUpstreamRefreshToken(),
+                            request.getClientId()
                     );
                     if (refreshResult != null && refreshResult.newUpstreamRefreshToken() != null
                             && !refreshResult.newUpstreamRefreshToken().isEmpty()) {
@@ -460,9 +463,18 @@ public class TokenResource {
 
     /**
      * Internal method to get JWT token
-     * Shared by both auth_code and client_credentials flows
+     * Shared by both auth_code and client_credentials flows.
+     *
+     * <p>For passthrough providers (Google Workspace, GitHub, Slack, Embrace, Atlassian, Okta-as-default)
+     * the bearer returned to the client IS the upstream IDP access token. When a second/third MCP
+     * client (e.g. Claude after Cursor) joins an existing upstream session, the bare row's access
+     * token belongs to whichever client triggered the OIDC callback last — returning it would
+     * result in /userinfo's access_token_hash GSI resolving to a row whose partition key collides
+     * across clients. To avoid that, when we detect a warm cache + missing per-client row for
+     * this {@code clientId}, we mint a fresh upstream bearer via
+     * {@link AuthorizerService#mintBearerForWarmCacheClient}.
      */
-    private Response getTokenFromResourceAuthorizationServer(String subject, String scopes, String resource) {
+    private Response getTokenFromResourceAuthorizationServer(String subject, String scopes, String resource, String clientId) {
         // Perform authorization check
         AuthorizationResultDO authorizationDO = authorizerService.authorize(subject, scopes, resource);
 
@@ -484,9 +496,48 @@ public class TokenResource {
                     .build();
         }
 
+        // Warm auth-code path for passthrough providers: when a per-client bearer row
+        // already exists for this (clientId, subject, provider), reuse it; otherwise mint a fresh
+        // upstream bearer for this client so /userinfo's GSI lookup resolves deterministically.
+        // Audience-style providers (Glean, GCP, Splunk, Grafana, Evaluate, Databricks) do their
+        // own per-call exchanged-token mint inside AuthorizerService.getTokenFromAuthorizationServer
+        // and write the per-client row from there, so we skip the warm-mint short-circuit for them.
+        if (clientId != null && !clientId.isEmpty() && resource != null) {
+            ResourceMeta resourceMeta = configService.getResourceMeta(resource);
+            String provider = resourceMeta != null ? resourceMeta.idpServer() : configService.getDefaultIDP();
+            boolean isPassthrough = resourceMeta == null
+                    || resourceMeta.audience() == null
+                    || !AudienceConstants.storesExchangedTokenForUserinfo(resourceMeta.audience());
+            if (isPassthrough && provider != null) {
+                TokenWrapper perClientRow = authorizerService.getUserTokenForClient(subject, provider, clientId);
+                if (perClientRow != null && perClientRow.accessToken() != null && !perClientRow.isExpired()) {
+                    log.info("Reusing existing per-client bearer row for subject={} provider={} clientId={}", subject, provider, clientId);
+                    long expiresIn = perClientRow.ttl() != null
+                            ? Math.max(0L, perClientRow.ttl() - (System.currentTimeMillis() / 1000L))
+                            : 3600L;
+                    return Response.ok(new TokenResponse(
+                            perClientRow.accessToken(),
+                            "Bearer",
+                            expiresIn,
+                            scopes
+                    )).build();
+                }
+                TokenWrapper bareRow = authorizationDO.token();
+                if (bareRow != null && bareRow.refreshToken() != null && !bareRow.refreshToken().isEmpty()) {
+                    TokenResponse minted = authorizerService.mintBearerForWarmCacheClient(
+                            subject, provider, resource, clientId, bareRow.refreshToken());
+                    if (minted != null) {
+                        return Response.ok(minted).build();
+                    }
+                    log.warn("Warm-mint returned null for subject={} provider={} clientId={}; falling back to passthrough exchange",
+                            subject, provider, clientId);
+                }
+            }
+        }
+
         log.info("Getting JWT for resource: {} and subject: {}", resource, subject);
 
-        TokenResponse response = authorizerService.getTokenFromAuthorizationServer(subject, scopes, resource, authorizationDO.token());
+        TokenResponse response = authorizerService.getTokenFromAuthorizationServer(subject, scopes, resource, authorizationDO.token(), clientId);
         if (response == null) {
             log.error("Failed to obtain token from authorization server for subject: {}", subject);
             return Response.status(Response.Status.FORBIDDEN)

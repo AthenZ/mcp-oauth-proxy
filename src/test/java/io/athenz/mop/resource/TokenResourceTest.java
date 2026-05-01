@@ -137,7 +137,8 @@ class TokenResourceTest {
                 eq(USER_ID),
                 eq(PROVIDER),
                 eq(RESOURCE),
-                eq("encrypted-upstream")))
+                eq("encrypted-upstream"),
+                eq(CLIENT_ID)))
                 .thenReturn(null);
 
         Response response = tokenResource.generateTokenOAuth2(request);
@@ -183,7 +184,7 @@ class TokenResourceTest {
         TokenWrapper authToken = new TokenWrapper("k", PROVIDER, null, "access", null, 9999999999L);
         when(authorizerService.authorize(eq(OKTA_SUBJECT), any(), eq(RESOURCE)))
                 .thenReturn(new AuthorizationResultDO(AuthResult.AUTHORIZED, authToken));
-        when(authorizerService.getTokenFromAuthorizationServer(eq(OKTA_SUBJECT), any(), eq(RESOURCE), eq(authToken)))
+        when(authorizerService.getTokenFromAuthorizationServer(eq(OKTA_SUBJECT), any(), eq(RESOURCE), eq(authToken), eq(CLIENT_ID)))
                 .thenReturn(new TokenResponse("access", "Bearer", 3600L, "scope"));
 
         UpstreamTokenRecord central = new UpstreamTokenRecord(
@@ -230,7 +231,7 @@ class TokenResourceTest {
         TokenWrapper authToken = new TokenWrapper("k", PROVIDER, null, "access", null, 9999999999L);
         when(authorizerService.authorize(eq(OKTA_SUBJECT), any(), eq(RESOURCE)))
                 .thenReturn(new AuthorizationResultDO(AuthResult.AUTHORIZED, authToken));
-        when(authorizerService.getTokenFromAuthorizationServer(eq(OKTA_SUBJECT), any(), eq(RESOURCE), eq(authToken)))
+        when(authorizerService.getTokenFromAuthorizationServer(eq(OKTA_SUBJECT), any(), eq(RESOURCE), eq(authToken), eq(CLIENT_ID)))
                 .thenReturn(new TokenResponse("access", "Bearer", 3600L, "scope"));
 
         when(upstreamRefreshService.getCurrentUpstream(AudienceConstants.PROVIDER_OKTA + "#" + OKTA_SUBJECT)).thenReturn(Optional.empty());

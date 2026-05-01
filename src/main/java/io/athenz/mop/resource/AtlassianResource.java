@@ -114,7 +114,8 @@ public class AtlassianResource extends BaseResource {
             rawAccessToken,
             rawAccessToken,
             refreshToStore,
-            PROVIDER
+            PROVIDER,
+            authorizationCode.getClientId()
         );
         
         logoutFromProvider(PROVIDER, oidcSession);

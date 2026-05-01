@@ -112,7 +112,8 @@ public class GithubResource extends BaseResource {
                 accessTokenCredential.getToken(),
                 accessTokenCredential.getToken(),
                 refreshToStore,
-                PROVIDER);
+                PROVIDER,
+                authorizationCode.getClientId());
         logoutFromProvider(PROVIDER, oidcSession);
         return buildSuccessRedirect(authorizationCode.getRedirectUri(), state, authorizationCode.getState());
     }

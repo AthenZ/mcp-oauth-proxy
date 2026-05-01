@@ -80,6 +80,18 @@ public class RegisterResource {
             return Response.status(Response.Status.BAD_REQUEST).entity("client_name validation failed").build();
         }
 
+        // Reject '#' in client_name: the per-MCP-client bearer row in mcp-oauth-proxy-tokens uses
+        // "<clientId>#<userId>" as its DynamoDB partition-key value, and TokenStore backends split
+        // on the first '#' on read to recover (clientId, userId). Allowing '#' here would let one
+        // client masquerade as another by registering a name like "Cursor#evil".
+        if (request.clientName().indexOf('#') >= 0) {
+            log.error("Rejecting client registration: client_name contains '#': {}", request.clientName());
+            oauthProxyMetrics.recordDynamicClientRegistration(false, "invalid_client_name", oauthClient);
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity("client_name must not contain '#'")
+                    .build();
+        }
+
         if (validateAttestationJwt && !isValidAttestationJwt(request)) {
             oauthProxyMetrics.recordDynamicClientRegistration(false, "forbidden", oauthClient);
             return Response.status(Response.Status.FORBIDDEN).entity("token does not come from expected domain and/or role").build();
