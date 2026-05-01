@@ -203,7 +203,10 @@ class GoogleWorkspaceResourceTest {
         .when()
             .get("/" + provider + "/authorize")
         .then()
-            .statusCode(anyOf(is(500), is(401)));
+            // 200 is the friendly reconnect page when no upstream refresh exists for this user;
+            // 303 is the success path when an inherited upstream refresh is found; 401 if the
+            // session is rejected upstream by Quarkus OIDC.
+            .statusCode(anyOf(is(200), is(303), is(401)));
     }
 
     @ParameterizedTest
@@ -237,6 +240,9 @@ class GoogleWorkspaceResourceTest {
         .when()
             .get("/" + provider + "/authorize")
         .then()
-            .statusCode(anyOf(is(500), is(401)));
+            // 200 is now returned (reconnect HTML page) instead of 500 when Google omits the
+            // refresh_token AND no sibling client of this user has an active upstream refresh
+            // on file. 401 still possible if Quarkus rejects the synthetic session up front.
+            .statusCode(anyOf(is(200), is(401)));
     }
 }

@@ -85,6 +85,8 @@ class RefreshTokenRegionResolverTest {
                 RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("c1").build(),
                 RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build(),
                 RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build(),
+                RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(),
+                        AttributeValue.builder().s("enc-" + id).build(),
                 RefreshTableAttribute.ISSUED_AT.attr(), AttributeValue.builder().n("100").build(),
                 RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(System.currentTimeMillis() / 1000 + 3600)).build());
     }

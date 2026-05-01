@@ -171,7 +171,8 @@ public class AuthorizeResource extends BaseResource {
         idToken != null ? idToken.getRawToken() : null,
         rawAccessToken,
         refreshToStore,
-        providerDefault);
+        providerDefault,
+        request.getClientId());
         log.info("after storeToken call in AuthorizeResource Token issuer: {} subject: {} resourceMeta.idpServer: {}", providerDefault, subject,
                 resourceMeta.idpServer());
 

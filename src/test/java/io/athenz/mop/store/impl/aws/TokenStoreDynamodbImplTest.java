@@ -483,4 +483,116 @@ class TokenStoreDynamodbImplTest {
         TokenWrapper noTtl = new TokenWrapper("u", "p", null, "a", null, null);
         assertFalse(noTtl.isExpired());
     }
+
+    // -- Per-MCP-client bearer-row tests (composite partition key) ----------------------------
+
+    @Test
+    void compositeUserKey_nullClientId_returnsBareUser() {
+        assertEquals(TEST_USER, TokenStoreDynamodbImpl.compositeUserKey(null, TEST_USER));
+    }
+
+    @Test
+    void compositeUserKey_emptyClientId_returnsBareUser() {
+        assertEquals(TEST_USER, TokenStoreDynamodbImpl.compositeUserKey("", TEST_USER));
+    }
+
+    @Test
+    void compositeUserKey_normalClientId_prefixes() {
+        assertEquals("Cursor#" + TEST_USER, TokenStoreDynamodbImpl.compositeUserKey("Cursor", TEST_USER));
+    }
+
+    @Test
+    void compositeUserKey_clientIdWithHash_sanitizes() {
+        // Defense-in-depth: DCR registration also rejects '#'; if one slips through, sanitize
+        // by replacing '#' with '_' so split-on-first-'#' still recovers the right (clientId, userId).
+        assertEquals("Cur_sor#" + TEST_USER, TokenStoreDynamodbImpl.compositeUserKey("Cur#sor", TEST_USER));
+    }
+
+    @Test
+    void storeUserToken_withClientId_writesCompositePartitionKey() {
+        PutItemResponse putItemResponse = (PutItemResponse) PutItemResponse.builder()
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.putItem(any(PutItemRequest.class))).thenReturn(putItemResponse);
+
+        tokenStore.storeUserToken(TEST_USER, TEST_PROVIDER, "Cursor", testToken);
+
+        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
+        verify(dynamoDbClient).putItem(captor.capture());
+        Map<String, AttributeValue> item = captor.getValue().item();
+        assertEquals("Cursor#" + TEST_USER, item.get(TokenTableAttribute.USER.attr()).s(),
+                "Per-client bearer row's partition key must be '<clientId>#<userId>'");
+        assertEquals(TEST_PROVIDER, item.get(TokenTableAttribute.PROVIDER.attr()).s());
+        assertEquals(testAccessToken, item.get(TokenTableAttribute.ACCESS_TOKEN.attr()).s());
+    }
+
+    @Test
+    void storeUserToken_withNullClientId_writesBarePartitionKey() {
+        PutItemResponse putItemResponse = (PutItemResponse) PutItemResponse.builder()
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.putItem(any(PutItemRequest.class))).thenReturn(putItemResponse);
+
+        tokenStore.storeUserToken(TEST_USER, TEST_PROVIDER, (String) null, testToken);
+
+        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
+        verify(dynamoDbClient).putItem(captor.capture());
+        Map<String, AttributeValue> item = captor.getValue().item();
+        assertEquals(TEST_USER, item.get(TokenTableAttribute.USER.attr()).s(),
+                "Null clientId must degrade to bare userId partition key");
+    }
+
+    @Test
+    void getUserToken_perClientRow_stripsClientIdPrefixIntoTokenWrapperClientId() {
+        // Simulate a per-client row: USER attribute is "Cursor#user.testuser".
+        Map<String, AttributeValue> returnedItem = new HashMap<>();
+        returnedItem.put(TokenTableAttribute.USER.attr(),
+                AttributeValue.builder().s("Cursor#" + TEST_USER).build());
+        returnedItem.put(TokenTableAttribute.PROVIDER.attr(),
+                AttributeValue.builder().s(TEST_PROVIDER).build());
+        returnedItem.put(TokenTableAttribute.ACCESS_TOKEN.attr(),
+                AttributeValue.builder().s(testAccessToken).build());
+        returnedItem.put(TokenTableAttribute.TTL.attr(),
+                AttributeValue.builder().n(TEST_TTL.toString()).build());
+
+        GetItemResponse getResp = (GetItemResponse) GetItemResponse.builder()
+                .item(returnedItem)
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.getItem(any(GetItemRequest.class))).thenReturn(getResp);
+
+        TokenWrapper result = tokenStore.getUserToken("Cursor#" + TEST_USER, TEST_PROVIDER);
+
+        assertNotNull(result);
+        assertEquals(TEST_USER, result.key(),
+                "TokenWrapper.key() must be the bare userId so downstream Okta lookups by (userId, provider) keep working");
+        assertEquals("Cursor", result.clientId(),
+                "TokenWrapper.clientId() must surface the partition-key prefix so /userinfo can publish mcp_client_id");
+    }
+
+    @Test
+    void getUserToken_legacyBareRow_clientIdIsNull() {
+        Map<String, AttributeValue> returnedItem = new HashMap<>();
+        returnedItem.put(TokenTableAttribute.USER.attr(),
+                AttributeValue.builder().s(TEST_USER).build());
+        returnedItem.put(TokenTableAttribute.PROVIDER.attr(),
+                AttributeValue.builder().s(TEST_PROVIDER).build());
+        returnedItem.put(TokenTableAttribute.ACCESS_TOKEN.attr(),
+                AttributeValue.builder().s(testAccessToken).build());
+        returnedItem.put(TokenTableAttribute.TTL.attr(),
+                AttributeValue.builder().n(TEST_TTL.toString()).build());
+
+        GetItemResponse getResp = (GetItemResponse) GetItemResponse.builder()
+                .item(returnedItem)
+                .sdkHttpResponse(mockHttpResponse)
+                .build();
+        when(dynamoDbClient.getItem(any(GetItemRequest.class))).thenReturn(getResp);
+
+        TokenWrapper result = tokenStore.getUserToken(TEST_USER, TEST_PROVIDER);
+
+        assertNotNull(result);
+        assertEquals(TEST_USER, result.key());
+        assertNull(result.clientId(),
+                "Legacy bare rows have no '#' prefix; clientId must remain null so /userinfo omits the mcp_client_id claim");
+    }
 }

@@ -146,7 +146,16 @@ public class UserInfoResource {
         }
 
         Map<String, Object> userInfo = buildUserInfo(idToken, tokenByHash.provider());
-        log.info("Successfully returned userinfo for user={} provider={} (claims not logged)", user, tokenByHash.provider());
+        // The per-MCP-client bearer row carries clientId in its partition-key prefix
+        // ("<clientId>#<userId>"); TokenStore backends extract it into TokenWrapper.clientId on
+        // read. Surface it as mcp_client_id alongside mcp_resource_idp so downstream consumers
+        // can attribute the bearer to the originating MCP client. Legacy bare rows have no
+        // prefix; we omit the claim entirely in that case (no default, no placeholder).
+        if (tokenByHash.clientId() != null && !tokenByHash.clientId().isEmpty() && !userInfo.isEmpty()) {
+            userInfo.put("mcp_client_id", tokenByHash.clientId());
+        }
+        log.info("Successfully returned userinfo for user={} provider={} clientId={} (claims not logged)",
+                user, tokenByHash.provider(), tokenByHash.clientId());
         return finishUserinfo(startNanos, providerLabel, true, 200, null, null,
                 Response.ok(userInfo).type(MediaType.APPLICATION_JSON).build());
     }

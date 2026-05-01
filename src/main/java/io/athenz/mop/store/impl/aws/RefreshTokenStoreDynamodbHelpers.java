@@ -74,8 +74,18 @@ public final class RefreshTokenStoreDynamodbHelpers {
 
     /**
      * Query {@link RefreshTableConstants#GSI_USER_PROVIDER} for a (userId, provider) pair and
-     * return the best non-revoked, unexpired record (highest issued_at). The encrypted upstream
-     * refresh value is read off the winning row. Returns {@code null} when no row qualifies.
+     * return the best non-revoked, unexpired record (highest issued_at).
+     *
+     * <p>The {@code encrypted_upstream_refresh_token} attribute is configured for client-side
+     * encryption (see {@code DynamodbClientProvider#buildRefreshTokensTableEncryptionConfig}).
+     * The AWS DynamoDB Encryption Client only decrypts attributes returned via {@code GetItem},
+     * {@code PutItem} and similar base-table operations; results returned from a GSI {@code Query}
+     * carry the raw ciphertext as a Binary attribute, which our String-typed marshalling
+     * ({@link #getS}) reads back as {@code null}. We therefore use the GSI to identify the
+     * winning row by (status, expiry, issued_at) and then re-fetch that row by primary key on
+     * the base table so the encryption interceptor can decrypt the upstream refresh token.
+     *
+     * <p>Returns {@code null} when no row qualifies.
      */
     public static RefreshTokenRecord queryBestUpstreamRefresh(DynamoDbClient client, String table,
                                                               String userId, String provider) {
@@ -104,6 +114,19 @@ public final class RefreshTokenStoreDynamodbHelpers {
             }
             if (best == null || record.issuedAt() > best.issuedAt()) {
                 best = record;
+            }
+        }
+        if (best == null) {
+            return null;
+        }
+        // The GSI projection holds the raw ciphertext for encrypted_upstream_refresh_token.
+        // Re-fetch the winning row by primary key so the encryption interceptor decrypts it.
+        if ((best.encryptedUpstreamRefreshToken() == null || best.encryptedUpstreamRefreshToken().isEmpty())
+                && best.refreshTokenId() != null && best.providerUserId() != null) {
+            Map<String, AttributeValue> baseItem =
+                    getItemByPrimaryKey(client, table, best.refreshTokenId(), best.providerUserId());
+            if (baseItem != null) {
+                return itemToRecord(baseItem);
             }
         }
         return best;

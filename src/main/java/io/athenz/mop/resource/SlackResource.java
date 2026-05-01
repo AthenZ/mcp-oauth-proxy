@@ -123,7 +123,8 @@ public class SlackResource extends BaseResource {
                 newAccessToken,
                 newAccessToken,
                 refreshTokenToStore,
-                PROVIDER);
+                PROVIDER,
+                authorizationCode.getClientId());
 
         logoutFromProvider(PROVIDER, oidcSession);
         return buildSuccessRedirect(authorizationCode.getRedirectUri(), state, authorizationCode.getState());

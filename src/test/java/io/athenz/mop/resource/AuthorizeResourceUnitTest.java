@@ -154,7 +154,8 @@ class AuthorizeResourceUnitTest {
                 any(),
                 accessTokenCaptor.capture(),
                 any(),
-                eq(AudienceConstants.PROVIDER_OKTA));
+                eq(AudienceConstants.PROVIDER_OKTA),
+                eq(CLIENT_ID));
         assertEquals(OPAQUE_ACCESS_TOKEN, accessTokenCaptor.getValue(),
                 "Opaque access token must be forwarded to storeTokens unchanged");
     }
@@ -184,7 +185,7 @@ class AuthorizeResourceUnitTest {
         ArgumentCaptor<String> accessTokenCaptor = ArgumentCaptor.forClass(String.class);
         verify(authorizerService).storeTokens(
                 anyString(), anyString(), any(), accessTokenCaptor.capture(), any(),
-                eq(AudienceConstants.PROVIDER_OKTA));
+                eq(AudienceConstants.PROVIDER_OKTA), eq(CLIENT_ID));
         assertEquals(null, accessTokenCaptor.getValue(),
                 "Null AccessTokenCredential must translate to a null raw access token, not a crash");
     }

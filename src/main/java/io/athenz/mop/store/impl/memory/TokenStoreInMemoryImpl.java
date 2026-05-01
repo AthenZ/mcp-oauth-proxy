@@ -50,12 +50,45 @@ public class TokenStoreInMemoryImpl implements TokenStore, AuthCodeStore, TokenS
     private final ConcurrentHashMap<String, String> hashToUserMap = new ConcurrentHashMap<>();
 
     @Override
+    public void storeUserToken(String user, String provider, String clientId, TokenWrapper token) {
+        String partitionKey = compositeUserKey(clientId, user);
+        // Mirror the DynamoDB backend's read-side behavior: the wrapper held in cache carries the
+        // bare userId in {@code key} and the clientId in {@code clientId}, so /userinfo can surface
+        // the {@code mcp_client_id} claim and downstream (userId, provider) lookups stay unchanged.
+        TokenWrapper enriched = new TokenWrapper(
+                token.key(),
+                token.provider(),
+                token.idToken(),
+                token.accessToken(),
+                token.refreshToken(),
+                token.ttl(),
+                clientId);
+        tokenCache.as(CaffeineCache.class).put(partitionKey, CompletableFuture.completedFuture(enriched));
+        if (enriched.accessToken() != null) {
+            String hash = JwtUtils.hashAccessToken(enriched.accessToken());
+            hashToUserMap.put(hash, partitionKey);
+        }
+    }
+
+    @Override
     public void storeUserToken(String user, String provider, TokenWrapper token) {
         tokenCache.as(CaffeineCache.class).put(user, CompletableFuture.completedFuture(token));
         if (token.accessToken() != null) {
             String hash = JwtUtils.hashAccessToken(token.accessToken());
             hashToUserMap.put(hash, user);
         }
+    }
+
+    /**
+     * Mirrors {@code TokenStoreDynamodbImpl.compositeUserKey}: bare {@code user} when
+     * {@code clientId} is null/empty; otherwise {@code "<clientId>#<user>"}.
+     */
+    static String compositeUserKey(String clientId, String user) {
+        if (clientId == null || clientId.isEmpty()) {
+            return user;
+        }
+        String safeClientId = clientId.indexOf('#') >= 0 ? clientId.replace("#", "_") : clientId;
+        return safeClientId + "#" + user;
     }
 
     @Override

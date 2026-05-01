@@ -294,6 +294,11 @@ class DataStoreProducerTest {
         }
 
         @Override
+        public void storeUserToken(String user, String provider, String clientId, TokenWrapper token) {
+            // Mock implementation (per-client bearer row)
+        }
+
+        @Override
         public TokenWrapper getUserToken(String user, String provider) {
             return null;
         }

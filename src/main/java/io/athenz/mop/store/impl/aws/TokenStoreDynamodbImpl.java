@@ -63,11 +63,36 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
     }
 
     @Override
-    public void storeUserToken(String user, String provider, TokenWrapper token) {
-        log.info("Storing token for user {}, provider {}", user, provider);
+    public void storeUserToken(String user, String provider, String clientId, TokenWrapper token) {
+        String partitionKey = compositeUserKey(clientId, user);
+        log.info("Storing token for user {}, clientId {}, provider {} (partitionKey={})", user, clientId, provider, partitionKey);
+        putUserTokenItem(partitionKey, provider, token);
+    }
 
+    @Override
+    public void storeUserToken(String user, String provider, TokenWrapper token) {
+        log.info("Storing token for user {}, provider {} (no clientId; bare row for upstream session marker / Okta SSO)", user, provider);
+        putUserTokenItem(user, provider, token);
+    }
+
+    /**
+     * Compose the DynamoDB partition-key value for a per-MCP-client bearer row. Falls back
+     * to the bare userId when {@code clientId} is null or blank so unauthenticated edge
+     * paths degrade to today's behavior instead of stuffing a placeholder into the table.
+     * Sanitizes any '#' inside {@code clientId} (defense-in-depth; DCR registration also
+     * rejects '#').
+     */
+    static String compositeUserKey(String clientId, String user) {
+        if (clientId == null || clientId.isEmpty()) {
+            return user;
+        }
+        String safeClientId = clientId.indexOf('#') >= 0 ? clientId.replace("#", "_") : clientId;
+        return safeClientId + "#" + user;
+    }
+
+    private void putUserTokenItem(String partitionKey, String provider, TokenWrapper token) {
         final HashMap<String, AttributeValue> item = new HashMap<>();
-        item.put(TokenTableAttribute.USER.attr(), AttributeValue.builder().s(user).build());
+        item.put(TokenTableAttribute.USER.attr(), AttributeValue.builder().s(partitionKey).build());
         item.put(TokenTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(provider).build());
 
         if (token.idToken() != null) {
@@ -75,7 +100,6 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
         }
 
         item.put(TokenTableAttribute.ACCESS_TOKEN.attr(), AttributeValue.builder().s(token.accessToken()).build());
-        // Store hash of access token for GSI lookup
         String accessTokenHash = JwtUtils.hashAccessToken(token.accessToken());
         item.put(TokenTableAttribute.ACCESS_TOKEN_HASH.attr(), AttributeValue.builder().s(accessTokenHash).build());
 
@@ -92,7 +116,7 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
                 .build();
 
         final PutItemResponse putResponse = dynamoDbClient.putItem(putRequest);
-        log.info("storeUserToken: key={}, provider={} HTTPStatusCode={}", user, provider, putResponse.sdkHttpResponse().statusCode());
+        log.info("storeUserToken: partitionKey={}, provider={} HTTPStatusCode={}", partitionKey, provider, putResponse.sdkHttpResponse().statusCode());
     }
 
     @Override
@@ -268,10 +292,30 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
         String refreshToken = item.containsKey(TokenTableAttribute.REFRESH_TOKEN.attr())
                 ? item.get(TokenTableAttribute.REFRESH_TOKEN.attr()).s()
                 : null;
-        return new TokenWrapper(user, provider,
+        // The row's persisted partition key (USER attribute) is authoritative when present:
+        // GSI lookups (access-token-hash-index) project the partition key into the row, so
+        // even when callers pass us a different "user" value (e.g. the bare userId for a
+        // /userinfo lookup that resolved through the hash GSI), we recover the original
+        // composite key here. For per-MCP-client rows the partition key is "<clientId>#<userId>"
+        // (see compositeUserKey); we split it so /userinfo can surface mcp_client_id while
+        // downstream Okta/upstream-IDP lookups by (userId, provider) keep using the bare userId.
+        String storedUser = item.containsKey(TokenTableAttribute.USER.attr())
+                ? item.get(TokenTableAttribute.USER.attr()).s()
+                : user;
+        String bareUserId = storedUser;
+        String extractedClientId = null;
+        if (storedUser != null) {
+            int hashIdx = storedUser.indexOf('#');
+            if (hashIdx >= 0) {
+                extractedClientId = storedUser.substring(0, hashIdx);
+                bareUserId = storedUser.substring(hashIdx + 1);
+            }
+        }
+        return new TokenWrapper(bareUserId, provider,
                 idToken,
                 item.get(TokenTableAttribute.ACCESS_TOKEN.attr()).s(),
                 refreshToken,
-                Long.parseLong(item.get(TokenTableAttribute.TTL.attr()).n()));
+                Long.parseLong(item.get(TokenTableAttribute.TTL.attr()).n()),
+                extractedClientId);
     }
 }

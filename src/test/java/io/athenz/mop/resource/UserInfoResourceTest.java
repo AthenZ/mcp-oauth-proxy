@@ -306,4 +306,40 @@ class UserInfoResourceTest {
         assertEquals(expectedError, body.get("error"));
         assertEquals(expectedDescription, body.get("error_description"));
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getUserInfo_perClientRow_publishesMcpClientIdClaim() {
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        // Per-client bearer row: TokenStore backends extract clientId from the partition-key
+        // prefix into TokenWrapper.clientId on read.
+        TokenWrapper perClient = new TokenWrapper(
+                USER, PROVIDER, idToken, ACCESS_TOKEN, "refresh", ttl, "Cursor");
+        stubResolveByHash(perClient, false);
+        stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, false);
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        Map<String, Object> body = (Map<String, Object>) response.getEntity();
+        assertEquals("Cursor", body.get("mcp_client_id"),
+                "Per-client bearer rows must surface mcp_client_id from the partition-key prefix");
+        assertEquals(PROVIDER, body.get("mcp_resource_idp"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getUserInfo_legacyBareRow_omitsMcpClientIdClaim() {
+        // Legacy bare row: TokenWrapper.clientId() == null.
+        stubResolveByHash(tokenWrapper, false);
+        stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, false);
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        Map<String, Object> body = (Map<String, Object>) response.getEntity();
+        org.junit.jupiter.api.Assertions.assertFalse(body.containsKey("mcp_client_id"),
+                "Legacy bare rows must omit the mcp_client_id claim entirely (no default, no placeholder)");
+        assertEquals(PROVIDER, body.get("mcp_resource_idp"));
+    }
 }
