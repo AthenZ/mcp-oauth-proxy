@@ -32,12 +32,26 @@ public interface SplunkManagementClient {
 
     SplunkUserLookup getUser(String mgmtBaseUrl, String adminBearer, String username);
 
+    /**
+     * @throws SplunkApiException when Splunk returns a non-2xx response (carries parsed
+     *     {@code messages[].text}) or the request fails in transport.
+     */
     void createUser(String mgmtBaseUrl, String adminBearer, String username, String password, List<String> roles);
 
+    /**
+     * @throws SplunkApiException when Splunk returns a non-2xx response or the request fails
+     *     in transport.
+     */
     void updateUserRoles(String mgmtBaseUrl, String adminBearer, String username, List<String> roles);
 
     /**
-     * @return minted Splunk bearer token, or null on failure
+     * Mints a Splunk authorization token for {@code username}.
+     *
+     * @return minted Splunk bearer token (never null on success)
+     * @throws SplunkApiException when Splunk returns a non-2xx response, the response body is
+     *     missing the token, or the request fails in transport. The exception's
+     *     {@link SplunkApiException#getMessage()} is suitable for surfacing as a 401
+     *     {@code error_description}.
      */
     String mintToken(String mgmtBaseUrl, String adminBearer, String username, String audience, String expiresOn);
 

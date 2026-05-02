@@ -18,6 +18,8 @@ package io.athenz.mop.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.athenz.mop.model.splunk.SplunkListTokenEntry;
 import io.athenz.mop.model.splunk.SplunkListTokensFeedResponse;
+import io.athenz.mop.model.splunk.SplunkMessage;
+import io.athenz.mop.model.splunk.SplunkMessagesResponse;
 import io.athenz.mop.model.splunk.SplunkTokenClaims;
 import io.athenz.mop.model.splunk.SplunkTokensFeedResponse;
 import io.athenz.mop.model.splunk.SplunkUsersFeedResponse;
@@ -94,28 +96,28 @@ public class SplunkManagementClientImpl implements SplunkManagementClient {
     public void createUser(String mgmtBaseUrl, String adminBearer, String username, String password, List<String> roles) {
         String base = normalizeBase(mgmtBaseUrl);
         if (base == null) {
-            return;
+            throw new SplunkApiException(0, "createUser", "blank Splunk management URL");
         }
         String body = formEncodeUserCreate(username, password, roles);
-        postForm(base + "/services/authentication/users?output_mode=json", adminBearer, body);
+        postForm(base + "/services/authentication/users?output_mode=json", adminBearer, body, "createUser");
     }
 
     @Override
     public void updateUserRoles(String mgmtBaseUrl, String adminBearer, String username, List<String> roles) {
         String base = normalizeBase(mgmtBaseUrl);
         if (base == null) {
-            return;
+            throw new SplunkApiException(0, "updateUserRoles", "blank Splunk management URL");
         }
         String body = formEncodeRolesOnly(roles);
         String path = "/services/authentication/users/" + urlEncodePath(username) + "?output_mode=json";
-        postForm(base + path, adminBearer, body);
+        postForm(base + path, adminBearer, body, "updateUserRoles");
     }
 
     @Override
     public String mintToken(String mgmtBaseUrl, String adminBearer, String username, String audience, String expiresOn) {
         String base = normalizeBase(mgmtBaseUrl);
         if (base == null) {
-            return null;
+            throw new SplunkApiException(0, "mintToken", "blank Splunk management URL");
         }
         String body = "name=" + urlForm(username)
                 + "&audience=" + urlForm(audience)
@@ -129,27 +131,29 @@ public class SplunkManagementClientImpl implements SplunkManagementClient {
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                     .build();
             HttpResponse<String> resp = splunkHttpExecutor.send(req);
-            if (resp.statusCode() != 200 && resp.statusCode() != 201) {
-                log.warn("Splunk mintToken failed: status={}", resp.statusCode());
-                return null;
+            int status = resp.statusCode();
+            if (status != 200 && status != 201) {
+                String upstream = parseSplunkMessage(resp.body());
+                log.warn("Splunk mintToken failed: status={} user={} upstream={}", status, username, upstream);
+                throw new SplunkApiException(status, "mintToken", upstream);
             }
             SplunkTokensFeedResponse feed = objectMapper.readValue(resp.body(), SplunkTokensFeedResponse.class);
             if (feed.entry() == null || feed.entry().isEmpty()) {
-                return null;
+                throw new SplunkApiException(status, "mintToken", "no entry in Splunk response");
             }
             var first = feed.entry().get(0);
             var content = first != null ? first.content() : null;
             if (content == null || StringUtils.isBlank(content.token())) {
-                return null;
+                throw new SplunkApiException(status, "mintToken", "empty token in Splunk response");
             }
             return content.token();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("Splunk mintToken error: {}", e.getMessage());
-            return null;
+            throw new SplunkApiException(0, "mintToken", "interrupted: " + e.getMessage());
         } catch (IOException e) {
             log.warn("Splunk mintToken error: {}", e.getMessage());
-            return null;
+            throw new SplunkApiException(0, "mintToken", "transport: " + e.getMessage());
         }
     }
 
@@ -237,7 +241,7 @@ public class SplunkManagementClientImpl implements SplunkManagementClient {
         }
     }
 
-    private void postForm(String url, String adminBearer, String body) {
+    private void postForm(String url, String adminBearer, String body, String operation) {
         try {
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -247,15 +251,48 @@ public class SplunkManagementClientImpl implements SplunkManagementClient {
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                     .build();
             HttpResponse<String> resp = splunkHttpExecutor.send(req);
-            if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
-                log.warn("Splunk POST failed: status={} url={}", resp.statusCode(), url);
+            int status = resp.statusCode();
+            if (status < 200 || status >= 300) {
+                String upstream = parseSplunkMessage(resp.body());
+                log.warn("Splunk {} failed: status={} url={} upstream={}", operation, status, url, upstream);
+                throw new SplunkApiException(status, operation, upstream);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.warn("Splunk POST error: {}", e.getMessage());
+            log.warn("Splunk {} error: {}", operation, e.getMessage());
+            throw new SplunkApiException(0, operation, "interrupted: " + e.getMessage());
         } catch (IOException e) {
-            log.warn("Splunk POST error: {}", e.getMessage());
+            log.warn("Splunk {} error: {}", operation, e.getMessage());
+            throw new SplunkApiException(0, operation, "transport: " + e.getMessage());
         }
+    }
+
+    /**
+     * Best-effort parser for a Splunk REST error body. Iterates {@code messages[]} and returns
+     * the first non-blank {@code text}; falls back to the raw body verbatim when the body isn't
+     * parseable JSON or no usable {@code text} is present. Returns the literal string {@code "<empty body>"}
+     * only when the body is blank, so callers can always rely on a non-null message to surface.
+     *
+     * <p>Deliberately avoids indexed access (no {@code messages.get(0)}) and any length truncation —
+     * the upstream Splunk message is forwarded verbatim into the 401 {@code error_description}.</p>
+     */
+    String parseSplunkMessage(String body) {
+        if (StringUtils.isBlank(body)) {
+            return "<empty body>";
+        }
+        try {
+            SplunkMessagesResponse parsed = objectMapper.readValue(body, SplunkMessagesResponse.class);
+            if (parsed != null && parsed.messages() != null) {
+                for (SplunkMessage m : parsed.messages()) {
+                    if (m != null && StringUtils.isNotBlank(m.text())) {
+                        return m.text();
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+            // not JSON, fall through to raw body
+        }
+        return body;
     }
 
     static String formEncodeUserCreate(String username, String password, List<String> roles) {

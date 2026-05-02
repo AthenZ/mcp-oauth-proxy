@@ -21,6 +21,7 @@ import io.athenz.mop.service.AuthorizationCodeService;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RefreshTokenService;
+import io.athenz.mop.service.UpstreamExchangeException;
 import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
 import io.athenz.mop.service.UpstreamRefreshTransientException;
@@ -341,5 +342,49 @@ class TokenResourceTest {
         // Terminal upstream failure: family is revoked and cleanup is invoked.
         verify(refreshTokenService).revokeFamily(TOKEN_FAMILY_ID);
         verify(authorizerService).cleanupAfterTerminalUpstreamRefreshFailure(USER_ID, PROVIDER, "encrypted-upstream");
+    }
+
+    @Test
+    void authorizationCodeGrant_upstreamExchangeException_returns401InvalidTokenWithUpstreamMessage() {
+        // Pre-fix: AuthorizerService.getTokenFromAuthorizationServer NPE'd on (UNAUTHORIZED, null)
+        // returns from audience-style providers (Splunk, Databricks, GCP, Grafana, …) -> 500 with
+        // a stacktrace. Post-fix: it throws UpstreamExchangeException carrying the upstream
+        // provider's failure message, and TokenResource maps that to 401 invalid_token (RFC 6750
+        // §3.1) with the upstream message in error_description so the client sees the real cause
+        // (e.g. Splunk "Role=… is not grantable").
+        OAuth2TokenRequest request = new OAuth2TokenRequest();
+        request.setGrantType("authorization_code");
+        request.setCode("the-auth-code");
+        request.setRedirectUri(REDIRECT_URI);
+        request.setCodeVerifier("verifier");
+        request.setClientId(CLIENT_ID);
+        request.setResource(RESOURCE);
+
+        AuthorizationCode authCode = new AuthorizationCode(
+                "the-auth-code", CLIENT_ID, OKTA_SUBJECT, REDIRECT_URI, "default", RESOURCE,
+                "challenge", "S256", Instant.now().plusSeconds(600), "state");
+        when(authorizationCodeService.validateAndConsume(
+                eq("the-auth-code"), eq(CLIENT_ID), eq(REDIRECT_URI), eq("verifier"), eq(RESOURCE)))
+                .thenReturn(authCode);
+
+        ResourceMeta meta = new ResourceMeta(List.of(), "dom", PROVIDER, PROVIDER, false, null, null);
+        when(configService.getResourceMeta(RESOURCE)).thenReturn(meta);
+
+        TokenWrapper authToken = new TokenWrapper("k", PROVIDER, null, "access", null, 9999999999L);
+        when(authorizerService.authorize(eq(OKTA_SUBJECT), any(), eq(RESOURCE)))
+                .thenReturn(new AuthorizationResultDO(AuthResult.AUTHORIZED, authToken));
+        String upstream = "Splunk createUser failed: status=403, message=Role=power_ads-pbp-008 is not grantable";
+        when(authorizerService.getTokenFromAuthorizationServer(
+                eq(OKTA_SUBJECT), any(), eq(RESOURCE), eq(authToken), eq(CLIENT_ID)))
+                .thenThrow(new UpstreamExchangeException(upstream));
+
+        Response response = tokenResource.generateTokenOAuth2(request);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        OAuth2ErrorResponse body = (OAuth2ErrorResponse) response.getEntity();
+        assertNotNull(body);
+        assertEquals(OAuth2ErrorResponse.ErrorCode.INVALID_TOKEN, body.error());
+        // The upstream Splunk message must reach the client verbatim — no wrapping, no truncation.
+        assertEquals(upstream, body.errorDescription());
     }
 }

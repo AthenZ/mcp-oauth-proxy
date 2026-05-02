@@ -73,14 +73,14 @@ public class TokenExchangeServiceEvaluateImpl implements TokenExchangeService {
         TokenWrapper oktaToken = tokenExchangeDO != null ? tokenExchangeDO.tokenWrapper() : null;
         if (oktaToken == null || StringUtils.isBlank(oktaToken.idToken())) {
             log.warn("Evaluate exchange: missing Okta id_token");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Evaluate exchange: missing Okta id_token");
         }
 
         String audience = evaluateTokenExchangeConfig.audience();
         List<String> scopes = evaluateTokenExchangeConfig.scopes();
         if (StringUtils.isBlank(audience) || scopes == null || scopes.isEmpty()) {
             log.error("Evaluate exchange: missing audience or scopes config");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Evaluate exchange: missing audience or scopes config");
         }
 
         String resource = tokenExchangeDO.resource();
@@ -117,14 +117,17 @@ public class TokenExchangeServiceEvaluateImpl implements TokenExchangeService {
         if (!athenzOk) {
             log.warn("Evaluate exchange: Athenz id-token exchange failed");
             recordEvaluateStep(oauthProvider, oauthClient, region, t0, false);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            String upstream = athenzResult != null ? athenzResult.errorMessage() : null;
+            return AuthorizationResultDO.unauthorized(
+                    "Evaluate exchange: Athenz id-token exchange failed"
+                            + (upstream != null ? " (" + upstream + ")" : ""));
         }
 
         String athenzIdToken = athenzResult.token().idToken();
         if (StringUtils.isBlank(athenzIdToken)) {
             log.warn("Evaluate exchange: Athenz id-token exchange returned no id_token");
             recordEvaluateStep(oauthProvider, oauthClient, region, t0, false);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Evaluate exchange: Athenz id-token exchange returned no id_token");
         }
 
         recordEvaluateStep(oauthProvider, oauthClient, region, t0, true);

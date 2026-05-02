@@ -157,7 +157,7 @@ public class TokenExchangeServiceZTSImpl implements TokenExchangeService {
             if (idTokenValue == null || idTokenValue.isBlank()) {
                 log.warn("Token exchange for id_token: ZTS response had no id_token");
                 recordZtsStep(ExchangeStep.ZTS_ATHENZ_ID_TOKEN, tokenExchangeDO.resource(), false, "unauthorized", t0);
-                return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+                return AuthorizationResultDO.unauthorized("ZTS exchange: response had no id_token");
             }
             Long expiresIn = tokenResponse.getExpires_in() != null ? tokenResponse.getExpires_in().longValue() : 3600L;
             TokenWrapper idToken = new TokenWrapper(

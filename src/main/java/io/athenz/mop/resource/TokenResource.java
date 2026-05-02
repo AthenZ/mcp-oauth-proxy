@@ -22,6 +22,7 @@ import io.athenz.mop.service.AuthorizationCodeService;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RefreshTokenService;
+import io.athenz.mop.service.UpstreamExchangeException;
 import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
 import io.athenz.mop.service.UpstreamRefreshTransientException;
@@ -567,7 +568,22 @@ public class TokenResource {
 
         log.info("Getting JWT for resource: {} and subject: {}", resource, subject);
 
-        TokenResponse response = authorizerService.getTokenFromAuthorizationServer(subject, scopes, resource, authorizationDO.token(), clientId);
+        TokenResponse response;
+        try {
+            response = authorizerService.getTokenFromAuthorizationServer(
+                    subject, scopes, resource, authorizationDO.token(), clientId);
+        } catch (UpstreamExchangeException e) {
+            // Generic upstream-exchange failure (Splunk "Role=… is not grantable", Databricks
+            // 401 from workspace, GCP STS 400, etc.) — surface the upstream message verbatim
+            // as 401 invalid_token (RFC 6750 §3.1) instead of the historical 500 NPE.
+            log.warn("Upstream token exchange failed for subject={} resource={}: {}",
+                    subject, resource, e.getMessage());
+            return Response.status(Response.Status.UNAUTHORIZED)
+                    .entity(OAuth2ErrorResponse.of(
+                            OAuth2ErrorResponse.ErrorCode.INVALID_TOKEN,
+                            e.getMessage()))
+                    .build();
+        }
         if (response == null) {
             log.error("Failed to obtain token from authorization server for subject: {}", subject);
             return Response.status(Response.Status.FORBIDDEN)

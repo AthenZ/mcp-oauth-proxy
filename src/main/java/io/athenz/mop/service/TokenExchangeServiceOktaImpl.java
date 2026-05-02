@@ -105,7 +105,8 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
             if (clientSecret == null) {
                 log.error("Failed to retrieve client secret for key: {}", clientSecretKey);
                 recordOktaExchange(t0, oauthProvider, oauthClient, region, false);
-                return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+                return AuthorizationResultDO.unauthorized(
+                        "Okta exchange: client secret not configured under key " + clientSecretKey);
             }
 
             String audience = oktaTokenExchangeConfig.audience();
@@ -121,7 +122,7 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
         } catch (Exception e) {
             log.error("Error exchanging token", e);
             recordOktaExchange(t0, oauthProvider, oauthClient, region, false);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Okta exchange: " + e.getMessage());
         }
     }
 
@@ -173,8 +174,11 @@ public class TokenExchangeServiceOktaImpl implements TokenExchangeService {
 
         if (!tokenResponse.indicatesSuccess()) {
             TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
-            log.error("Error exchanging token: {} - {}", errorResponse.getErrorObject().getCode(), errorResponse.getErrorObject().getDescription());
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            String code = errorResponse.getErrorObject().getCode();
+            String desc = errorResponse.getErrorObject().getDescription();
+            log.error("Error exchanging token: {} - {}", code, desc);
+            return AuthorizationResultDO.unauthorized(
+                    "Okta exchange: " + code + (desc != null ? " - " + desc : ""));
         }
 
         AccessTokenResponse successResponse = tokenResponse.toSuccessResponse();

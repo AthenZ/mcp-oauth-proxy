@@ -232,6 +232,7 @@ public class AuthorizerService {
                     jagDO.token()
             );
             AuthorizationResultDO atDO = accessTokenIssuer.getAccessTokenFromResourceAuthorizationServer(accessTokenRequestDO);
+            requireUpstreamAuthorized(atDO, resource, token);
 
             log.info("token-exchange response: ttl: {}", atDO.token().ttl());
 
@@ -252,6 +253,7 @@ public class AuthorizerService {
                     token
             );
             AuthorizationResultDO atDO = accessTokenIssuer.getAccessTokenFromResourceAuthorizationServer(accessTokenRequestDO);
+            requireUpstreamAuthorized(atDO, resource, token);
 
             log.info("non token-exchange response: ttl: {}", atDO.token().ttl());
 
@@ -265,6 +267,30 @@ public class AuthorizerService {
             );
         }
         return tokenResponse;
+    }
+
+    /**
+     * Guard the two {@link #getTokenFromAuthorizationServer} branches against the historical NPE
+     * site where {@code atDO.token().ttl()} was dereferenced unconditionally on failure (every
+     * audience-style provider returns {@code AuthorizationResultDO(UNAUTHORIZED, null)} on error).
+     *
+     * <p>Throws {@link UpstreamExchangeException} carrying the upstream provider's
+     * {@link AuthorizationResultDO#errorMessage()} so {@link
+     * io.athenz.mop.resource.TokenResource} can surface it as a 401 {@code invalid_token} body.
+     * Generic for every audience provider — no provider-specific branching.</p>
+     */
+    private static void requireUpstreamAuthorized(AuthorizationResultDO atDO, String resource, TokenWrapper token) {
+        if (atDO != null && atDO.token() != null && atDO.authResult() == AuthResult.AUTHORIZED) {
+            return;
+        }
+        String upstream = atDO != null ? atDO.errorMessage() : null;
+        log.warn("Access-token exchange failed for resource={} subject={} authResult={} upstream={}",
+                resource,
+                token != null ? token.key() : null,
+                atDO != null ? atDO.authResult() : "null",
+                upstream);
+        throw new UpstreamExchangeException(
+                upstream != null ? upstream : "upstream token exchange failed; see server logs");
     }
 
     private static String tokenResponseScope(AuthorizationResultDO atDO, ResourceMeta resourceMeta) {
@@ -455,7 +481,8 @@ public class AuthorizerService {
         );
         AuthorizationResultDO atDO = accessTokenIssuer.getAccessTokenFromResourceAuthorizationServer(accessTokenRequestDO);
         if (atDO == null || atDO.token() == null || atDO.authResult() != AuthResult.AUTHORIZED) {
-            log.warn("Token exchange after refresh failed for user {} resource {}", userId, resource);
+            log.warn("Token exchange after refresh failed for user={} resource={} upstream={}",
+                    userId, resource, atDO != null ? atDO.errorMessage() : null);
             return null;
         }
         storeRefreshedAccessToken(resource, userId, provider, toStore, atDO.token(), clientId);
@@ -511,7 +538,8 @@ public class AuthorizerService {
         );
         AuthorizationResultDO atDO = accessTokenIssuer.getAccessTokenFromResourceAuthorizationServer(accessTokenRequestDO);
         if (atDO == null || atDO.token() == null || atDO.authResult() != AuthResult.AUTHORIZED) {
-            log.warn("Token exchange after centralized Okta refresh failed for user {} resource {}", userId, resource);
+            log.warn("Token exchange after centralized Okta refresh failed for user={} resource={} upstream={}",
+                    userId, resource, atDO != null ? atDO.errorMessage() : null);
             return null;
         }
         storeRefreshedAccessToken(resource, userId, provider, toStore, atDO.token(), clientId);
