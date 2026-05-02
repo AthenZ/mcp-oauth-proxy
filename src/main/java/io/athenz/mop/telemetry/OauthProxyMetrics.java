@@ -81,6 +81,12 @@ public class OauthProxyMetrics {
     private LongCounter authCodeValidationTotal;
     private LongCounter upstreamTokenCasAbortedPeerNewerTotal;
     private LongCounter upstreamTokenReplicationWaitTotal;
+    private LongCounter refreshTokenInflightLockTotal;
+    private LongCounter refreshTokenInflightCacheServedTotal;
+    private LongCounter refreshTokenGraceServedTotal;
+    private LongCounter refreshTokenReplayRevokedTotal;
+    private DoubleHistogram refreshTokenInflightLockWaitSeconds;
+    private DoubleHistogram refreshTokenRotateHoldSeconds;
 
     @PostConstruct
     void init() {
@@ -134,6 +140,35 @@ public class OauthProxyMetrics {
         upstreamTokenReplicationWaitTotal = meter
                 .counterBuilder("mop_upstream_token_replication_wait_total")
                 .build();
+
+        refreshTokenInflightLockTotal = meter
+                .counterBuilder("mop_refresh_token_inflight_lock_total")
+                .setDescription("Per-RT distributed-lock attempts for the refresh-token rotate path")
+                .build();
+        refreshTokenInflightCacheServedTotal = meter
+                .counterBuilder("mop_refresh_token_inflight_cache_served_total")
+                .setDescription("Refresh-token rotate calls served from the per-pod in-flight result cache (singleflight hit)")
+                .build();
+        refreshTokenGraceServedTotal = meter
+                .counterBuilder("mop_refresh_token_grace_served_total")
+                .setDescription("Refresh-token validate() calls that hit ROTATED inside the grace window and were served from the family successor instead of revoking")
+                .build();
+        refreshTokenReplayRevokedTotal = meter
+                .counterBuilder("mop_refresh_token_replay_revoked_total")
+                .setDescription("Refresh-token replays that fell outside the grace window and triggered a family revoke (genuine stolen-RT defense)")
+                .build();
+        refreshTokenInflightLockWaitSeconds = meter
+                .histogramBuilder("mop_refresh_token_inflight_lock_wait_seconds")
+                .setUnit("s")
+                .setDescription("Time spent waiting for the per-RT distributed lock (acquire returned acquired/timeout/interrupted)")
+                .setExplicitBucketBoundariesAdvice(HISTOGRAM_BUCKETS)
+                .build();
+        refreshTokenRotateHoldSeconds = meter
+                .histogramBuilder("mop_refresh_token_rotate_hold_seconds")
+                .setUnit("s")
+                .setDescription("Time the per-RT lock was held (acquire to release) inside RefreshTokenServiceImpl.rotate()")
+                .setExplicitBucketBoundariesAdvice(HISTOGRAM_BUCKETS)
+                .build();
     }
 
     /**
@@ -179,6 +214,21 @@ public class OauthProxyMetrics {
         Attributes replWaitStillStale = Attributes.builder().put(OUTCOME, "still_stale").build();
         upstreamTokenReplicationWaitTotal.add(0, replWaitSucceeded);
         upstreamTokenReplicationWaitTotal.add(0, replWaitStillStale);
+
+        for (String outcome : List.of("acquired", "wait_succeeded", "timeout", "interrupted")) {
+            refreshTokenInflightLockTotal.add(0, Attributes.builder().put(OUTCOME, outcome).build());
+        }
+        refreshTokenInflightCacheServedTotal.add(0, Attributes.empty());
+        for (String path : List.of("token_age_only", "family_idle_validated", "family_idle_exceeded", "successor_unavailable")) {
+            refreshTokenGraceServedTotal.add(0, Attributes.builder().put("grace_path", path).build());
+        }
+        refreshTokenReplayRevokedTotal.add(0, Attributes.empty());
+        for (String outcome : List.of("acquired", "timeout", "interrupted")) {
+            refreshTokenInflightLockWaitSeconds.record(0.0, Attributes.builder().put(OUTCOME, outcome).build());
+        }
+        for (String outcome : List.of("rotated_internal", "rotated_grace", "cache_hit_after_lock", "null_result")) {
+            refreshTokenRotateHoldSeconds.record(0.0, Attributes.builder().put(OUTCOME, outcome).build());
+        }
 
         for (String callSite : CROSS_REGION_FALLBACK_CALL_SITES) {
             Attributes triggeredAttrs = Attributes.builder()
@@ -458,6 +508,84 @@ public class OauthProxyMetrics {
      */
     public void recordUpstreamTokenReplicationWait(String outcome) {
         upstreamTokenReplicationWaitTotal.add(1, Attributes.builder().put(OUTCOME, outcome).build());
+    }
+
+    /**
+     * Outcome of trying to take the per-RT distributed lock guarding the rotate path.
+     * {@code outcome} is one of: {@code acquired} (this caller won and rotated),
+     * {@code wait_succeeded} (lost the race; waited and reused another caller's result),
+     * {@code timeout} (could not get the lock after retries — surface as transient),
+     * {@code interrupted} (thread interrupted while waiting).
+     */
+    public void recordRefreshTokenInflightLock(String outcome) {
+        refreshTokenInflightLockTotal.add(1, Attributes.builder().put(OUTCOME, nullToEmpty(outcome)).build());
+    }
+
+    /**
+     * Increments when a concurrent caller presenting the same RT was served from the per-pod
+     * in-flight result cache (singleflight hit). Pure win: avoided one DDB transactWrite.
+     */
+    public void recordRefreshTokenInflightCacheServed() {
+        refreshTokenInflightCacheServedTotal.add(1, Attributes.empty());
+    }
+
+    /**
+     * Increments when {@code validate()} hit a {@code ROTATED} row and resolved against the
+     * grace path. {@code path} values:
+     * <ul>
+     *   <li>{@code token_age_only} — token-age predicate passed, family-idle gate disabled
+     *       ({@code familyIdleGraceSeconds=0}). Caller will be served from the family successor.</li>
+     *   <li>{@code family_idle_validated} — both predicates passed (token-age AND family-idle).
+     *       Caller will be served from the family successor. This is the safer "post-Paranoids"
+     *       configuration.</li>
+     *   <li>{@code family_idle_exceeded} — token-age passed but family-idle gate failed; the
+     *       family appears abandoned. Caller falls through to {@code ROTATED_REPLAY} → revoke.</li>
+     *   <li>{@code successor_unavailable} — grace would apply but no live ACTIVE successor was
+     *       found in the family (e.g. all leaves revoked/expired). Falls through to revoke.</li>
+     * </ul>
+     */
+    public void recordRefreshTokenGraceServed(String path) {
+        refreshTokenGraceServedTotal.add(1, Attributes.builder().put("grace_path", nullToEmpty(path)).build());
+    }
+
+    /**
+     * Increments when a refresh-token replay fell outside the grace window and triggered the
+     * family revoke. This is the genuine stolen-RT defense path; it should be near zero in a
+     * healthy fleet.
+     */
+    public void recordRefreshTokenReplayRevoked() {
+        refreshTokenReplayRevokedTotal.add(1, Attributes.empty());
+    }
+
+    /**
+     * Wall-clock time spent inside {@code tryAcquirePerRtLock} (across all backoff sleeps and
+     * DDB conditional-write attempts) until the loop terminated. {@code outcome} mirrors the
+     * label values used by {@link #recordRefreshTokenInflightLock(String)} for the terminal
+     * states (acquired, timeout, interrupted). Use this to size {@code inflight-lock-max-retries}
+     * and {@code inflight-lock-initial-backoff-ms}: the {@code acquired} p99 should be well
+     * inside the configured retry budget.
+     */
+    public void recordRefreshTokenInflightLockWait(String outcome, double seconds) {
+        refreshTokenInflightLockWaitSeconds.record(seconds, Attributes.builder()
+                .put(OUTCOME, nullToEmpty(outcome)).build());
+    }
+
+    /**
+     * Wall-clock time the per-RT lock was actually held by {@code rotate()} — from successful
+     * acquire through the {@code finally} block that releases it. This is the work the lock
+     * protects (read row, validate, TransactWriteItems, populate cache). Compare its p99 to
+     * {@code inflight-lock-ttl-seconds}: there should be a comfortable margin so the lock
+     * never expires mid-rotation under DDB throttling. {@code outcome} values:
+     * <ul>
+     *   <li>{@code rotated_internal} — full rotate completed and returned a new RT.</li>
+     *   <li>{@code rotated_grace} — re-check found another caller's cached result; returned that.</li>
+     *   <li>{@code cache_hit_after_lock} — same as {@code rotated_grace} but emphasizes the cache hit.</li>
+     *   <li>{@code null_result} — rotateInternal returned null (e.g. row not found, validation failed).</li>
+     * </ul>
+     */
+    public void recordRefreshTokenRotateHold(String outcome, double seconds) {
+        refreshTokenRotateHoldSeconds.record(seconds, Attributes.builder()
+                .put(OUTCOME, nullToEmpty(outcome)).build());
     }
 
     /**

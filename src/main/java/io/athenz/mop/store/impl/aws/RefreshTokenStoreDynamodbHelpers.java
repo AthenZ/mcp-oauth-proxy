@@ -132,6 +132,51 @@ public final class RefreshTokenStoreDynamodbHelpers {
         return best;
     }
 
+    /**
+     * Query {@link RefreshTableConstants#GSI_TOKEN_FAMILY} for a token family and return the row
+     * with the highest {@code issued_at} that is still {@code ACTIVE} and unexpired. Used by the
+     * rotated-grace path in {@code RefreshTokenServiceImpl} to find the live successor of a
+     * recently-rotated row without re-following the {@code replaced_by} pointer chain (which can
+     * miss when rotations are cross-region).
+     *
+     * <p>Unlike {@link #queryBestUpstreamRefresh}, this does <em>not</em> re-fetch the winning row
+     * by primary key. The grace-path caller in {@code RefreshTokenServiceImpl#rotateGraceSuccessor}
+     * always re-reads the row by PK before rotating against it (both to defend against TOCTOU and
+     * to obtain the decrypted upstream RT for non-OKTA providers), so adding a redundant GetItem
+     * here would only inflate the per-grace DDB cost. Returns {@code null} when no live ACTIVE
+     * row exists in the family.</p>
+     */
+    public static RefreshTokenRecord queryLatestActiveInFamily(DynamoDbClient client, String table,
+                                                               String tokenFamilyId) {
+        if (tokenFamilyId == null || tokenFamilyId.isEmpty()) {
+            return null;
+        }
+        QueryResponse response = client.query(QueryRequest.builder()
+                .tableName(table)
+                .indexName(RefreshTableConstants.GSI_TOKEN_FAMILY)
+                .keyConditionExpression(RefreshTableAttribute.TOKEN_FAMILY_ID.attr() + " = :fid")
+                .expressionAttributeValues(Map.of(":fid", AttributeValue.builder().s(tokenFamilyId).build()))
+                .build());
+        if (response.items() == null || response.items().isEmpty()) {
+            return null;
+        }
+        long now = System.currentTimeMillis() / 1000;
+        RefreshTokenRecord best = null;
+        for (Map<String, AttributeValue> item : response.items()) {
+            RefreshTokenRecord record = itemToRecord(item);
+            if (!RefreshTableConstants.STATUS_ACTIVE.equals(record.status())) {
+                continue;
+            }
+            if (record.expiresAt() > 0 && now > record.expiresAt()) {
+                continue;
+            }
+            if (best == null || record.issuedAt() > best.issuedAt()) {
+                best = record;
+            }
+        }
+        return best;
+    }
+
     public static RefreshTokenRecord itemToRecord(Map<String, AttributeValue> item) {
         return new RefreshTokenRecord(
                 getS(item, RefreshTableAttribute.REFRESH_TOKEN_ID.attr()),

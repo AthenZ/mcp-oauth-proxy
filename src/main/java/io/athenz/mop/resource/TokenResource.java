@@ -374,19 +374,49 @@ public class TokenResource {
             case ROTATED_REPLAY:
                 refreshTokenService.handleReplay(request.getRefreshToken());
                 return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
+            case ROTATED_GRACE_SUCCESSOR:
             case ACTIVE:
                 if (result.record() == null) {
                     return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
                 }
-                RefreshTokenRotateResult rotateResult = refreshTokenService.rotate(request.getRefreshToken(), request.getClientId());
-                if (rotateResult == null) {
-                    log.warn("refresh_token grant failed: rotate() returned null for userId={} provider={}", userId, provider);
-                    return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
+                RefreshTokenRotateResult rotateResult;
+                RefreshTokenRecord rotateSourceRecord;
+                if (result.status() == RefreshTokenValidationResult.Status.ROTATED_GRACE_SUCCESSOR) {
+                    // Layer 2: client presented a recently-rotated RT. Don't revoke the family —
+                    // mint a brand-new RT off the family's most recent ACTIVE descendant so the
+                    // duplicate caller still gets working credentials.
+                    if (result.successor() == null) {
+                        log.warn("refresh_token grant: ROTATED_GRACE_SUCCESSOR with null successor; falling back to invalid_grant userId={} provider={}", userId, provider);
+                        return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
+                    }
+                    rotateResult = refreshTokenService.rotateGraceSuccessor(result.successor());
+                    if (rotateResult == null) {
+                        log.warn("refresh_token grant: rotateGraceSuccessor returned null (successor concurrently rotated/revoked); userId={} provider={}", userId, provider);
+                        return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
+                    }
+                    log.info("refresh_token grant: served via rotated-grace successor userId={} provider={} familyId={}",
+                            userId, provider, result.record().tokenFamilyId());
+                    rotateSourceRecord = result.successor();
+                } else {
+                    rotateResult = refreshTokenService.rotate(request.getRefreshToken(), request.getClientId());
+                    if (rotateResult == null) {
+                        // rotate() returns null in three distinct cases:
+                        //   (a) per-RT lock timeout — see preceding WARN from RefreshTokenServiceImpl
+                        //       and metric mop_refresh_token_inflight_lock_total{outcome="timeout"};
+                        //   (b) ConditionalCheckFailed under lock (row already rotated cross-region) —
+                        //       caller's next retry will hit L2 grace;
+                        //   (c) row-not-found / validation drift between validate() and rotate().
+                        // The per-call inflight-lock metric distinguishes (a) from (b)/(c).
+                        log.warn("refresh_token grant failed: rotate() returned null userId={} provider={} clientId={}",
+                                userId, provider, request.getClientId());
+                        return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
+                    }
+                    rotateSourceRecord = result.record();
                 }
-                String providerUserId = result.record().providerUserId();
+                String providerUserId = rotateSourceRecord.providerUserId();
                 RefreshAndTokenResult refreshResult;
                 if (providerUserId != null && providerUserId.startsWith(AudienceConstants.PROVIDER_OKTA + "#")) {
-                    upstreamRefreshService.ensureMigratedFromLegacyIfNeeded(providerUserId, result.record());
+                    upstreamRefreshService.ensureMigratedFromLegacyIfNeeded(providerUserId, rotateSourceRecord);
                     try {
                         var oktaTokens = upstreamRefreshService.refreshUpstream(providerUserId);
                         refreshResult = authorizerService.completeRefreshWithOktaTokens(
@@ -415,8 +445,8 @@ public class TokenResource {
                         authorizerService.cleanupAfterTerminalUpstreamRefreshFailure(
                                 userId,
                                 provider,
-                                result.record().encryptedUpstreamRefreshToken());
-                        refreshTokenService.revokeFamily(result.record().tokenFamilyId());
+                                rotateSourceRecord.encryptedUpstreamRefreshToken());
+                        refreshTokenService.revokeFamily(rotateSourceRecord.tokenFamilyId());
                         return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
                     }
                 } else {
@@ -424,7 +454,7 @@ public class TokenResource {
                             userId,
                             provider,
                             request.getResource(),
-                            result.record().encryptedUpstreamRefreshToken(),
+                            rotateSourceRecord.encryptedUpstreamRefreshToken(),
                             request.getClientId()
                     );
                     if (refreshResult != null && refreshResult.newUpstreamRefreshToken() != null
@@ -437,8 +467,8 @@ public class TokenResource {
                 }
                 if (refreshResult == null) {
                     log.error("refresh_token grant failed: upstream refresh failed; revoking token family for userId={} provider={} resource={} tokenFamilyId={} (upstream OAuth error body should appear in ERROR logs from token exchange)",
-                            userId, provider, request.getResource(), result.record().tokenFamilyId());
-                    refreshTokenService.revokeFamily(result.record().tokenFamilyId());
+                            userId, provider, request.getResource(), rotateSourceRecord.tokenFamilyId());
+                    refreshTokenService.revokeFamily(rotateSourceRecord.tokenFamilyId());
                     return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient, invalidGrant("Invalid or expired refresh token"));
                 }
                 TokenResponse withNewRefresh = new TokenResponse(

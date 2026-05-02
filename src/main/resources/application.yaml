@@ -343,6 +343,35 @@ server:
     table-name: ${MOP_REFRESH_TOKEN_TABLE_NAME:mcp-oauth-proxy-refresh-tokens}
     expiry-seconds: ${MOP_REFRESH_EXPIRY_SECONDS:7776000}
     ttl-buffer-days: ${MOP_REFRESH_TTL_BUFFER_DAYS:7}
+    # Layer 2 (rotated-grace window) — token-age predicate. When validate() finds a row in
+    # ROTATED status whose rotated_at is within this many seconds, treat the call as a benign
+    # client retry and serve from the family successor instead of revoking the family. Outside
+    # this window the original stolen-RT defense (revoke family) still applies.
+    # Default 7200s (2h) covers multi-window Cursor / Claude Desktop self-collisions where one
+    # window's RT is up to a couple of hours stale relative to its sibling's. Per the sliding-
+    # grace design, this is intended to widen to 172800s (48h) once Paranoids signs off, in
+    # combination with family-idle-grace-seconds also at 172800s (see below).
+    rotated-grace-seconds: ${MOP_REFRESH_ROTATED_GRACE_SECONDS:7200}
+    # Layer 2 — family-idle predicate (defense-in-depth gate, opt-in). When > 0, the grace path
+    # additionally requires that the family has had a successful rotation within this many
+    # seconds. Bounds the window during which a stolen RT can quietly succeed against an
+    # abandoned session. Set to 0 to disable.
+    # Default 0 (off) for the 2h-token-age ship. Post-Paranoids target: 172800 (48h) to pair
+    # with rotated-grace-seconds also at 172800 (48h).
+    family-idle-grace-seconds: ${MOP_REFRESH_FAMILY_IDLE_GRACE_SECONDS:0}
+    # Layer 1 (per-RT singleflight). Per-pod in-flight cache TTL: how long a freshly-rotated
+    # result stays available so duplicate callers presenting the same RT receive the same outcome.
+    inflight-cache-seconds: ${MOP_REFRESH_INFLIGHT_CACHE_SECONDS:30}
+    # Per-RT distributed-lock TTL written into mcp-oauth-proxy-refresh-locks. Sized generously so
+    # it comfortably outlasts any rotate() call (read + validate + TransactWrite) even under DDB
+    # retry/throttling. Lock does NOT cover the upstream Okta refresh that follows; if a rotate
+    # ever exceeds the TTL the next caller falls into the L2 grace path.
+    inflight-lock-ttl-seconds: ${MOP_REFRESH_INFLIGHT_LOCK_TTL_SECONDS:30}
+    # Retries for the per-RT lock. With initial-backoff-ms=100 and exponential doubling capped at
+    # 2000ms, 12 retries ≈ 17s total wait — long enough that the loser usually finds the in-flight
+    # cache populated by the lock holder, but bounded so a truly stuck holder doesn't block forever.
+    inflight-lock-max-retries: ${MOP_REFRESH_INFLIGHT_LOCK_MAX_RETRIES:12}
+    inflight-lock-initial-backoff-ms: ${MOP_REFRESH_INFLIGHT_LOCK_INITIAL_BACKOFF_MS:100}
   refresh-lock:
     table-name: ${MOP_REFRESH_LOCK_TABLE_NAME:mcp-oauth-proxy-refresh-locks}
     ttl-seconds: ${MOP_REFRESH_LOCK_TTL_SECONDS:8}

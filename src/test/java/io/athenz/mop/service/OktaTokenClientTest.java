@@ -15,6 +15,7 @@
  */
 package io.athenz.mop.service;
 
+import com.nimbusds.oauth2.sdk.Scope;
 import com.nimbusds.oauth2.sdk.TokenRequest;
 import com.nimbusds.oauth2.sdk.TokenResponse;
 import com.nimbusds.oauth2.sdk.http.HTTPResponse;
@@ -23,12 +24,15 @@ import io.athenz.mop.secret.K8SSecretsProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -94,5 +98,30 @@ class OktaTokenClientTest {
         when(tokenClient.execute(any(TokenRequest.class))).thenReturn(tr);
 
         assertThrows(OktaTokenRevokedException.class, () -> oktaTokenClient.refreshToken("bad-rt"));
+    }
+
+    @Test
+    void refreshToken_sendsExplicitOidcScope() throws Exception {
+        when(oktaTokenExchangeConfig.authServerUrl()).thenReturn("https://okta.example.com/oauth2/default");
+        Map<String, String> creds = new HashMap<>();
+        creds.put("sec-key", "secret");
+        when(k8SSecretsProvider.getCredentials(null)).thenReturn(creds);
+
+        String json = "{\"access_token\":\"at\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"rt\"}";
+        HTTPResponse http = new HTTPResponse(200);
+        http.setContentType("application/json");
+        http.setBody(json);
+        TokenResponse tr = TokenResponse.parse(http);
+        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(tr);
+
+        oktaTokenClient.refreshToken("upstream-rt");
+
+        ArgumentCaptor<TokenRequest> reqCap = ArgumentCaptor.forClass(TokenRequest.class);
+        verify(tokenClient).execute(reqCap.capture());
+        Scope sentScope = reqCap.getValue().getScope();
+        assertNotNull(sentScope, "expected explicit scope on refresh request");
+        Set<String> values = sentScope.toStringList().stream().collect(Collectors.toSet());
+        assertEquals(Set.of("openid", "profile", "email", "offline_access"), values,
+                "expected openid+profile+email+offline_access on Okta refresh");
     }
 }

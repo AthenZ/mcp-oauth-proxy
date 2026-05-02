@@ -89,7 +89,7 @@ public class UserInfoResource {
         boolean fromFallback = hashResolution.resolvedFromFallback();
 
         if (tokenByHash == null) {
-            log.warn("Token not found for userinfo lookup");
+            log.debug("Token not found for userinfo lookup");
             return finishUserinfo(startNanos, "unknown", false, 401, "invalid_token", "token_not_found",
                     Response.status(Response.Status.UNAUTHORIZED)
                             .entity(Map.of(

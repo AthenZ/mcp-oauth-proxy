@@ -41,6 +41,12 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -51,6 +57,9 @@ class RefreshTokenServiceImplTest {
     @Mock
     DynamoDbClient dynamoDbClient;
 
+    @Mock
+    RefreshLockStore refreshLockStore;
+
     RefreshTokenServiceImpl service;
 
     @BeforeEach
@@ -60,6 +69,17 @@ class RefreshTokenServiceImplTest {
         service.tableName = "test-refresh-tokens";
         service.expirySeconds = 7776000L;
         service.ttlBufferDays = 7;
+        service.rotatedGraceSeconds = 10;
+        service.familyIdleGraceSeconds = 0;
+        service.inflightCacheSeconds = 30;
+        service.inflightLockTtlSeconds = 10;
+        service.inflightLockMaxRetries = 7;
+        service.inflightLockInitialBackoffMs = 5;
+        service.refreshLockStore = refreshLockStore;
+        service.init();
+        // Per-RT lock is taken on every rotate; default to "always granted" for unit tests.
+        // Tests that need to exercise lock contention can override per-call.
+        lenient().when(refreshLockStore.tryAcquire(anyString(), anyString(), anyLong())).thenReturn(true);
     }
 
     @Test
@@ -204,7 +224,7 @@ class RefreshTokenServiceImplTest {
     }
 
     @Test
-    void validate_returnsRotatedReplayWhenStatusRotated() {
+    void validate_returnsRotatedReplayWhenStatusRotatedOutsideGraceWindow() {
         String token = service.generateSecureToken();
         long now = System.currentTimeMillis() / 1000;
         Map<String, AttributeValue> item = new java.util.HashMap<>(Map.of(
@@ -216,7 +236,8 @@ class RefreshTokenServiceImplTest {
                 RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ROTATED).build(),
                 RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), AttributeValue.builder().s("f1").build(),
                 RefreshTableAttribute.REPLACED_BY.attr(), AttributeValue.builder().s("id2").build(),
-                RefreshTableAttribute.ROTATED_AT.attr(), AttributeValue.builder().n(String.valueOf(now - 10)).build(),
+                // Rotated well outside the configured 10s grace window (60s ago).
+                RefreshTableAttribute.ROTATED_AT.attr(), AttributeValue.builder().n(String.valueOf(now - 60)).build(),
                 RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build()
         ));
         item.put(RefreshTableAttribute.ISSUED_AT.attr(), AttributeValue.builder().n(String.valueOf(now - 3600)).build());
@@ -251,7 +272,7 @@ class RefreshTokenServiceImplTest {
     }
 
     @Test
-    void rotate_returnsNullAndHandlesReplayWhenConditionalCheckFails() {
+    void rotate_returnsNullWithoutHandlingReplayWhenConditionalCheckFailsUnderLock() {
         String token = service.generateSecureToken();
         long now = System.currentTimeMillis() / 1000;
         Map<String, AttributeValue> activeItem = new java.util.HashMap<>(Map.of(
@@ -459,5 +480,247 @@ class RefreshTokenServiceImplTest {
         assertNotNull(record);
         assertEquals("id1", record.refreshTokenId());
         assertEquals("user1", record.userId());
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Layer 1 (per-RT singleflight) and Layer 2 (rotated-grace) coverage.
+    // ---------------------------------------------------------------------------------------
+
+    private static Map<String, AttributeValue> activeRow(String tokenId, long now) {
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put(RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s(tokenId).build());
+        item.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(OKTA_PID_USER1).build());
+        item.put(RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build());
+        item.put(RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("client1").build());
+        item.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(AudienceConstants.PROVIDER_OKTA).build());
+        item.put(RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build());
+        item.put(RefreshTableAttribute.TOKEN_FAMILY_ID.attr(), AttributeValue.builder().s("f1").build());
+        item.put(RefreshTableAttribute.ISSUED_AT.attr(), AttributeValue.builder().n(String.valueOf(now)).build());
+        item.put(RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build());
+        item.put(RefreshTableAttribute.TTL.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build());
+        return item;
+    }
+
+    private static Map<String, AttributeValue> rotatedRow(String tokenId, long now, long rotatedAgo, String replacedBy) {
+        Map<String, AttributeValue> item = activeRow(tokenId, now - 3600);
+        item.put(RefreshTableAttribute.STATUS.attr(),
+                AttributeValue.builder().s(RefreshTableConstants.STATUS_ROTATED).build());
+        item.put(RefreshTableAttribute.ROTATED_AT.attr(),
+                AttributeValue.builder().n(String.valueOf(now - rotatedAgo)).build());
+        item.put(RefreshTableAttribute.REPLACED_BY.attr(),
+                AttributeValue.builder().s(replacedBy).build());
+        return item;
+    }
+
+    @Test
+    void rotate_takesPerRtLockBeforeRotating() {
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> active = activeRow("id1", now);
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(active)).build());
+        when(dynamoDbClient.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().item(active).build());
+
+        var result = service.rotate(token, "client1");
+
+        assertNotNull(result);
+        verify(refreshLockStore).tryAcquire(eq("rt-rotate:" + service.hashToken(token)),
+                anyString(), anyLong());
+        verify(refreshLockStore).release(eq("rt-rotate:" + service.hashToken(token)), anyString());
+    }
+
+    @Test
+    void rotate_returnsNullAndDoesNotRotateWhenLockNotAcquired() {
+        String token = service.generateSecureToken();
+        // Force lock failure on every retry.
+        when(refreshLockStore.tryAcquire(anyString(), anyString(), anyLong())).thenReturn(false);
+
+        var result = service.rotate(token, "client1");
+
+        assertNull(result);
+        verify(dynamoDbClient, never()).transactWriteItems(any(TransactWriteItemsRequest.class));
+        verify(refreshLockStore, never()).release(anyString(), anyString());
+    }
+
+    @Test
+    void rotate_servesSecondCallerFromInflightCacheWithoutSecondTransactWrite() {
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> active = activeRow("id1", now);
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(active)).build());
+        when(dynamoDbClient.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().item(active).build());
+
+        var first = service.rotate(token, "client1");
+        var second = service.rotate(token, "client1");
+
+        assertNotNull(first);
+        assertNotNull(second);
+        assertEquals(first.rawToken(), second.rawToken(),
+                "Singleflight: duplicate caller must receive the same raw RT");
+        assertEquals(first.refreshTokenId(), second.refreshTokenId());
+        verify(dynamoDbClient, times(1)).transactWriteItems(any(TransactWriteItemsRequest.class));
+    }
+
+    @Test
+    void rotate_conditionalCheckFailedUnderLockDoesNotRevokeFamily() {
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> active = activeRow("id1", now);
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(active)).build());
+        when(dynamoDbClient.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().item(active).build());
+        when(dynamoDbClient.transactWriteItems(any(TransactWriteItemsRequest.class)))
+                .thenThrow(ConditionalCheckFailedException.builder().build());
+
+        var result = service.rotate(token, "client1");
+
+        assertNull(result);
+        // Crucially: NO putItem call to flip rows to REVOKED. Family stays intact; the caller's
+        // next attempt will hit the grace path in validate().
+        verify(dynamoDbClient, never())
+                .putItem(any(software.amazon.awssdk.services.dynamodb.model.PutItemRequest.class));
+    }
+
+    @Test
+    void validate_returnsRotatedGraceSuccessorWhenInsideGraceWindow() {
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> rotated = rotatedRow("id1", now, /*rotatedAgo*/ 3, "id2");
+        Map<String, AttributeValue> successor = activeRow("id2", now - 3);
+        // Two query call sites: lookupByHash (returns rotated) then queryLatestActiveInFamily
+        // (returns successor). Use sequenced returns so order matters.
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(rotated)).build())
+                .thenReturn(QueryResponse.builder().items(List.of(successor)).build());
+
+        RefreshTokenValidationResult result = service.validate(token, "client1");
+
+        assertEquals(RefreshTokenValidationResult.Status.ROTATED_GRACE_SUCCESSOR, result.status());
+        assertNotNull(result.successor());
+        assertEquals("id2", result.successor().refreshTokenId());
+    }
+
+    @Test
+    void validate_fallsBackToReplayWhenGraceWindowHasNoLiveSuccessor() {
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> rotated = rotatedRow("id1", now, /*rotatedAgo*/ 3, "id2");
+        // Family-index query returns only ROTATED rows; no live ACTIVE successor exists.
+        Map<String, AttributeValue> rotatedSuccessor = rotatedRow("id2", now, /*rotatedAgo*/ 1, "id3");
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(rotated)).build())
+                .thenReturn(QueryResponse.builder().items(List.of(rotatedSuccessor)).build());
+
+        RefreshTokenValidationResult result = service.validate(token, "client1");
+
+        assertEquals(RefreshTokenValidationResult.Status.ROTATED_REPLAY, result.status());
+        assertNull(result.successor());
+    }
+
+    @Test
+    void rotateGraceSuccessor_mintsNewRtFromActiveSuccessor() {
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> successorItem = activeRow("id2", now - 3);
+        when(dynamoDbClient.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().item(successorItem).build());
+
+        RefreshTokenRecord successor = io.athenz.mop.store.impl.aws.RefreshTokenStoreDynamodbHelpers
+                .itemToRecord(successorItem);
+
+        var result = service.rotateGraceSuccessor(successor);
+
+        assertNotNull(result);
+        assertNotNull(result.rawToken());
+        assertNotEquals("id2", result.refreshTokenId(), "Should mint a brand-new id, not reuse the parent's");
+        verify(dynamoDbClient, times(1)).transactWriteItems(any(TransactWriteItemsRequest.class));
+    }
+
+    @Test
+    void validate_familyIdleGate_servesGraceWhenFamilyRecentlyActive() {
+        // 2h token-age window; 48h family-idle gate; family successor was rotated 30 min ago.
+        service.rotatedGraceSeconds = 7200;
+        service.familyIdleGraceSeconds = 172800;
+
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> rotated = rotatedRow("id1", now, /*rotatedAgo*/ 5400, "id2");
+        Map<String, AttributeValue> successor = activeRow("id2", now - 1800);
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(rotated)).build())
+                .thenReturn(QueryResponse.builder().items(List.of(successor)).build());
+
+        RefreshTokenValidationResult result = service.validate(token, "client1");
+
+        assertEquals(RefreshTokenValidationResult.Status.ROTATED_GRACE_SUCCESSOR, result.status());
+        assertNotNull(result.successor());
+        assertEquals("id2", result.successor().refreshTokenId());
+    }
+
+    @Test
+    void validate_familyIdleGate_revokesWhenFamilyAbandoned() {
+        // 2h token-age window; 48h family-idle gate; presented row is 1h old (in token-age grace),
+        // but the family's most recent ACTIVE leaf was issued 49h ago — family looks abandoned.
+        service.rotatedGraceSeconds = 7200;
+        service.familyIdleGraceSeconds = 172800;
+
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> rotated = rotatedRow("id1", now, /*rotatedAgo*/ 3600, "id2");
+        Map<String, AttributeValue> staleSuccessor = activeRow("id2", now - 176400);
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(rotated)).build())
+                .thenReturn(QueryResponse.builder().items(List.of(staleSuccessor)).build());
+
+        RefreshTokenValidationResult result = service.validate(token, "client1");
+
+        assertEquals(RefreshTokenValidationResult.Status.ROTATED_REPLAY, result.status());
+        assertNull(result.successor());
+    }
+
+    @Test
+    void validate_familyIdleGate_disabledByDefaultMatchesTokenAgeOnlyBehavior() {
+        // 2h token-age window; family-idle gate OFF — even when the successor's last activity
+        // is well outside what the family-idle gate would allow, the call should still get the
+        // grace path because the gate is disabled (this is today's ship-now default).
+        service.rotatedGraceSeconds = 7200;
+        service.familyIdleGraceSeconds = 0;
+
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> rotated = rotatedRow("id1", now, /*rotatedAgo*/ 3600, "id2");
+        // Successor was issued 49h ago but is still unexpired (90d expiry on RTs); the gate
+        // would reject this if enabled (49h > 48h family-idle), but with gate=0 we accept.
+        Map<String, AttributeValue> agedSuccessor = new HashMap<>(activeRow("id2", now));
+        agedSuccessor.put(RefreshTableAttribute.ISSUED_AT.attr(),
+                AttributeValue.builder().n(String.valueOf(now - 176400)).build());
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(rotated)).build())
+                .thenReturn(QueryResponse.builder().items(List.of(agedSuccessor)).build());
+
+        RefreshTokenValidationResult result = service.validate(token, "client1");
+
+        assertEquals(RefreshTokenValidationResult.Status.ROTATED_GRACE_SUCCESSOR, result.status(),
+                "With family-idle gate disabled, only the token-age check governs grace");
+    }
+
+    @Test
+    void rotateGraceSuccessor_returnsNullWhenSuccessorNoLongerActive() {
+        long now = System.currentTimeMillis() / 1000;
+        // Successor has been rotated since validate() snapshotted it.
+        Map<String, AttributeValue> rotatedSuccessor = rotatedRow("id2", now, 1, "id3");
+        when(dynamoDbClient.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().item(rotatedSuccessor).build());
+
+        RefreshTokenRecord successor = io.athenz.mop.store.impl.aws.RefreshTokenStoreDynamodbHelpers
+                .itemToRecord(rotatedSuccessor);
+
+        var result = service.rotateGraceSuccessor(successor);
+
+        assertNull(result);
+        verify(dynamoDbClient, never()).transactWriteItems(any(TransactWriteItemsRequest.class));
     }
 }

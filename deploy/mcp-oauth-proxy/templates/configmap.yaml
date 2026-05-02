@@ -291,6 +291,12 @@ data:
         table-name: {{ .Values.application.refreshToken.tableName | quote }}
         expiry-seconds: {{ .Values.application.refreshToken.expirySeconds }}
         ttl-buffer-days: {{ .Values.application.refreshToken.ttlBufferDays }}
+        rotated-grace-seconds: {{ .Values.application.refreshToken.rotatedGraceSeconds | default 7200 }}
+        family-idle-grace-seconds: {{ .Values.application.refreshToken.familyIdleGraceSeconds | default 0 }}
+        inflight-cache-seconds: {{ .Values.application.refreshToken.inflightCacheSeconds | default 30 }}
+        inflight-lock-ttl-seconds: {{ .Values.application.refreshToken.inflightLockTtlSeconds | default 30 }}
+        inflight-lock-max-retries: {{ .Values.application.refreshToken.inflightLockMaxRetries | default 12 }}
+        inflight-lock-initial-backoff-ms: {{ .Values.application.refreshToken.inflightLockInitialBackoffMs | default 100 }}
       refresh-lock:
         table-name: {{ .Values.application.refreshLock.tableName | quote }}
         ttl-seconds: {{ .Values.application.refreshLock.ttlSeconds }}
