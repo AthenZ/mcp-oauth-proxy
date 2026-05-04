@@ -17,6 +17,9 @@ quarkus:
         embrace-internal-userinfo:
           paths: "/internal/embrace/oauth-userinfo"
           policy: permit
+        authorize-error:
+          paths: "/authorize/error"
+          policy: permit
     cors:
       enabled: true
       origins: http://localhost:6274 # allow mcp inspector
@@ -49,6 +52,7 @@ quarkus:
         - offline_access
       redirect-path: /authorize/callback
       restore-path-after-redirect: true
+      error-path: /authorize/error
     application-type: web-app
     atlassian:
       auth-server-url: "https://auth.atlassian.com"

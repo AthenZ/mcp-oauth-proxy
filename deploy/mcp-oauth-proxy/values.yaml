@@ -244,6 +244,9 @@ application:
         jag:
           enabled:
           issuer:
+  authorizeError:
+    iiqUrl: "https://yo/iiq"
+    supportChannel: "#mcp-oauth-proxy-users"
 
 googleWorkspaceServices:
   - name: google-drive

@@ -26,6 +26,9 @@ data:
             embrace-internal-userinfo:
               paths: "/internal/embrace/oauth-userinfo"
               policy: permit
+            authorize-error:
+              paths: "/authorize/error"
+              policy: permit
             atlassian-mcp:
               paths: "/atlassian-mcp/*"
               policy: authenticated
@@ -85,6 +88,7 @@ data:
           {{- end }}
           redirect-path: /authorize/callback
           restore-path-after-redirect: true
+          error-path: /authorize/error
         application-type: web-app
         atlassian:
           auth-server-url: {{ .Values.oidc.atlassian.endpoint | quote }}
@@ -459,4 +463,9 @@ data:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}
           {{ toYaml . | nindent 10 }}
-        {{- end -}}
+        {{- end }}
+
+    mop:
+      authorize-error:
+        iiq-url: {{ .Values.application.authorizeError.iiqUrl | default "https://yo/iiq" | quote }}
+        support-channel: {{ .Values.application.authorizeError.supportChannel | default "#mcp-help" | quote }}
