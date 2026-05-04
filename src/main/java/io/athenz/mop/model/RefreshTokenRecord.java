@@ -25,6 +25,7 @@ public record RefreshTokenRecord(
     String userId,
     String clientId,
     String provider,
+    String audience,
     String providerSubject,
     String encryptedUpstreamRefreshToken,
     String status,

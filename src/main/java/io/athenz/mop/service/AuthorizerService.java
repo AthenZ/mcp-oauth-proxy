@@ -18,12 +18,16 @@ package io.athenz.mop.service;
 import com.yahoo.athenz.zms.Access;
 import com.yahoo.athenz.zms.ZMSClient;
 import io.athenz.mop.model.*;
+import io.athenz.mop.store.BearerIndexStore;
 import io.athenz.mop.store.TokenStore;
+import io.athenz.mop.telemetry.OauthProxyMetrics;
+import io.athenz.mop.util.JwtUtils;
 import io.quarkus.oidc.RefreshToken;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.invoke.MethodHandles;
 import java.time.Instant;
+import java.util.Date;
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.jwt.JsonWebToken;
@@ -77,12 +81,107 @@ public class AuthorizerService {
     @Inject
     RefreshTokenService refreshTokenService;
 
+    @Inject
+    OktaSessionCache oktaSessionCache;
+
+    @Inject
+    io.athenz.mop.config.OktaSessionCacheConfig oktaSessionCacheConfig;
+
+    @Inject
+    UpstreamRefreshService upstreamRefreshService;
+
+    @Inject
+    BearerIndexStore bearerIndexStore;
+
+    @Inject
+    OauthProxyMetrics oauthProxyMetrics;
+
+    @Inject
+    UpstreamProviderClassifier upstreamProviderClassifier;
+
+    @Inject
+    IdpSessionCache idpSessionCache;
+
+    /**
+     * Best-effort write of one row to {@code mcp-oauth-proxy-bearer-index}. Failures are
+     * swallowed and recorded via {@code mop_bearer_index_write_total{outcome=failure}}; the
+     * bearer is still returned to the MCP client and the next /userinfo call will 401 once,
+     * triggering a transparent client refresh that repopulates the index.
+     */
+    void writeBearerIndex(String accessToken, String userId, String clientId, String provider,
+                          long absoluteTtlEpochSeconds) {
+        if (accessToken == null || accessToken.isEmpty() || userId == null || userId.isEmpty()
+                || provider == null || provider.isEmpty()) {
+            return;
+        }
+        try {
+            String hash = JwtUtils.hashAccessToken(accessToken);
+            long exp = expFromJwtOrTtlMinusGrace(accessToken, absoluteTtlEpochSeconds);
+            bearerIndexStore.putBearer(hash, userId, clientId, provider, exp, absoluteTtlEpochSeconds);
+            oauthProxyMetrics.recordBearerIndexWrite(true);
+        } catch (Exception e) {
+            log.warn("bearer-index write failed for userId={} clientId={} provider={}: {}",
+                    userId, clientId, provider, e.getMessage());
+            oauthProxyMetrics.recordBearerIndexWrite(false);
+        }
+    }
+
+    /**
+     * Resolve the bearer's own {@code exp} epoch seconds. Prefer the JWT's {@code exp} claim when
+     * present (works for Okta-issued and other JWT bearers); fall back to the storage ttl minus the
+     * 5-minute grace we add when persisting (so the index row carries a value that is &le; ttl).
+     */
+    private long expFromJwtOrTtlMinusGrace(String accessToken, long absoluteTtlEpochSeconds) {
+        try {
+            Object claim = JwtUtils.getClaimFromToken(accessToken, "exp");
+            if (claim instanceof Date d) {
+                return d.toInstant().getEpochSecond();
+            }
+            if (claim instanceof Number n) {
+                return n.longValue();
+            }
+        } catch (Exception ignored) {
+            // not a JWT (opaque bearer) or parse failed; fall through to ttl-derived exp
+        }
+        long derived = absoluteTtlEpochSeconds - TOKEN_STORE_TTL_GRACE_SECONDS;
+        return derived > 0 ? derived : absoluteTtlEpochSeconds;
+    }
+
     /**
      * Compose the DynamoDB partition-key value for a per-MCP-client bearer row in
      * {@code mcp-oauth-proxy-tokens}. Falls back to the bare {@code user} when {@code clientId}
      * is null/blank so unauthenticated edge paths degrade to today's behavior. Sanitizes any
      * '#' in {@code clientId} (defense-in-depth; DCR registration also rejects '#').
      */
+    /**
+     * Compose the {@code "okta#<sub>"} {@code providerUserId} used as the shared Okta upstream
+     * session cache key. {@code lookupKey} is the prefixed user form stored in DDB partition
+     * keys ({@code userPrefix + sub}); we strip {@code userPrefix} here so the key matches the
+     * one written by {@code UpstreamRefreshService} / {@code TokenResource}. Returns
+     * {@code null} when {@code lookupKey} is blank.
+     */
+    String oktaProviderUserId(String lookupKey) {
+        return userProviderKey(lookupKey, AudienceConstants.PROVIDER_OKTA);
+    }
+
+    /**
+     * Compose the canonical L2 row key {@code "<provider>#<sub>"} for any promoted upstream IdP.
+     * Strips the configured {@code userPrefix} so the key shape matches what {@link UpstreamRefreshService}
+     * writes. Returns {@code null} when either argument is blank.
+     */
+    String userProviderKey(String lookupKey, String provider) {
+        if (lookupKey == null || lookupKey.isEmpty() || provider == null || provider.isEmpty()) {
+            return null;
+        }
+        String subject = (userPrefix != null && !userPrefix.isEmpty() && lookupKey.startsWith(userPrefix))
+                ? lookupKey.substring(userPrefix.length())
+                : lookupKey;
+        if (subject.isEmpty()) {
+            return null;
+        }
+        return provider + "#" + subject;
+    }
+
     static String compositeUserKey(String clientId, String user) {
         if (clientId == null || clientId.isEmpty()) {
             return user;
@@ -131,18 +230,67 @@ public class AuthorizerService {
     public void storeTokens(String user, String lookupKey, String idToken, String accessToken, String refreshToken, String provider, String clientId) {
         log.info("storing tokens for lookupKey: {} and user: {} from provider: {} (clientId={})", lookupKey, user, provider, clientId);
         long nowSeconds = Instant.now().getEpochSecond();
+        long absoluteTtl = nowSeconds + ttl + TOKEN_STORE_TTL_GRACE_SECONDS;
         TokenWrapper cachedToken = new TokenWrapper(
                 user,
                 provider,
                 idToken,
                 accessToken,
                 refreshToken,
-                nowSeconds + ttl + TOKEN_STORE_TTL_GRACE_SECONDS
+                absoluteTtl
         );
+        // The bare (lookupKey, provider) row is still the upstream-IDP session marker that
+        // AuthorizeResource:193 / TokenResource's firstNonEmpty inheritance and the Okta
+        // OktaSessionCache repopulation path both read; keep writing it.
         tokenStore.storeUserToken(lookupKey, provider, cachedToken);
-        if (clientId != null && !clientId.isEmpty()) {
-            tokenStore.storeUserToken(lookupKey, provider, clientId, cachedToken);
-            log.info("Also stored per-client bearer row for lookupKey: {} provider: {} clientId: {}", lookupKey, provider, clientId);
+        // The per-client (clientId#lookupKey, provider) row is no longer written. Bearer
+        // resolution now goes through the dedicated mcp-oauth-proxy-bearer-index table; that
+        // is the canonical /userinfo lookup, immune to the multi-window access-token-hash
+        // clobber that motivated this change.
+        writeBearerIndex(accessToken, lookupKey, clientId, provider, absoluteTtl);
+        if (upstreamProviderClassifier.isUpstreamPromoted(provider)) {
+            // Login (and any other promoted-IdP write) is the canonical seeder of the upstream
+            // tiers:
+            //   L0 (per-pod IdpSessionCache for promoted Google providers / OktaSessionCache for Okta)
+            //   L1 (bare (userId, provider) row in mcp-oauth-proxy-tokens, written above)
+            //   L2 (mcp-oauth-proxy-upstream-tokens, canonical RT for the (provider, sub) pair)
+            //
+            // Without the L2 seed, refresh works only as long as L0/L1 stay warm; the next
+            // refresh after they expire reads L2, finds nothing, and the family is terminally
+            // revoked with "No upstream refresh token" — exactly the gslides Bug #2 we're
+            // promoting Google providers to L2 to fix. Seeding L2 here makes the upstream RT
+            // durable across pod restarts, cache evictions, and cross-region failovers.
+            //
+            // Native-IdP providers (Slack, GitHub, Atlassian, Embrace) are out of scope: they
+            // continue to read/write the legacy per-row encrypted_upstream_refresh_token.
+            String providerUserId = userProviderKey(lookupKey, provider);
+            if (providerUserId != null) {
+                if (AudienceConstants.PROVIDER_OKTA.equals(provider)) {
+                    if (oktaSessionCacheConfig.enabled() && idToken != null && !idToken.isEmpty()) {
+                        oktaSessionCache.put(providerUserId,
+                                OktaSessionEntry.from(idToken, accessToken, refreshToken));
+                    }
+                } else if (clientId != null && !clientId.isEmpty()) {
+                    // Per-client L0 cell for promoted Google providers. Sub is the part after
+                    // the provider#: same as L2 row key shape.
+                    String sub = providerUserId.substring(provider.length() + 1);
+                    String clientKey = IdpSessionCache.clientKey(clientId, provider, sub);
+                    if (clientKey != null && accessToken != null && !accessToken.isEmpty()) {
+                        long now = Instant.now().getEpochSecond();
+                        long expiresIn = Math.max(0L, absoluteTtl - TOKEN_STORE_TTL_GRACE_SECONDS - now);
+                        idpSessionCache.put(clientKey,
+                                IdpSessionEntry.from(accessToken, idToken, expiresIn, now));
+                    }
+                }
+                if (refreshToken != null && !refreshToken.isEmpty()) {
+                    // storeInitialUpstreamToken is idempotent: it skips the write when a non-empty
+                    // ACTIVE row already exists, preventing relogin from downgrading a freshly-
+                    // rotated upstream RT back to the OIDC-session value. For non-ACTIVE rows
+                    // (REVOKED_INVALID_GRANT) it re-seeds with version=1 — that's the explicit
+                    // "log in again after revoke" recovery path.
+                    upstreamRefreshService.storeInitialUpstreamToken(providerUserId, refreshToken);
+                }
+            }
         }
     }
 
@@ -239,7 +387,7 @@ public class AuthorizerService {
             tokenResponse = new TokenResponse(
                     atDO.token().accessToken(),
                     TOKEN_TYPE,
-                    atDO.token().ttl(),
+                    sanitizeExpiresIn(atDO.token().ttl()),
                     tokenResponseScope(atDO, resourceMeta)
             );
 
@@ -262,7 +410,7 @@ public class AuthorizerService {
             tokenResponse = new TokenResponse(
                     atDO.token().accessToken(),
                     TOKEN_TYPE,
-                    atDO.token().ttl(),
+                    sanitizeExpiresIn(atDO.token().ttl()),
                     tokenResponseScope(atDO, resourceMeta)
             );
         }
@@ -332,15 +480,12 @@ public class AuthorizerService {
                 absoluteTtl
         );
 
-        if (clientId != null && !clientId.isEmpty()) {
-            tokenStore.storeUserToken(oktaToken.key(), storeProvider, clientId, toStore);
-        } else {
-            // Defensive fallback for callers that have not yet been threaded with clientId.
-            // /userinfo will resolve via access_token_hash GSI in either case; the bare row
-            // form keeps today's behavior for legacy invocations.
-            tokenStore.storeUserToken(oktaToken.key(), storeProvider, toStore);
-        }
-        log.info("Successfully stored token for user: {} provider: {} clientId: {} with ttl: {}", oktaToken.key(), storeProvider, clientId, toStore.ttl());
+        // Per the bearer-index plan, the per-client (clientId#userId, storeProvider) row in
+        // mcp-oauth-proxy-tokens is no longer written; /userinfo bearer resolution now goes
+        // through the dedicated bearer-index table.
+        writeBearerIndex(exchangedToken.accessToken(), oktaToken.key(), clientId, storeProvider, absoluteTtl);
+        log.info("Indexed exchanged token in bearer-index for user: {} provider: {} clientId: {} with ttl: {}",
+                oktaToken.key(), storeProvider, clientId, toStore.ttl());
     }
 
     /**
@@ -358,39 +503,23 @@ public class AuthorizerService {
                                           TokenWrapper upstreamToken, TokenWrapper returnedToken, String clientId) {
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
         String storeProvider;
-        TokenWrapper toStore;
+        long absoluteTtl;
         String audience = resourceMeta != null ? resourceMeta.audience() : null;
         boolean storeByAudience = AudienceConstants.storesExchangedTokenForUserinfo(audience);
         if (resourceMeta != null && storeByAudience) {
             storeProvider = exchangedTokenUserinfoStoreProviderResolver.resolve(resource, audience);
-            long absoluteTtl = Instant.now().getEpochSecond() + (returnedToken.ttl() != null ? returnedToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
-            toStore = new TokenWrapper(
-                    userId,
-                    storeProvider,
-                    null,
-                    returnedToken.accessToken(),
-                    null,
-                    absoluteTtl
-            );
-            log.info("Storing exchanged token for subject: {} provider: {} so /userinfo can resolve it", userId, storeProvider);
+            absoluteTtl = Instant.now().getEpochSecond() + (returnedToken.ttl() != null ? returnedToken.ttl() : 3600L) + TOKEN_STORE_TTL_GRACE_SECONDS;
+            log.info("Indexing exchanged refreshed token for subject: {} provider: {} so /userinfo can resolve it", userId, storeProvider);
         } else {
             storeProvider = provider;
-            // returnedToken is the same as the token we already stored with grace in refreshUpstreamAndGetToken
-            toStore = new TokenWrapper(
-                    userId,
-                    storeProvider,
-                    returnedToken.idToken(),
-                    returnedToken.accessToken(),
-                    returnedToken.refreshToken(),
-                    returnedToken.ttl()
-            );
-            log.info("Storing returned token for subject: {} provider: {} so /userinfo can resolve it", userId, storeProvider);
+            absoluteTtl = returnedToken.ttl() != null ? returnedToken.ttl() : Instant.now().getEpochSecond() + 3600L;
+            log.info("Indexing returned refreshed token for subject: {} provider: {} so /userinfo can resolve it", userId, storeProvider);
         }
-        if (clientId != null && !clientId.isEmpty()) {
-            tokenStore.storeUserToken(userId, storeProvider, clientId, toStore);
-        } else {
-            tokenStore.storeUserToken(userId, storeProvider, toStore);
-        }
+        // Per the bearer-index plan: per-client (clientId#userId, storeProvider) rows in
+        // mcp-oauth-proxy-tokens are no longer written. /userinfo resolves bearers via the new
+        // dedicated bearer-index table. The bare (userId, provider) row was already updated by
+        // refreshUpstreamAndGetTokenLocked / completeRefreshWithOktaTokens; we don't double-write.
+        writeBearerIndex(returnedToken.accessToken(), userId, clientId, storeProvider, absoluteTtl);
     }
 
     /**
@@ -468,15 +597,21 @@ public class AuthorizerService {
         tokenStore.storeUserToken(userId, provider, toStore);
 
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
+        if (resourceMeta == null) {
+            log.error("refreshUpstreamAndGetTokenLocked: resourceMeta is null for resource={} user={} provider={}; "
+                    + "refusing to fall back to raw upstream token. This indicates the RFC 8707 validation gate "
+                    + "in TokenResource was bypassed.", resource, userId, provider);
+            return null;
+        }
         // Run the new access token through the resource's authorization server (e.g. Okta/Glean exchange)
         // so the client receives the same exchanged token as in the auth_code flow (TokenExchangeServiceOktaImpl 87-92)
         TokenExchangeService accessTokenIssuer = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(
-                resourceMeta != null ? resourceMeta.authorizationServer() : provider);
+                resourceMeta.authorizationServer());
         TokenExchangeDO accessTokenRequestDO = new TokenExchangeDO(
-                resourceMeta != null ? resourceMeta.scopes() : null,
+                resourceMeta.scopes(),
                 resource,
-                resourceMeta != null ? resourceMeta.domain() : null,
-                resourceMeta != null ? configService.getRemoteServerEndpoint(resourceMeta.authorizationServer()) : null,
+                resourceMeta.domain(),
+                configService.getRemoteServerEndpoint(resourceMeta.authorizationServer()),
                 toStore
         );
         AuthorizationResultDO atDO = accessTokenIssuer.getAccessTokenFromResourceAuthorizationServer(accessTokenRequestDO);
@@ -490,7 +625,7 @@ public class AuthorizerService {
         TokenResponse tokenResponse = new TokenResponse(
                 atDO.token().accessToken(),
                 TOKEN_TYPE,
-                atDO.token().ttl(),
+                sanitizeExpiresIn(atDO.token().ttl()),
                 scopeStr
         );
         return new RefreshAndTokenResult(tokenResponse, newUpstreamRefresh);
@@ -525,15 +660,37 @@ public class AuthorizerService {
                 absoluteTtl
         );
         tokenStore.storeUserToken(userId, provider, toStore);
+        if (AudienceConstants.PROVIDER_OKTA.equals(provider) && oktaSessionCacheConfig.enabled()
+                && oktaTokens.idToken() != null && !oktaTokens.idToken().isEmpty()) {
+            // Idempotent with the L0 write inside UpstreamRefreshService.refreshUpstream(): we
+            // re-publish the same id/access tokens here so a future code path that lands a row
+            // by a different L1-only route still keeps L0 hot. Caffeine's put is unconditional.
+            String providerUserId = oktaProviderUserId(userId);
+            if (providerUserId != null) {
+                oktaSessionCache.put(providerUserId,
+                        OktaSessionEntry.from(oktaTokens.idToken(), oktaTokens.accessToken(),
+                                oktaTokens.refreshToken()));
+            }
+        }
 
         ResourceMeta resourceMeta = configService.getResourceMeta(resource);
+        // Defense-in-depth: same contract as refreshUpstreamAndGetTokenLocked. The /token endpoint
+        // already gated unknown resources with invalid_target (RFC 8707), so resourceMeta should
+        // never be null here. If it is, fail loudly rather than silently issue a raw Okta AT — see
+        // the Databricks "connect once then 401" regression that motivated the gate.
+        if (resourceMeta == null) {
+            log.error("completeRefreshWithOktaTokens: resourceMeta is null for resource={} user={} provider={}; "
+                    + "refusing to fall back to raw upstream token. This indicates the RFC 8707 validation gate "
+                    + "in TokenResource was bypassed.", resource, userId, provider);
+            return null;
+        }
         TokenExchangeService accessTokenIssuer = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(
-                resourceMeta != null ? resourceMeta.authorizationServer() : provider);
+                resourceMeta.authorizationServer());
         TokenExchangeDO accessTokenRequestDO = new TokenExchangeDO(
-                resourceMeta != null ? resourceMeta.scopes() : null,
+                resourceMeta.scopes(),
                 resource,
-                resourceMeta != null ? resourceMeta.domain() : null,
-                resourceMeta != null ? configService.getRemoteServerEndpoint(resourceMeta.authorizationServer()) : null,
+                resourceMeta.domain(),
+                configService.getRemoteServerEndpoint(resourceMeta.authorizationServer()),
                 toStore
         );
         AuthorizationResultDO atDO = accessTokenIssuer.getAccessTokenFromResourceAuthorizationServer(accessTokenRequestDO);
@@ -547,10 +704,72 @@ public class AuthorizerService {
         TokenResponse tokenResponse = new TokenResponse(
                 atDO.token().accessToken(),
                 TOKEN_TYPE,
-                atDO.token().ttl(),
+                sanitizeExpiresIn(atDO.token().ttl()),
                 scopeStr
         );
         return new RefreshAndTokenResult(tokenResponse, null);
+    }
+
+    /**
+     * Coerce {@code rawTtl} to a sane RFC 6749 §5.1 {@code expires_in} *duration* in seconds.
+     *
+     * <p>Contract: every {@link TokenExchangeService} implementation should return a
+     * {@code TokenWrapper.ttl} carrying a duration in seconds. Four pass-through providers
+     * (Slack, GitHub, Atlassian, Embrace) instead re-emit the input {@code TokenWrapper} that
+     * {@code AuthorizerService} built for storage, whose {@code ttl} field is the *absolute* DDB
+     * epoch (now + lifetime + grace). Without normalization that value would leak onto the wire
+     * as {@code expires_in = 1.7e9}, which a spec-conformant client interprets as a 50-year
+     * lifetime.
+     *
+     * <p>Policy:
+     * <ul>
+     *   <li>null / non-positive → fall back to {@link #DEFAULT_EXPIRES_IN_SECONDS}.
+     *   <li>looks like an absolute epoch (greater than "duration sanity ceiling" of ~30 days) →
+     *       treat as absolute and convert back to a duration via {@code rawTtl - now()}, then
+     *       run the result through this same sanitizer. If even that comes out non-positive
+     *       (token already expired) or still absurd (clock skew, garbage), fall back to the
+     *       default. Crucially we do NOT silently emit a 1.7e9 wire value.
+     *   <li>otherwise → return as-is, capped to {@link #MAX_REASONABLE_DURATION_SECONDS} so a
+     *       buggy upstream that returns 5e10 doesn't poison the response.
+     * </ul>
+     */
+    static final long DEFAULT_EXPIRES_IN_SECONDS = 3600L;
+    // ~30 days. Anything strictly larger is almost certainly an absolute epoch (current epoch
+    // ≈ 1.78e9 ≫ 2.6e6) and we'll convert it back to a duration via `rawTtl - now()`.
+    private static final long DURATION_SANITY_CEILING_SECONDS = 60L * 60L * 24L * 30L;
+    // Hard ceiling on what we'll emit on the wire. Above this we cap rather than echo back a
+    // garbage upstream value. 24h is well above every legitimate access-token lifetime we issue
+    // today (longest is Slack's 12h refresh cycle).
+    private static final long MAX_REASONABLE_DURATION_SECONDS = 60L * 60L * 24L;
+
+    static long sanitizeExpiresIn(Long rawTtl) {
+        return sanitizeExpiresIn(rawTtl, Instant.now().getEpochSecond());
+    }
+
+    // Package-visible variant for deterministic unit testing.
+    static long sanitizeExpiresIn(Long rawTtl, long nowSeconds) {
+        if (rawTtl == null || rawTtl <= 0L) {
+            return DEFAULT_EXPIRES_IN_SECONDS;
+        }
+        if (rawTtl > DURATION_SANITY_CEILING_SECONDS) {
+            // Looks like an absolute epoch leaked through (pass-through TokenExchangeService impl
+            // returned the storage-side TokenWrapper whose `ttl` is `now + lifetime + grace`).
+            // Convert back to a duration: remaining = absolute - now.
+            long remaining = rawTtl - nowSeconds;
+            if (remaining <= 0L) {
+                // The token already expired by clock; we can't honestly say "valid for X seconds".
+                // Emit the default so the client treats it as short-lived and refreshes promptly.
+                return DEFAULT_EXPIRES_IN_SECONDS;
+            }
+            if (remaining > MAX_REASONABLE_DURATION_SECONDS) {
+                return MAX_REASONABLE_DURATION_SECONDS;
+            }
+            return remaining;
+        }
+        if (rawTtl > MAX_REASONABLE_DURATION_SECONDS) {
+            return MAX_REASONABLE_DURATION_SECONDS;
+        }
+        return rawTtl;
     }
 
     /**
@@ -588,6 +807,23 @@ public class AuthorizerService {
             log.warn("mintBearerForWarmCacheClient: no shared upstream refresh token for user {} provider {}; cannot mint", userId, provider);
             return null;
         }
+
+        // Promoted-provider re-route: route through UpstreamRefreshService so the L2 row is the
+        // canonical RT source instead of the bare-row's `sharedUpstreamRefreshToken` argument.
+        // This gives the warm-mint path the same guarantees as the refresh-token grant:
+        //   - DDB-backed lock (no lock-key mismatch with concurrent refresh callers)
+        //   - Version-CAS write of rotated RT + staged AT in one atomic update
+        //   - Per-client L0 cell populated as a side effect (subsequent same-client calls hit
+        //     Path B without any lock or upstream call)
+        //   - Path E reuse-within-grace fires across the auth-code grant just like /token,
+        //     so a 2nd MCP client consenting within 30s of a sibling rotation reuses the
+        //     staged AT instead of issuing a fresh Google call.
+        // The legacy path below stays in place for native-IdP providers (slack/github/atlassian/
+        // embrace) which do not (yet) have an L2 row.
+        if (upstreamProviderClassifier.isUpstreamPromoted(provider)) {
+            return mintBearerForWarmCacheClientPromoted(userId, provider, clientId);
+        }
+
         String lockKey = provider + "#" + userId;
         try {
             refreshCoordinationService.acquireUpstream(lockKey);
@@ -627,15 +863,11 @@ public class AuthorizerService {
             );
             tokenStore.storeUserToken(userId, provider, bareRowUpdate);
 
-            TokenWrapper perClientRow = new TokenWrapper(
-                    userId,
-                    provider,
-                    newToken.idToken(),
-                    newToken.accessToken(),
-                    effectiveUpstreamRefresh,
-                    absoluteTtl
-            );
-            tokenStore.storeUserToken(userId, provider, clientId, perClientRow);
+            // Per the bearer-index plan, the per-client (clientId#userId, provider) row is no
+            // longer written; the freshly-minted per-client bearer is indexed in
+            // mcp-oauth-proxy-bearer-index instead, where /userinfo resolves it without GSI
+            // collisions across windows.
+            writeBearerIndex(newToken.accessToken(), userId, clientId, provider, absoluteTtl);
 
             if (rotatedUpstreamRefresh != null) {
                 try {
@@ -652,7 +884,7 @@ public class AuthorizerService {
             return new TokenResponse(
                     newToken.accessToken(),
                     TOKEN_TYPE,
-                    newToken.ttl() != null ? newToken.ttl() : 3600L,
+                    sanitizeExpiresIn(newToken.ttl()),
                     null
             );
         } finally {
@@ -665,8 +897,101 @@ public class AuthorizerService {
     }
 
     /**
+     * Promoted-provider warm-mint path. Routes through {@link UpstreamRefreshService#refreshUpstream}
+     * so that L2 is the canonical RT source and the per-client L0 cell + bearer-index entry are
+     * populated atomically with the rotated AT.
+     *
+     * <p>Comparison with the legacy code path above:
+     * <ul>
+     *   <li>No explicit {@link RefreshCoordinationService#acquireUpstream} call — the L2 row's
+     *       DDB-backed lock is obtained inside {@code refreshUpstream}, so the surrounding
+     *       in-process lock would be a no-op at best and a deadlock risk at worst.</li>
+     *   <li>No {@code refreshTokenService.updateUpstreamRefreshForAllRowsWithUserAndProvider}
+     *       fan-out — the L2 row IS the canonical RT for promoted providers, and the legacy
+     *       per-row column is nullified by {@code RefreshTokenServiceImpl.nullifyLegacyUpstreamColumnForUserProvider}
+     *       on the next rotation.</li>
+     *   <li>Bare row {@code TokenWrapper} update remains so that any code still reading the
+     *       bare row's {@code accessToken}/{@code refreshToken} (e.g. the AuthorizeResource
+     *       upstream-RT inheritance fallback) sees a fresh marker. The {@code refreshToken}
+     *       column on the bare row stays in sync via the L2 → legacy nullification migration
+     *       on the refresh-tokens table; for the bare row we reuse the rotated RT to keep the
+     *       inheritance window working until the next consent.</li>
+     * </ul>
+     */
+    private TokenResponse mintBearerForWarmCacheClientPromoted(String userId, String provider, String clientId) {
+        String providerUserId = userProviderKey(userId, provider);
+        if (providerUserId == null) {
+            log.warn("mintBearerForWarmCacheClientPromoted: cannot build provider_user_id for user {} provider {}; refusing to mint",
+                    userId, provider);
+            return null;
+        }
+        UpstreamRefreshResponse refreshResponse;
+        try {
+            refreshResponse = upstreamRefreshService.refreshUpstream(providerUserId, provider, clientId);
+        } catch (UpstreamRefreshException e) {
+            log.warn("mintBearerForWarmCacheClientPromoted: refreshUpstream failed for user {} provider {} clientId {}: {}",
+                    userId, provider, clientId, e.getMessage());
+            return null;
+        } catch (Exception e) {
+            log.warn("mintBearerForWarmCacheClientPromoted: unexpected error during refreshUpstream for user {} provider {} clientId {}: {}",
+                    userId, provider, clientId, e.getMessage());
+            return null;
+        }
+        if (refreshResponse == null || refreshResponse.accessToken() == null) {
+            log.warn("mintBearerForWarmCacheClientPromoted: refreshUpstream returned null/empty AT for user {} provider {} clientId {}",
+                    userId, provider, clientId);
+            return null;
+        }
+
+        long nowSeconds = Instant.now().getEpochSecond();
+        long expiresIn = refreshResponse.expiresInSeconds() > 0 ? refreshResponse.expiresInSeconds() : 3600L;
+        long absoluteTtl = nowSeconds + expiresIn + TOKEN_STORE_TTL_GRACE_SECONDS;
+
+        // Bare row update: keep the inheritance marker fresh. The L2 row already holds the
+        // canonical rotated RT; we just mirror it onto the bare row so AuthorizeResource's
+        // first-non-empty inheritance lookup sees a usable upstream session.
+        // For Path E (reuse_within_grace) refreshResponse.refreshToken is null because no
+        // rotation happened — fall back to leaving the bare row's RT untouched in that case
+        // by reading the existing wrapper.
+        String rotatedUpstreamRefresh = refreshResponse.refreshToken();
+        TokenWrapper existingBare = tokenStore.getUserToken(userId, provider);
+        String effectiveBareRefresh = rotatedUpstreamRefresh != null
+                ? rotatedUpstreamRefresh
+                : (existingBare != null ? existingBare.refreshToken() : null);
+        TokenWrapper bareRowUpdate = new TokenWrapper(
+                userId,
+                provider,
+                refreshResponse.idToken(),
+                refreshResponse.accessToken(),
+                effectiveBareRefresh,
+                absoluteTtl
+        );
+        tokenStore.storeUserToken(userId, provider, bareRowUpdate);
+
+        writeBearerIndex(refreshResponse.accessToken(), userId, clientId, provider, absoluteTtl);
+
+        log.info("mintBearerForWarmCacheClientPromoted: minted fresh bearer for user {} provider {} clientId {} (rotatedUpstreamRT={})",
+                userId, provider, clientId, rotatedUpstreamRefresh != null);
+
+        return new TokenResponse(
+                refreshResponse.accessToken(),
+                TOKEN_TYPE,
+                sanitizeExpiresIn(expiresIn),
+                /* scope */ null
+        );
+    }
+
+    /**
      * After upstream refresh fails terminally (e.g. {@code invalid_grant}): drop cached IdP tokens from the token store
      * and best-effort revoke the upstream refresh token at the IdP when the provider implements it.
+     *
+     * <p>Bearer-index trade-off: any bearer-index rows minted before this terminal failure are
+     * left in place. The bearer-index table has no user/family GSI (only PK on H(bearer)) and we
+     * deliberately did not add one — every bearer the upstream IdP minted will already have an
+     * {@code exp} that lapses well within the bearer-index TTL we set, so /userinfo will reject
+     * those bearers via the natural exp check before TTL evicts the row. Adding active deletion
+     * would require either tracking bearer hashes per family (extra writes everywhere) or a
+     * fan-out scan (expensive). The TTL is the durable backstop.
      */
     public void cleanupAfterTerminalUpstreamRefreshFailure(String userId, String provider, String upstreamRefreshToken) {
         if (StringUtils.isBlank(userId) || StringUtils.isBlank(provider)) {
@@ -676,6 +1001,12 @@ public class AuthorizerService {
             tokenStore.deleteUserToken(userId, provider);
         } catch (Exception e) {
             log.warn("Failed to delete token store entry for userId={} provider={}: {}", userId, provider, e.getMessage());
+        }
+        if (AudienceConstants.PROVIDER_OKTA.equals(provider) && oktaSessionCacheConfig.enabled()) {
+            String providerUserId = oktaProviderUserId(userId);
+            if (providerUserId != null) {
+                oktaSessionCache.invalidate(providerUserId);
+            }
         }
         if (StringUtils.isNotBlank(upstreamRefreshToken)) {
             try {

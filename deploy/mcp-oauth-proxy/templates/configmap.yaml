@@ -309,6 +309,24 @@ data:
         table-name: {{ .Values.application.upstreamToken.tableName | quote }}
         expiry-seconds: {{ .Values.application.upstreamToken.expirySeconds }}
         ttl-buffer-days: {{ .Values.application.upstreamToken.ttlBufferDays }}
+        revoked-retention-days: {{ .Values.application.upstreamToken.revokedRetentionDays | default 14 }}
+        l2-at-reuse-grace-seconds: {{ .Values.application.upstreamToken.l2AtReuseGraceSeconds | default 30 }}
+        l2-at-reuse-min-remaining-seconds: {{ .Values.application.upstreamToken.l2AtReuseMinRemainingSeconds | default 60 }}
+        replication-wait-millis: {{ .Values.application.upstreamToken.replicationWaitMillis | default 750 }}
+      {{- with .Values.application.bearerIndex }}
+      bearer-index:
+        table-name: {{ .tableName | default "mcp-oauth-proxy-bearer-index" | quote }}
+        implementation: {{ .implementation | default "enterprise" | quote }}
+      {{- end }}
+      {{- with .Values.application.oktaSessionCache }}
+      upstream:
+        okta:
+          session-cache:
+            enabled: {{ .enabled | default false }}
+            min-remaining-seconds: {{ .minRemainingSeconds | default 120 }}
+            l0-max-size: {{ .l0MaxSize | default 5000 }}
+            l0-expire-after-write-seconds: {{ .l0ExpireAfterWriteSeconds | default 3600 }}
+      {{- end }}
       cross-region-fallback:
         enabled: {{ .Values.application.crossRegionFallback.enabled | default false }}
         {{- if .Values.application.crossRegionFallback.enabled }}
@@ -325,6 +343,10 @@ data:
         {{- if .Values.application.crossRegionFallback.upstreamTokenTableName }}
         upstream-token:
           table-name: {{ .Values.application.crossRegionFallback.upstreamTokenTableName | quote }}
+        {{- end }}
+        {{- if .Values.application.crossRegionFallback.bearerIndexTableName }}
+        bearer-index:
+          table-name: {{ .Values.application.crossRegionFallback.bearerIndexTableName | quote }}
         {{- end }}
         refresh-token-and-upstream:
           enabled: {{ .Values.application.crossRegionFallback.refreshTokenAndUpstreamEnabled | default true }}

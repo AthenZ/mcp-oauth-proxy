@@ -6,13 +6,17 @@
  */
 package io.athenz.mop.resource;
 
+import io.athenz.mop.config.OktaSessionCacheConfig;
+import io.athenz.mop.model.BearerIndexRecord;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
+import io.athenz.mop.service.BearerIndexRegionResolver;
+import io.athenz.mop.service.BearerIndexResolution;
 import io.athenz.mop.service.OktaTokens;
 import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
 import io.athenz.mop.service.UserTokenRegionResolver;
-import io.athenz.mop.service.UserTokenResolution;
+import io.athenz.mop.store.BearerIndexStore;
 import io.athenz.mop.store.TokenStore;
 import io.athenz.mop.telemetry.ExchangeStep;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
@@ -21,6 +25,7 @@ import io.athenz.mop.telemetry.OauthProxyMetrics;
 import io.athenz.mop.telemetry.TelemetryRequestContext;
 import io.athenz.mop.util.JwtUtils;
 import jakarta.inject.Inject;
+import java.util.Date;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.Path;
@@ -44,6 +49,12 @@ public class UserInfoResource {
     TokenStore tokenStore;
 
     @Inject
+    BearerIndexStore bearerIndexStore;
+
+    @Inject
+    BearerIndexRegionResolver bearerIndexRegionResolver;
+
+    @Inject
     UserTokenRegionResolver userTokenRegionResolver;
 
     @Inject
@@ -57,6 +68,9 @@ public class UserInfoResource {
 
     @Inject
     UpstreamRefreshService upstreamRefreshService;
+
+    @Inject
+    OktaSessionCacheConfig oktaSessionCacheConfig;
 
     @ConfigProperty(name = "server.athenz.user-prefix", defaultValue = "")
     String userPrefix;
@@ -81,15 +95,13 @@ public class UserInfoResource {
 
         String accessToken = authorization.substring("Bearer ".length());
         log.info("Processing userinfo request");
-
         String accessTokenHash = JwtUtils.hashAccessToken(accessToken);
-        UserTokenResolution hashResolution = userTokenRegionResolver.resolveByAccessTokenHash(
-                accessTokenHash, UserTokenRegionResolver.CALL_SITE_USERINFO_TOKEN_LOOKUP);
-        TokenWrapper tokenByHash = hashResolution.token();
-        boolean fromFallback = hashResolution.resolvedFromFallback();
+        BearerIndexResolution bearerResolution = bearerIndexRegionResolver.resolveByHash(accessTokenHash);
+        BearerIndexRecord bearerRow = bearerResolution.record();
+        boolean fromFallback = bearerResolution.resolvedFromFallback();
 
-        if (tokenByHash == null) {
-            log.debug("Token not found for userinfo lookup");
+        if (bearerRow == null) {
+            log.debug("Bearer-index row not found for userinfo lookup");
             return finishUserinfo(startNanos, "unknown", false, 401, "invalid_token", "token_not_found",
                     Response.status(Response.Status.UNAUTHORIZED)
                             .entity(Map.of(
@@ -101,9 +113,14 @@ public class UserInfoResource {
         }
 
         long currentTime = Instant.now().getEpochSecond();
-        if (currentTime >= tokenByHash.ttl()) {
-            log.warn("Token expired. Current time: {}, Token TTL: {}", currentTime, tokenByHash.ttl());
-            String p = OauthProviderLabel.normalize(tokenByHash.provider());
+        // Prefer the bearer's own exp when known; otherwise fall back to ttl. Either way, a
+        // present-or-past exp/ttl means the bearer has expired and the index row should be
+        // garbage-collected by DDB TTL — we 401 here so MCP clients refresh.
+        long expiry = bearerRow.exp() > 0 ? bearerRow.exp() : bearerRow.ttl();
+        if (expiry > 0 && currentTime >= expiry) {
+            log.warn("Bearer expired per bearer-index. Current time: {}, exp: {}, ttl: {}",
+                    currentTime, bearerRow.exp(), bearerRow.ttl());
+            String p = OauthProviderLabel.normalize(bearerRow.provider());
             return finishUserinfo(startNanos, p, false, 401, "invalid_token", "token_expired",
                     Response.status(Response.Status.UNAUTHORIZED)
                             .entity(Map.of(
@@ -114,10 +131,13 @@ public class UserInfoResource {
                             .build());
         }
 
-        String user = tokenByHash.key();
-        String providerLabel = OauthProviderLabel.normalize(tokenByHash.provider());
+        String user = bearerRow.userId();
+        String bearerClientId = bearerRow.clientId();
+        String bearerProvider = bearerRow.provider();
+        String providerLabel = OauthProviderLabel.normalize(bearerProvider);
         telemetryRequestContext.setOauthProvider(providerLabel);
-        log.info("Found token by hash for user: {}, provider: {} (fromFallback={})", user, tokenByHash.provider(), fromFallback);
+        log.info("Resolved bearer-index row for user: {}, provider: {}, clientId: {} (fromFallback={})",
+                user, bearerProvider, bearerClientId, fromFallback);
 
         TokenWrapper oktaToken = userTokenRegionResolver
                 .resolveByUserProvider(user, AudienceConstants.PROVIDER_OKTA,
@@ -125,12 +145,35 @@ public class UserInfoResource {
                 .token();
 
         String idToken = oktaToken != null ? oktaToken.idToken() : null;
+        boolean idTokenStrictlyFresh = idToken != null && !idToken.isEmpty()
+                && jwtExpInFuture(idToken, /* skewSeconds= */ 0);
 
-        if (idToken == null || idToken.isEmpty()) {
-            log.info("Okta id_token unavailable for user: {} (row={}); attempting upstream refresh",
-                    user, oktaToken != null ? "present" : "missing");
-            oktaToken = tryRefreshOktaToken(user);
-            idToken = oktaToken != null ? oktaToken.idToken() : null;
+        if (!idTokenStrictlyFresh) {
+            log.info("Okta id_token expired or absent for user: {} (idTokenPresent={}); attempting upstream refresh",
+                    user, idToken != null && !idToken.isEmpty());
+            String priorIdToken = idToken;
+            TokenWrapper refreshed = tryRefreshOktaToken(user);
+            if (refreshed != null && refreshed.idToken() != null && !refreshed.idToken().isEmpty()) {
+                oktaToken = refreshed;
+                idToken = refreshed.idToken();
+                if (oktaSessionCacheConfig.enabled()) {
+                    oauthProxyMetrics.recordUserinfoOktaCacheOutcome(
+                            priorIdToken == null || priorIdToken.isEmpty() ? "absent_refreshed" : "expired_refreshed");
+                }
+            } else if (priorIdToken != null && !priorIdToken.isEmpty()) {
+                // Stale-claims fallback: refresh failed but the cache held a parseable id_token.
+                // The gateway is holding a still-valid upstream-provider bearer; do not 401 just
+                // because our cached Okta id_token expired. Identity claims (sub/email/short_id)
+                // are stable across refreshes within one Okta session, and buildUserInfo strips
+                // iat/exp from the response, so the response is functionally equivalent.
+                log.warn("Okta upstream refresh failed for user: {}; serving userinfo from stale cached id_token claims", user);
+                if (oktaSessionCacheConfig.enabled()) {
+                    oauthProxyMetrics.recordUserinfoOktaCacheOutcome("stale_claims_served");
+                }
+                idToken = priorIdToken;
+            }
+        } else if (oktaSessionCacheConfig.enabled()) {
+            oauthProxyMetrics.recordUserinfoOktaCacheOutcome("fresh_hit");
         }
 
         if (idToken == null || idToken.isEmpty()) {
@@ -145,17 +188,15 @@ public class UserInfoResource {
                             .build());
         }
 
-        Map<String, Object> userInfo = buildUserInfo(idToken, tokenByHash.provider());
-        // The per-MCP-client bearer row carries clientId in its partition-key prefix
-        // ("<clientId>#<userId>"); TokenStore backends extract it into TokenWrapper.clientId on
-        // read. Surface it as mcp_client_id alongside mcp_resource_idp so downstream consumers
-        // can attribute the bearer to the originating MCP client. Legacy bare rows have no
-        // prefix; we omit the claim entirely in that case (no default, no placeholder).
-        if (tokenByHash.clientId() != null && !tokenByHash.clientId().isEmpty() && !userInfo.isEmpty()) {
-            userInfo.put("mcp_client_id", tokenByHash.clientId());
+        Map<String, Object> userInfo = buildUserInfo(idToken, bearerProvider);
+        // Surface mcp_client_id from the bearer-index row when present (omitted for legacy
+        // bare-row bearers minted before the index existed; those go through the natural
+        // 401-then-refresh drain at rollout time).
+        if (bearerClientId != null && !bearerClientId.isEmpty() && !userInfo.isEmpty()) {
+            userInfo.put("mcp_client_id", bearerClientId);
         }
         log.info("Successfully returned userinfo for user={} provider={} clientId={} (claims not logged)",
-                user, tokenByHash.provider(), tokenByHash.clientId());
+                user, bearerProvider, bearerClientId);
         return finishUserinfo(startNanos, providerLabel, true, 200, null, null,
                 Response.ok(userInfo).type(MediaType.APPLICATION_JSON).build());
     }
@@ -198,6 +239,21 @@ public class UserInfoResource {
                     absoluteTtl
             );
             tokenStore.storeUserToken(user, AudienceConstants.PROVIDER_OKTA, refreshed);
+            // Index the freshly-rotated Okta bearer so the very next /userinfo call (or any
+            // /userinfo from a different pod that lands on this same bearer) resolves via the
+            // dedicated bearer-index table. The clientId is unknown at this site (no MCP client
+            // is in play during the upstream-refresh fan-out), so the row stores the bearer with
+            // an empty clientId — acceptable, since /userinfo only surfaces mcp_client_id when
+            // it is non-empty.
+            try {
+                String hash = JwtUtils.hashAccessToken(oktaTokens.accessToken());
+                long exp = Instant.now().getEpochSecond() + ttlSec;
+                bearerIndexStore.putBearer(hash, user, "", AudienceConstants.PROVIDER_OKTA, exp, absoluteTtl);
+                oauthProxyMetrics.recordBearerIndexWrite(true);
+            } catch (Exception e) {
+                log.warn("bearer-index write failed inside tryRefreshOktaToken for user={}: {}", user, e.getMessage());
+                oauthProxyMetrics.recordBearerIndexWrite(false);
+            }
             log.info("Stored refreshed Okta tokens for user: {} via /userinfo upstream refresh", user);
             recordUserinfoUpstreamRefresh(t0, true);
             return refreshed;
@@ -210,6 +266,30 @@ public class UserInfoResource {
             recordUserinfoUpstreamRefresh(t0, false);
             return null;
         }
+    }
+
+    /**
+     * Returns {@code true} when the JWT's {@code exp} claim is in the future by at least
+     * {@code skewSeconds}. Returns {@code false} on parse failure or when the claim is absent —
+     * the caller treats that as "not fresh" and falls through to the upstream-refresh path.
+     */
+    static boolean jwtExpInFuture(String token, long skewSeconds) {
+        if (token == null || token.isEmpty()) {
+            return false;
+        }
+        Object claim = JwtUtils.getClaimFromToken(token, "exp");
+        if (claim == null) {
+            return false;
+        }
+        long expEpoch;
+        if (claim instanceof Date d) {
+            expEpoch = d.toInstant().getEpochSecond();
+        } else if (claim instanceof Number n) {
+            expEpoch = n.longValue();
+        } else {
+            return false;
+        }
+        return (expEpoch - Instant.now().getEpochSecond()) >= skewSeconds;
     }
 
     private void recordUserinfoUpstreamRefresh(long startNanos, boolean success) {

@@ -382,6 +382,33 @@ server:
     table-name: ${MOP_UPSTREAM_TOKEN_TABLE_NAME:mcp-oauth-proxy-upstream-tokens}
     expiry-seconds: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS:7776000}
     ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:7}
+  # Dedicated index keyed by H(bearer) for /userinfo bearer resolution. Each minted bearer owns
+  # its own row, so multi-window /userinfo no longer 401s on GSI clobbering. The row stores no
+  # token material — only (userId, clientId, provider, exp, ttl). DynamoDB TTL evicts rows
+  # naturally as their underlying bearers expire.
+  bearer-index:
+    table-name: ${MOP_BEARER_INDEX_TABLE_NAME:mcp-oauth-proxy-bearer-index}
+    # Selects the BearerIndexStore producer in DataStoreProducer. {memory, enterprise}.
+    # Defaults to "enterprise" for stage/prod; dev profile sets it to "memory".
+    implementation: ${MOP_BEARER_INDEX_IMPLEMENTATION:enterprise}
+  upstream:
+    okta:
+      session-cache:
+        # Shared per-user Okta upstream session cache (L0 in-memory + L1 DDB). When enabled,
+        # any provider/client refreshing or reading the user's Okta id/access token reuses the
+        # most-recent fresh copy instead of calling Okta. Off by default; flip to true after
+        # the stage soak. See docs/refresh-token/* and OktaSessionCacheConfig for details.
+        enabled: ${MOP_OKTA_SESSION_CACHE_ENABLED:false}
+        # Required remaining lifetime (seconds) for a /token-path cache hit. Covers the longest
+        # downstream-exchange chain (Athenz ZTS + Google STS) with retries and clock skew.
+        # Validated to [30, 600] at startup; same value in stage and prod.
+        min-remaining-seconds: ${MOP_OKTA_SESSION_CACHE_MIN_REMAINING_SECONDS:120}
+        # Caffeine maximumSize on the per-pod L0 tier. LRU eviction at the limit. [100, 100000].
+        l0-max-size: ${MOP_OKTA_SESSION_CACHE_L0_MAX_SIZE:5000}
+        # Caffeine expireAfterWrite on L0; default = one Okta access-token lifetime (1h).
+        # Read-time freshness uses the entry's own min(idExp, accessExp) — there is intentionally
+        # no expireAfterAccess. [600, 7200].
+        l0-expire-after-write-seconds: ${MOP_OKTA_SESSION_CACHE_L0_EXPIRE_AFTER_WRITE_SECONDS:3600}
   cross-region-fallback:
     enabled: ${MOP_CROSS_REGION_FALLBACK_ENABLED:false}
     region: ${MOP_CROSS_REGION_FALLBACK_REGION:}
@@ -394,6 +421,8 @@ server:
       table-name: ${MOP_CROSS_REGION_FALLBACK_REFRESH_TOKEN_TABLE_NAME:}
     upstream-token:
       table-name: ${MOP_CROSS_REGION_FALLBACK_UPSTREAM_TOKEN_TABLE_NAME:}
+    bearer-index:
+      table-name: ${MOP_CROSS_REGION_FALLBACK_BEARER_INDEX_TABLE_NAME:}
     refresh-token-and-upstream:
       enabled: ${MOP_CROSS_REGION_FALLBACK_REFRESH_TOKEN_AND_UPSTREAM_ENABLED:true}
   secret:

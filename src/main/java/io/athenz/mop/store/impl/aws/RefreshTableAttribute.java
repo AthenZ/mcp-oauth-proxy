@@ -27,6 +27,7 @@ public enum RefreshTableAttribute {
     CLIENT_ID("client_id"),
     PROVIDER("provider"),
     PROVIDER_SUBJECT("provider_subject"),
+    AUDIENCE("audience"),
     ENCRYPTED_UPSTREAM_REFRESH_TOKEN("encrypted_upstream_refresh_token"),
     STATUS("status"),
     TOKEN_FAMILY_ID("token_family_id"),

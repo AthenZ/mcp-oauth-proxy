@@ -24,6 +24,7 @@ import io.athenz.mop.service.AuthorizationCodeService;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RedirectUriValidator;
+import io.athenz.mop.service.RefreshTokenService;
 import io.athenz.mop.service.UpstreamRefreshService;
 import io.athenz.mop.telemetry.OauthClientLabel;
 import io.athenz.mop.telemetry.OauthProviderLabel;
@@ -39,7 +40,6 @@ import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.lang.invoke.MethodHandles;
-import java.time.Instant;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.slf4j.Logger;
@@ -77,6 +77,9 @@ public class AuthorizeResource extends BaseResource {
 
     @Inject
     UpstreamRefreshService upstreamRefreshService;
+
+    @Inject
+    RefreshTokenService refreshTokenService;
 
     @Inject
     OauthProxyMetrics oauthProxyMetrics;
@@ -210,20 +213,22 @@ public class AuthorizeResource extends BaseResource {
     }
 
     /**
-     * Chooses which refresh token to store: reuses existing active upstream refresh token when present
-     * (so multiple resources share one Okta RT and a second login does not overwrite it).
-     * Package-private for unit testing.
+     * Chooses which refresh token to store on a fresh login: reuses an existing active upstream
+     * refresh token when present (so multiple resources share one upstream RT and a second
+     * login does not overwrite it). Package-private for unit testing.
+     *
+     * <p>Reads {@code mcp-oauth-proxy-refresh-tokens} via {@link RefreshTokenService#getUpstreamRefreshToken}
+     * — the canonical, rotation-aware, sibling-aware source of truth — instead of the per-client
+     * {@code (clientId#userId, provider)} row in {@code mcp-oauth-proxy-tokens}, which is no
+     * longer written and would have gone stale after the first rotation. Expiry filtering is
+     * handled inside {@code getUpstreamRefreshToken}'s {@code resolveBestUpstream} path.</p>
      */
     String computeRefreshToStore(String lookupKey, String oidcRefreshToken) {
-        TokenWrapper existing = authorizerService.getUserToken(lookupKey, providerDefault);
-        if (existing != null
-                && existing.refreshToken() != null
-                && !existing.refreshToken().isEmpty()
-                && existing.ttl() != null
-                && existing.ttl() > Instant.now().getEpochSecond()) {
+        String existing = refreshTokenService.getUpstreamRefreshToken(lookupKey, providerDefault);
+        if (existing != null && !existing.isEmpty()) {
             log.info("Reusing existing active {} refresh token for lookupKey={} (second or subsequent login for another resource)",
                     providerDefault, lookupKey);
-            return existing.refreshToken();
+            return existing;
         }
         return oidcRefreshToken;
     }

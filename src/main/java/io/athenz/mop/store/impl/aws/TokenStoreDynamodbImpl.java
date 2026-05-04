@@ -64,9 +64,13 @@ public class TokenStoreDynamodbImpl implements TokenStore, AuthCodeStore {
 
     @Override
     public void storeUserToken(String user, String provider, String clientId, TokenWrapper token) {
-        String partitionKey = compositeUserKey(clientId, user);
-        log.info("Storing token for user {}, clientId {}, provider {} (partitionKey={})", user, clientId, provider, partitionKey);
-        putUserTokenItem(partitionKey, provider, token);
+        // The per-client (clientId#userId, provider) row in mcp-oauth-proxy-tokens is no longer
+        // written. Every minted bearer is now indexed in the dedicated mcp-oauth-proxy-bearer-index
+        // table (BearerIndexStore), keyed by H(bearer), so /userinfo resolves siblings without
+        // GSI clobbering. This overload remains on the interface so legacy callers stay
+        // source-compatible during rollout, but it is intentionally a no-op.
+        log.debug("storeUserToken(clientId): no-op for user={} provider={} clientId={} (bearer-index handles per-client lookup)",
+                user, provider, clientId);
     }
 
     @Override
