@@ -50,8 +50,24 @@ public interface RefreshTokenService {
      * @param upstreamRefreshToken upstream refresh token to encrypt and store (may be null)
      * @return the raw MOP refresh token to return to the client
      */
+    default String store(String userId, String clientId, String provider, String providerSubject,
+                         String upstreamRefreshToken) {
+        return store(userId, clientId, provider, providerSubject, upstreamRefreshToken, null);
+    }
+
+    /**
+     * Store a new refresh token with an explicit {@code audience} label. Same semantics as
+     * {@link #store(String, String, String, String, String)} except the audience is recorded on
+     * the row.
+     *
+     * <p>The audience is purely diagnostic: it lets operators tell, when scanning the
+     * refresh-tokens table, whether a row written under {@code provider="okta"} was minted for
+     * Splunk, Glean, Grafana, etc. No code path uses {@code audience} to make an
+     * authentication/authorization decision; preserve that property when adding new call sites.
+     * Pass {@code null} for non-Okta IdPs where audience equals provider.
+     */
     String store(String userId, String clientId, String provider, String providerSubject,
-                 String upstreamRefreshToken);
+                 String upstreamRefreshToken, String audience);
 
     /**
      * Look up (userId, provider) for the given refresh token and clientId for distributed lock key.
@@ -154,4 +170,21 @@ public interface RefreshTokenService {
      * @param newUpstreamRefresh the new upstream refresh token from the IDP (only applied if non-null and non-empty)
      */
     void updateUpstreamRefreshForAllRowsWithUserAndProvider(String userId, String provider, String newUpstreamRefresh);
+
+    /**
+     * Clear the legacy {@code encrypted_upstream_refresh_token} column on every per-MCP-client
+     * row for the given {@code (user_id, provider)} pair. Called after a successful L2-promoted
+     * upstream refresh so the canonical RT lives only in the L2 row going forward.
+     *
+     * <p>This is a one-shot per-user migration step: once the legacy column is null, future
+     * refreshes for this {@code (user, provider)} will read from L2 (the canonical row) and the
+     * sibling-inheritance trap (Bug #1) cannot recur. The fallback to the legacy column on
+     * {@link #getUpstreamRefreshToken(String, String)} only fires when the L2 row does not
+     * exist for the user yet (mid-migration), which after this nullification it always does.
+     *
+     * <p>Safe to call when no rows match (no-op). Failures are logged and swallowed: the
+     * upstream refresh has already succeeded and we do not want to fail the user-visible call
+     * because of a best-effort cleanup write.
+     */
+    void nullifyLegacyUpstreamColumnForUserProvider(String userId, String provider);
 }

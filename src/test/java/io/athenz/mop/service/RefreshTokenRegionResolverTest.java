@@ -111,7 +111,7 @@ class RefreshTokenRegionResolverTest {
                 .thenReturn(QueryResponse.builder().items(List.of()).build());
         when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         RefreshTokenRecord peer = new RefreshTokenRecord("id-peer", OKTA_PID_U1, "u1", "c1",
-                AudienceConstants.PROVIDER_OKTA, "s", null, RefreshTableConstants.STATUS_ACTIVE, "f1", null, null,
+                AudienceConstants.PROVIDER_OKTA, null, "s", null, RefreshTableConstants.STATUS_ACTIVE, "f1", null, null,
                 0L, 200L, 99999L, 99999L);
         when(crossRegionFallback.lookupRefreshTokenByHash("h")).thenReturn(peer);
 
@@ -193,7 +193,7 @@ class RefreshTokenRegionResolverTest {
         when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         // Peer record with higher issued_at
         RefreshTokenRecord peer = new RefreshTokenRecord("id-peer", OKTA_PID_U1, "u1", "c1",
-                AudienceConstants.PROVIDER_OKTA, "s", "enc-peer", RefreshTableConstants.STATUS_ACTIVE,
+                AudienceConstants.PROVIDER_OKTA, null, "s", "enc-peer", RefreshTableConstants.STATUS_ACTIVE,
                 "f1", null, null, 0L, 99999L, 99999L, 99999L);
         when(crossRegionFallback.queryBestUpstreamRefresh("u1", AudienceConstants.PROVIDER_OKTA))
                 .thenReturn(peer);
@@ -225,7 +225,7 @@ class RefreshTokenRegionResolverTest {
                 .thenReturn(QueryResponse.builder().items(List.of(localItem)).build());
         when(crossRegionFallback.isRefreshAndUpstreamActive()).thenReturn(true);
         RefreshTokenRecord peer = new RefreshTokenRecord("id-peer", OKTA_PID_U1, "u1", "c1",
-                AudienceConstants.PROVIDER_OKTA, "s", "enc-peer", RefreshTableConstants.STATUS_ACTIVE,
+                AudienceConstants.PROVIDER_OKTA, null, "s", "enc-peer", RefreshTableConstants.STATUS_ACTIVE,
                 "f1", null, null, 0L, 100L, 99999L, 99999L);
         when(crossRegionFallback.queryBestUpstreamRefresh("u1", AudienceConstants.PROVIDER_OKTA))
                 .thenReturn(peer);

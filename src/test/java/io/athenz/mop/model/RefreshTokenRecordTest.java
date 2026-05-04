@@ -30,6 +30,7 @@ class RefreshTokenRecordTest {
                 "user1",
                 "client1",
                 AudienceConstants.PROVIDER_OKTA,
+                null,
                 "00uoqmkz1ru90YPep696",
                 "enc-upstream",
                 "ACTIVE",
@@ -68,6 +69,7 @@ class RefreshTokenRecordTest {
                 "u",
                 "c",
                 AudienceConstants.PROVIDER_OKTA,
+                null,
                 "sub",
                 "enc",
                 "ROTATED",
@@ -88,10 +90,10 @@ class RefreshTokenRecordTest {
     @Test
     void testEquality() {
         RefreshTokenRecord r1 = new RefreshTokenRecord(
-                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, "sub", "enc", "ACTIVE",
+                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, null, "sub", "enc", "ACTIVE",
                 "f1", null, null, 0L, 1L, 2L, 3L);
         RefreshTokenRecord r2 = new RefreshTokenRecord(
-                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, "sub", "enc", "ACTIVE",
+                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, null, "sub", "enc", "ACTIVE",
                 "f1", null, null, 0L, 1L, 2L, 3L);
 
         assertEquals(r1, r2);
@@ -101,10 +103,10 @@ class RefreshTokenRecordTest {
     @Test
     void testInequality() {
         RefreshTokenRecord r1 = new RefreshTokenRecord(
-                "id1", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, "sub", "enc", "ACTIVE",
+                "id1", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, null, "sub", "enc", "ACTIVE",
                 "f1", null, null, 0L, 1L, 2L, 3L);
         RefreshTokenRecord r2 = new RefreshTokenRecord(
-                "id2", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, "sub", "enc", "ACTIVE",
+                "id2", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, null, "sub", "enc", "ACTIVE",
                 "f1", null, null, 0L, 1L, 2L, 3L);
 
         assertNotEquals(r1, r2);
@@ -113,7 +115,7 @@ class RefreshTokenRecordTest {
     @Test
     void testEqualsSelf() {
         RefreshTokenRecord record = new RefreshTokenRecord(
-                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, "sub", "enc", "ACTIVE",
+                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, null, "sub", "enc", "ACTIVE",
                 "f1", null, null, 0L, 1L, 2L, 3L);
         assertEquals(record, record);
     }
@@ -121,7 +123,7 @@ class RefreshTokenRecordTest {
     @Test
     void testEqualsNull() {
         RefreshTokenRecord record = new RefreshTokenRecord(
-                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, "sub", "enc", "ACTIVE",
+                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, null, "sub", "enc", "ACTIVE",
                 "f1", null, null, 0L, 1L, 2L, 3L);
         assertNotEquals(null, record);
         assertFalse(record.equals(null));
@@ -130,7 +132,7 @@ class RefreshTokenRecordTest {
     @Test
     void testEqualsDifferentClass() {
         RefreshTokenRecord record = new RefreshTokenRecord(
-                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, "sub", "enc", "ACTIVE",
+                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, null, "sub", "enc", "ACTIVE",
                 "f1", null, null, 0L, 1L, 2L, 3L);
         assertNotEquals(record, "not a record");
     }
@@ -138,7 +140,7 @@ class RefreshTokenRecordTest {
     @Test
     void testToString() {
         RefreshTokenRecord record = new RefreshTokenRecord(
-                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, "sub", "enc", "ACTIVE",
+                "id", "pu", "u", "c", AudienceConstants.PROVIDER_OKTA, null, "sub", "enc", "ACTIVE",
                 "f1", null, null, 0L, 1L, 2L, 3L);
         String s = record.toString();
         assertNotNull(s);

@@ -30,4 +30,7 @@ public interface UpstreamTokenConfig {
 
     @WithDefault("7")
     int ttlBufferDays();
+    @WithName("revoked-retention-days")
+    @WithDefault("14")
+    int revokedRetentionDays();
 }

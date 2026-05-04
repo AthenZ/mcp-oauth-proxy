@@ -24,7 +24,7 @@ class RefreshTokenValidationResultTest {
 
     private static RefreshTokenRecord sampleRecord() {
         return new RefreshTokenRecord(
-                "id", AudienceConstants.PROVIDER_OKTA + "#u", "u", "c", AudienceConstants.PROVIDER_OKTA, "sub", "enc", "ACTIVE",
+                "id", AudienceConstants.PROVIDER_OKTA + "#u", "u", "c", AudienceConstants.PROVIDER_OKTA, null, "sub", "enc", "ACTIVE",
                 "f1", null, null, 0L, 1L, 2L, 3L);
     }
 
@@ -113,7 +113,7 @@ class RefreshTokenValidationResultTest {
         RefreshTokenRecord parent = sampleRecord();
         RefreshTokenRecord successor = new RefreshTokenRecord(
                 "id2", parent.providerUserId(), parent.userId(), parent.clientId(), parent.provider(),
-                parent.providerSubject(), parent.encryptedUpstreamRefreshToken(), "ACTIVE",
+                parent.audience(), parent.providerSubject(), parent.encryptedUpstreamRefreshToken(), "ACTIVE",
                 parent.tokenFamilyId(), parent.refreshTokenId(), null, 0L, 1L, 2L, 3L);
         RefreshTokenValidationResult result =
                 RefreshTokenValidationResult.rotatedGraceSuccessor(parent, successor);

@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.athenz.mop.model.AuthorizationCode;
 import io.athenz.mop.model.AuthorizationCodeTokensDO;
+import io.athenz.mop.model.BearerIndexRecord;
 import io.athenz.mop.model.RefreshTokenRecord;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.model.UpstreamTokenRecord;
@@ -85,6 +86,9 @@ public class CrossRegionTokenStoreFallback {
     @ConfigProperty(name = "server.cross-region-fallback.upstream-token.table-name")
     Optional<String> fallbackUpstreamTokenTableName;
 
+    @ConfigProperty(name = "server.cross-region-fallback.bearer-index.table-name")
+    Optional<String> fallbackBearerIndexTableName;
+
     @Inject
     DynamodbClientProvider dynamodbClientProvider;
 
@@ -99,6 +103,7 @@ public class CrossRegionTokenStoreFallback {
     private String fallbackTableNameResolved;
     private String fallbackRefreshTokenTableNameResolved;
     private String fallbackUpstreamTokenTableNameResolved;
+    private String fallbackBearerIndexTableNameResolved;
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
@@ -133,6 +138,7 @@ public class CrossRegionTokenStoreFallback {
         }
         String refreshTokenTable = fallbackRefreshTokenTableName.map(String::trim).filter(s -> !s.isEmpty()).orElse(null);
         String upstreamTokenTable = fallbackUpstreamTokenTableName.map(String::trim).filter(s -> !s.isEmpty()).orElse(null);
+        String bearerIndexTable = fallbackBearerIndexTableName.map(String::trim).filter(s -> !s.isEmpty()).orElse(null);
         try {
             DynamoDbEncryptionInterceptor encryptionInterceptor = dynamodbClientProvider
                     .createEncryptionInterceptorForFallbackTables(tableName, kmsKeyId, refreshTokenTable, upstreamTokenTable);
@@ -159,8 +165,9 @@ public class CrossRegionTokenStoreFallback {
             fallbackTableNameResolved = tableName;
             fallbackRefreshTokenTableNameResolved = refreshTokenTable;
             fallbackUpstreamTokenTableNameResolved = upstreamTokenTable;
-            log.info("Cross-region DynamoDB fallback enabled for region={} userTokensTable={} refreshTokensTable={} upstreamTokensTable={}",
-                    region, tableName, refreshTokenTable, upstreamTokenTable);
+            fallbackBearerIndexTableNameResolved = bearerIndexTable;
+            log.info("Cross-region DynamoDB fallback enabled for region={} userTokensTable={} refreshTokensTable={} upstreamTokensTable={} bearerIndexTable={}",
+                    region, tableName, refreshTokenTable, upstreamTokenTable, bearerIndexTable);
         } catch (Exception e) {
             log.warn("Failed to build cross-region DynamoDB fallback client: {}", e.getMessage());
         }
@@ -353,6 +360,37 @@ public class CrossRegionTokenStoreFallback {
      * {@code Optional.empty()} on miss, fallback disabled, upstream-token table not configured for
      * fallback, or any failure.
      */
+    /**
+     * Look up a bearer-index row in the fallback region's {@code mcp-oauth-proxy-bearer-index}
+     * table by hash. Returns {@code null} when the fallback is disabled, the bearer-index table is
+     * not configured for fallback, the client failed to build, or the row was not found.
+     *
+     * <p>Gated on {@link #isActive()} (the master flag) — same gating tier as the user-tokens
+     * fallback that this read replaces. The new bearer-index table is the canonical /userinfo
+     * lookup once rolled out, so cross-region behavior must mirror the original
+     * {@code access_token_hash} GSI fallback path.
+     */
+    public BearerIndexRecord getBearerIndex(String accessTokenHash) {
+        if (fallbackClient == null || fallbackBearerIndexTableNameResolved == null) {
+            return null;
+        }
+        try {
+            BearerIndexRecord rec = BearerIndexStoreDynamodbImpl.getBearer(
+                    fallbackClient, fallbackBearerIndexTableNameResolved, accessTokenHash);
+            if (rec != null) {
+                String regionLabel = fallbackRegion.map(String::trim).orElse("");
+                log.info("Found bearer-index row in fallback region {} for userId={} provider={} clientId={}",
+                        regionLabel, rec.userId(), rec.provider(), rec.clientId());
+            }
+            return rec;
+        } catch (Exception e) {
+            log.warn("Fallback region getBearerIndex failed: {}", e.getMessage());
+            oauthProxyMetrics.recordCrossRegionDynamoFailure(
+                    "getBearerIndex", e.getClass().getSimpleName(), "unknown");
+            return null;
+        }
+    }
+
     public Optional<UpstreamTokenRecord> getUpstreamToken(String providerUserId) {
         if (!refreshAndUpstreamEnabled || fallbackClient == null || fallbackUpstreamTokenTableNameResolved == null) {
             return Optional.empty();

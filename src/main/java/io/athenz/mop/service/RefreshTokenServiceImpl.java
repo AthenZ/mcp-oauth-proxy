@@ -133,6 +133,23 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
     @Inject
     OauthProxyMetrics oauthProxyMetrics;
 
+    @Inject
+    UpstreamProviderClassifier upstreamProviderClassifier;
+
+    /**
+     * Optional dependency on the L2 upstream-token service. Used by {@link #getUpstreamRefreshToken}
+     * to prefer the canonical L2 RT for promoted providers, falling back to the legacy GSI lookup
+     * for non-promoted providers (Slack/GitHub/Atlassian/Embrace today) and for promoted providers
+     * during the migration window when the L2 row hasn't been seeded yet.
+     *
+     * <p>Field-injected (not constructor) to avoid a circular bean-init order at startup: the
+     * upstream service depends on stores, the refresh service depends on the upstream service for
+     * a read fast path. CDI handles the field-injection cycle gracefully because both beans are
+     * application-scoped and the injection point is resolved on first method call, not on init.
+     */
+    @Inject
+    UpstreamRefreshService upstreamRefreshService;
+
     /**
      * Per-pod in-flight rotate-result cache. Keyed on the SHA-256 hash of the presented refresh
      * token so concurrent callers landing on this pod receive the same rotation outcome
@@ -209,7 +226,7 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
 
     @Override
     public String store(String userId, String clientId, String provider, String providerSubject,
-                       String upstreamRefreshToken) {
+                       String upstreamRefreshToken, String audience) {
         String refreshTokenId = UUID.randomUUID().toString();
         String rawToken = generateSecureToken();
         String tokenHash = hashToken(rawToken);
@@ -225,6 +242,9 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         item.put(RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s(userId).build());
         item.put(RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s(clientId).build());
         item.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(provider).build());
+        if (audience != null && !audience.isEmpty()) {
+            item.put(RefreshTableAttribute.AUDIENCE.attr(), AttributeValue.builder().s(audience).build());
+        }
         item.put(RefreshTableAttribute.PROVIDER_SUBJECT.attr(), AttributeValue.builder().s(providerSubject != null ? providerSubject : "").build());
         if (upstreamRefreshToken != null && !upstreamRefreshToken.isEmpty()) {
             item.put(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(), AttributeValue.builder().s(upstreamRefreshToken).build());
@@ -236,8 +256,8 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         item.put(RefreshTableAttribute.TTL.attr(), AttributeValue.builder().n(String.valueOf(ttl)).build());
 
         dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
-        log.info("store: saved refresh token refresh_token_id={} userId={} provider={} client_id={} expires_at={}",
-                refreshTokenId, userId, provider, clientId, expiresAt);
+        log.info("store: saved refresh token refresh_token_id={} userId={} provider={} audience={} client_id={} expires_at={}",
+                refreshTokenId, userId, provider, audience, clientId, expiresAt);
         return rawToken;
     }
 
@@ -530,6 +550,9 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         newItem.put(RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s(current.userId()).build());
         newItem.put(RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s(current.clientId()).build());
         newItem.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s(current.provider()).build());
+        if (current.audience() != null && !current.audience().isEmpty()) {
+            newItem.put(RefreshTableAttribute.AUDIENCE.attr(), AttributeValue.builder().s(current.audience()).build());
+        }
         newItem.put(RefreshTableAttribute.PROVIDER_SUBJECT.attr(), AttributeValue.builder().s(current.providerSubject() != null ? current.providerSubject() : "").build());
         if (!AudienceConstants.PROVIDER_OKTA.equals(current.provider())
                 && current.encryptedUpstreamRefreshToken() != null && !current.encryptedUpstreamRefreshToken().isEmpty()) {
@@ -658,6 +681,22 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         if (userId == null || userId.isEmpty() || provider == null || provider.isEmpty()) {
             return null;
         }
+        // Prefer L2 (canonical upstream-tokens table) for promoted providers (okta + the 12
+        // google-workspace providers). The L2 row is the source of truth post-promotion; we
+        // only fall back to the legacy refresh-tokens GSI when the L2 row hasn't been seeded
+        // yet (mid-migration), which after the first successful refresh for a given (user,
+        // provider) is no longer the case.
+        if (upstreamProviderClassifier != null && upstreamProviderClassifier.isUpstreamPromoted(provider)
+                && upstreamRefreshService != null) {
+            String providerUserId = provider + "#" + userId;
+            Optional<io.athenz.mop.model.UpstreamTokenRecord> l2 = upstreamRefreshService.getCurrentUpstream(providerUserId);
+            if (l2.isPresent()) {
+                String rt = l2.get().encryptedOktaRefreshToken();
+                if (rt != null && !rt.isEmpty()) {
+                    return rt;
+                }
+            }
+        }
         RefreshTokenRecord best = refreshTokenRegionResolver != null
                 ? refreshTokenRegionResolver.resolveBestUpstream(userId, provider).record()
                 : RefreshTokenStoreDynamodbHelpers.queryBestUpstreamRefresh(dynamoDbClient, tableName, userId, provider);
@@ -749,6 +788,60 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         }
         log.info("updateUpstreamRefreshForAllRowsWithUserAndProvider: updated {} row(s) for userId={} provider={}",
                 items.size(), userId, provider);
+    }
+
+    @Override
+    public void nullifyLegacyUpstreamColumnForUserProvider(String userId, String provider) {
+        if (userId == null || userId.isEmpty() || provider == null || provider.isEmpty()) {
+            return;
+        }
+        try {
+            Map<String, AttributeValue> exprValues = new HashMap<>(Map.of(
+                    ":uid", AttributeValue.builder().s(userId).build(),
+                    ":prov", AttributeValue.builder().s(provider).build(),
+                    ":active", AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build()));
+            QueryResponse response = dynamoDbClient.query(QueryRequest.builder()
+                .tableName(tableName)
+                .indexName(RefreshTableConstants.GSI_USER_PROVIDER)
+                .keyConditionExpression(
+                    RefreshTableAttribute.USER_ID.attr() + " = :uid AND "
+                            + RefreshTableAttribute.PROVIDER.attr() + " = :prov")
+                .filterExpression("#s = :active")
+                .expressionAttributeNames(Map.of("#s", RefreshTableAttribute.STATUS.attr()))
+                .expressionAttributeValues(exprValues)
+                .build());
+            List<Map<String, AttributeValue>> items = response.items();
+            if (items == null || items.isEmpty()) {
+                log.debug("nullifyLegacyUpstreamColumnForUserProvider: no rows for userId={} provider={}",
+                        userId, provider);
+                return;
+            }
+            int cleared = 0;
+            for (Map<String, AttributeValue> item : items) {
+                AttributeValue legacy = item.get(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr());
+                if (legacy == null || legacy.s() == null || legacy.s().isEmpty()) {
+                    continue;
+                }
+                Map<String, AttributeValue> updatedItem = new HashMap<>(item);
+                // DBE will refuse a write that omits an ENCRYPT_AND_SIGN attribute; setting the
+                // value to empty string is the documented "null out" pattern that preserves the
+                // signature shape of the row.
+                updatedItem.put(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(),
+                        AttributeValue.builder().s("").build());
+                dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(updatedItem).build());
+                cleared++;
+            }
+            if (cleared > 0) {
+                log.info(
+                        "event=legacy_upstream_column_nullified user_id={} provider={} cleared_rows={} total_rows={}",
+                        userId, provider, cleared, items.size());
+            }
+        } catch (Exception e) {
+            // Best-effort: the upstream refresh has already succeeded. Don't fail the user-visible
+            // call because the cleanup write threw.
+            log.warn("nullifyLegacyUpstreamColumnForUserProvider: failed to clear legacy column for userId={} provider={}: {}",
+                    userId, provider, e.getMessage());
+        }
     }
 
     public RefreshTokenRecord getByPrimaryKey(String refreshTokenId, String providerUserId) {

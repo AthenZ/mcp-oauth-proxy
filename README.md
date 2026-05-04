@@ -26,6 +26,7 @@ MCP OAuth Proxy solves the challenge of managing multiple OAuth providers and co
 ## Documentation
 
 - [Grafana / Chronosphere dashboard (PromQL for `mop_*` metrics)](docs/grafana-chronosphere-dashboard.md) — includes [importable `grafana-mop-dashboard.json`](docs/grafana-mop-dashboard.json)
+- [Okta tier layers (L0 / L1 / L2)](../docs/okta-tiers.md) — how the per-pod cache, regional bare row, and durable upstream-tokens table work together to keep Okta sessions long-lived
 - [CLAUDE.md](CLAUDE.md) - Detailed technical documentation and architecture
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Development guidelines and contribution process
 - [SECURITY.md](SECURITY.md) - Security policies and vulnerability reporting

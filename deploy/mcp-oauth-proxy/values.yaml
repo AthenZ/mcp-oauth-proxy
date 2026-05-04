@@ -55,6 +55,11 @@ autoscaling:
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
 
+podDisruptionBudget:
+  enabled: false
+  # minAvailable: 1
+  # maxUnavailable: 1
+
 nodeSelector: {}
 
 tolerations: []
@@ -177,6 +182,32 @@ application:
     tableName: mcp-oauth-proxy-upstream-tokens
     expirySeconds: 7776000
     ttlBufferDays: 7
+    # How long REVOKED L2 rows are retained before TTL eviction. Sized so an operator can
+    # still inspect a recently-revoked row when triaging a refresh-token-revoked event.
+    revokedRetentionDays: 14
+    # Path E (reuse-within-grace): when a second client acquires the L2 lock within this many
+    # seconds of another client rotating the upstream RT, AND the staged AT still has at least
+    # l2AtReuseMinRemainingSeconds left, the second client reuses the staged AT instead of
+    # calling the upstream IdP. Lowering this reduces the chance of two near-simultaneous
+    # clients sharing an AT; raising it amortizes more clients onto a single upstream call.
+    l2AtReuseGraceSeconds: 30
+    # Path E floor: minimum remaining AT TTL required to reuse a staged AT. Defends against
+    # handing out an AT that's about to expire mid-flight even if it was rotated within the
+    # grace window above.
+    l2AtReuseMinRemainingSeconds: 60
+    # When the local L2 row is missing or stale relative to the peer region (cross-region
+    # fallback enabled), wait this many ms once for DynamoDB Global Tables replication to land
+    # locally before giving up and returning a transient error. Avoids turning sub-second
+    # replication lag into a forced re-authentication.
+    replicationWaitMillis: 750
+  bearerIndex:
+    tableName: mcp-oauth-proxy-bearer-index
+    implementation: enterprise
+  oktaSessionCache:
+    enabled: false
+    minRemainingSeconds: 120
+    l0MaxSize: 5000
+    l0ExpireAfterWriteSeconds: 3600
   crossRegionFallback:
     enabled: false
     region: ""
@@ -185,6 +216,7 @@ application:
     stsRoleArn: ""
     refreshTokenTableName: ""
     upstreamTokenTableName: ""
+    bearerIndexTableName: ""
     refreshTokenAndUpstreamEnabled: true
   aws:
     dynamoDbTable:

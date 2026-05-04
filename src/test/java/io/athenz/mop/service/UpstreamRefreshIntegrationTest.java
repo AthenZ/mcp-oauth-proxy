@@ -15,6 +15,7 @@
  */
 package io.athenz.mop.service;
 
+import io.athenz.mop.config.OktaSessionCacheConfig;
 import io.athenz.mop.config.UpstreamTokenConfig;
 import io.athenz.mop.model.UpstreamTokenRecord;
 import io.athenz.mop.store.UpstreamTokenStore;
@@ -53,10 +54,20 @@ class UpstreamRefreshIntegrationTest {
     @Mock
     OauthProxyMetrics oauthProxyMetrics;
 
+    @Mock
+    OktaSessionCache oktaSessionCache;
+
+    @Mock
+    OktaSessionCacheConfig oktaSessionCacheConfig;
+
+    @Mock
+    UserTokenRegionResolver userTokenRegionResolver;
+
     @Test
     void secondProviderRefresh_usesLatestVersionAfterConflict() {
         lenient().when(upstreamTokenConfig.expirySeconds()).thenReturn(7776000L);
         lenient().when(upstreamTokenConfig.ttlBufferDays()).thenReturn(7);
+        lenient().when(oktaSessionCacheConfig.enabled()).thenReturn(false);
 
         UpstreamRefreshService svc = new UpstreamRefreshService();
         inject(svc, "upstreamTokenStore", upstreamTokenStore);
@@ -65,6 +76,9 @@ class UpstreamRefreshIntegrationTest {
         inject(svc, "refreshCoordinationService", refreshCoordinationService);
         inject(svc, "upstreamTokenRegionResolver", upstreamTokenRegionResolver);
         inject(svc, "oauthProxyMetrics", oauthProxyMetrics);
+        inject(svc, "oktaSessionCache", oktaSessionCache);
+        inject(svc, "oktaSessionCacheConfig", oktaSessionCacheConfig);
+        inject(svc, "userTokenRegionResolver", userTokenRegionResolver);
 
         String pid = AudienceConstants.PROVIDER_OKTA + "#user1";
         UpstreamTokenRecord v1 = new UpstreamTokenRecord(pid, "rt1", "", 1L, 0L, "", "");

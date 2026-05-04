@@ -16,10 +16,10 @@
 package io.athenz.mop.resource;
 
 import io.athenz.mop.model.AuthorizationCode;
-import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AuthCodeRegionResolver;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
+import io.athenz.mop.service.RefreshTokenService;
 import io.quarkus.oidc.AccessTokenCredential;
 import io.quarkus.oidc.OidcSession;
 import io.quarkus.oidc.UserInfo;
@@ -68,6 +68,9 @@ public class GithubResource extends BaseResource {
     @Inject
     ConfigService configService;
 
+    @Inject
+    RefreshTokenService refreshTokenService;
+
     /**
      * Secondary Authorization Endpoint to return to
      * after GitHub OAuth flow is completed
@@ -103,8 +106,12 @@ public class GithubResource extends BaseResource {
             refreshToStore = accessTokenCredential.getRefreshToken().getToken();
         }
         if (refreshToStore == null || refreshToStore.isEmpty()) {
-            TokenWrapper existing = authorizerService.getUserToken(lookupKey, PROVIDER);
-            refreshToStore = (existing != null && existing.refreshToken() != null) ? existing.refreshToken() : null;
+            // Borrow the canonical upstream RT from mcp-oauth-proxy-refresh-tokens
+            // (rotation-aware, sibling-aware) when this GitHub callback has no fresh RT in the
+            // OIDC session — covers the second/third MCP-client window relogging into an
+            // existing GitHub upstream session.
+            String existingUpstream = refreshTokenService.getUpstreamRefreshToken(lookupKey, PROVIDER);
+            refreshToStore = (existingUpstream != null && !existingUpstream.isEmpty()) ? existingUpstream : null;
         }
         authorizerService.storeTokens(
                 lookupKey,

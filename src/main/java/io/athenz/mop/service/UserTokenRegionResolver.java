@@ -41,6 +41,7 @@ public class UserTokenRegionResolver {
     public static final String CALL_SITE_AUTHORIZER_GET_USER_TOKEN = "authorizer_get_user_token";
     public static final String CALL_SITE_USERINFO_TOKEN_LOOKUP = "userinfo_token_lookup";
     public static final String CALL_SITE_USERINFO_OKTA_LOOKUP = "userinfo_okta_lookup";
+    public static final String CALL_SITE_UPSTREAM_OKTA_CACHE_LOOKUP = "upstream_okta_cache_lookup";
 
     @Inject
     TokenStore tokenStore;

@@ -23,13 +23,18 @@ import com.nimbusds.jose.jwk.gen.ECKeyGenerator;
 import com.nimbusds.jose.jwk.Curve;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
+import io.athenz.mop.config.OktaSessionCacheConfig;
+import io.athenz.mop.model.BearerIndexRecord;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
+import io.athenz.mop.service.BearerIndexRegionResolver;
+import io.athenz.mop.service.BearerIndexResolution;
 import io.athenz.mop.service.OktaTokens;
 import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
 import io.athenz.mop.service.UserTokenRegionResolver;
 import io.athenz.mop.service.UserTokenResolution;
+import io.athenz.mop.store.BearerIndexStore;
 import io.athenz.mop.store.TokenStore;
 import io.athenz.mop.telemetry.ExchangeStep;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
@@ -53,6 +58,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -63,7 +69,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for UserInfoResource, including cross-region fallback when token is not found locally.
+ * Unit tests for UserInfoResource. Bearer resolution flows through the dedicated
+ * mcp-oauth-proxy-bearer-index table via {@link BearerIndexRegionResolver}; per-client
+ * mcp_client_id surfacing is read directly from the bearer-index row (no longer derived from
+ * the legacy per-client tokens row).
  */
 @ExtendWith(MockitoExtension.class)
 class UserInfoResourceTest {
@@ -77,6 +86,12 @@ class UserInfoResourceTest {
 
     @Mock
     private TokenStore tokenStore;
+
+    @Mock
+    private BearerIndexStore bearerIndexStore;
+
+    @Mock
+    private BearerIndexRegionResolver bearerIndexRegionResolver;
 
     @Mock
     private UserTokenRegionResolver userTokenRegionResolver;
@@ -93,28 +108,48 @@ class UserInfoResourceTest {
     @Mock
     private UpstreamRefreshService upstreamRefreshService;
 
+    @Mock
+    private OktaSessionCacheConfig oktaSessionCacheConfig;
+
     @InjectMocks
     private UserInfoResource userInfoResource;
 
-    private TokenWrapper tokenWrapper;
     private TokenWrapper oktaTokenWrapper;
     private String idToken;
 
     @BeforeEach
     void setUp() throws Exception {
         lenient().when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
+        // Default: cache disabled — exercises today's behavior. Cache-aware tests opt-in.
+        lenient().when(oktaSessionCacheConfig.enabled()).thenReturn(false);
         Field up = UserInfoResource.class.getDeclaredField("userPrefix");
         up.setAccessible(true);
         up.set(userInfoResource, USER_PREFIX);
         idToken = createIdToken(USER);
         long ttl = System.currentTimeMillis() / 1000 + 3600;
-        tokenWrapper = new TokenWrapper(USER, PROVIDER, idToken, ACCESS_TOKEN, "refresh", ttl);
         oktaTokenWrapper = new TokenWrapper(USER, PROVIDER, idToken, null, null, ttl);
     }
 
-    private void stubResolveByHash(TokenWrapper token, boolean fromFallback) {
-        lenient().when(userTokenRegionResolver.resolveByAccessTokenHash(anyString(), anyString()))
-                .thenReturn(new UserTokenResolution(token, fromFallback));
+    private void stubBearerIndex(String user, String clientId, String provider, boolean fromFallback) {
+        long now = System.currentTimeMillis() / 1000;
+        BearerIndexRecord row = new BearerIndexRecord(
+                "h", user, clientId == null ? "" : clientId, provider,
+                now + 600, now + 3600);
+        lenient().when(bearerIndexRegionResolver.resolveByHash(anyString()))
+                .thenReturn(new BearerIndexResolution(row, fromFallback));
+    }
+
+    private void stubBearerIndexExpired(String user, String provider) {
+        long now = System.currentTimeMillis() / 1000;
+        BearerIndexRecord row = new BearerIndexRecord(
+                "h", user, "", provider, now - 10, now - 5);
+        lenient().when(bearerIndexRegionResolver.resolveByHash(anyString()))
+                .thenReturn(new BearerIndexResolution(row, false));
+    }
+
+    private void stubBearerIndexMiss() {
+        lenient().when(bearerIndexRegionResolver.resolveByHash(anyString()))
+                .thenReturn(new BearerIndexResolution(null, false));
     }
 
     private void stubResolveByUserProvider(String user, String provider, TokenWrapper token, boolean fromFallback) {
@@ -123,11 +158,15 @@ class UserInfoResourceTest {
     }
 
     private static String createIdToken(String sub) throws Exception {
+        return createIdTokenWithExpEpoch(sub, System.currentTimeMillis() / 1000 + 3600);
+    }
+
+    private static String createIdTokenWithExpEpoch(String sub, long expEpochSeconds) throws Exception {
         ECKey ecKey = new ECKeyGenerator(Curve.P_256).generate();
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
                 .subject(sub)
                 .claim("name", "Test User")
-                .expirationTime(new Date(System.currentTimeMillis() + 3600_000))
+                .expirationTime(new Date(expEpochSeconds * 1000L))
                 .build();
         SignedJWT jwt = new SignedJWT(
                 new JWSHeader.Builder(JWSAlgorithm.ES256).keyID(ecKey.getKeyID()).build(),
@@ -142,7 +181,7 @@ class UserInfoResourceTest {
 
         assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
         assertErrorBody(response, "invalid_token", "Missing or invalid Authorization header");
-        verify(userTokenRegionResolver, never()).resolveByAccessTokenHash(anyString(), anyString());
+        verify(bearerIndexRegionResolver, never()).resolveByHash(anyString());
     }
 
     @Test
@@ -151,59 +190,65 @@ class UserInfoResourceTest {
 
         assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
         assertErrorBody(response, "invalid_token", "Missing or invalid Authorization header");
-        verify(userTokenRegionResolver, never()).resolveByAccessTokenHash(anyString(), anyString());
+        verify(bearerIndexRegionResolver, never()).resolveByHash(anyString());
     }
 
     @Test
-    void getUserInfo_tokenFoundInPrimary_returns200() {
-        stubResolveByHash(tokenWrapper, false);
+    void getUserInfo_bearerIndexLocalHit_returns200() {
+        stubBearerIndex(USER, "", PROVIDER, false);
         stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, false);
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
 
         assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
-        verify(userTokenRegionResolver, times(1)).resolveByAccessTokenHash(anyString(),
-                eq(UserTokenRegionResolver.CALL_SITE_USERINFO_TOKEN_LOOKUP));
+        verify(bearerIndexRegionResolver, times(1)).resolveByHash(anyString());
         verify(userTokenRegionResolver, times(1)).resolveByUserProvider(eq(USER), eq(PROVIDER),
                 eq(UserTokenRegionResolver.CALL_SITE_USERINFO_OKTA_LOOKUP));
     }
 
     @Test
-    void getUserInfo_tokenFoundInFallback_returns200() {
-        stubResolveByHash(tokenWrapper, true);
+    void getUserInfo_bearerIndexFromFallback_returns200() {
+        stubBearerIndex(USER, "", PROVIDER, true);
         stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, true);
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
 
         assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
-        verify(userTokenRegionResolver, times(1)).resolveByAccessTokenHash(anyString(),
-                eq(UserTokenRegionResolver.CALL_SITE_USERINFO_TOKEN_LOOKUP));
+        verify(bearerIndexRegionResolver, times(1)).resolveByHash(anyString());
         verify(userTokenRegionResolver, times(1)).resolveByUserProvider(eq(USER), eq(PROVIDER),
                 eq(UserTokenRegionResolver.CALL_SITE_USERINFO_OKTA_LOOKUP));
     }
 
     @Test
-    void getUserInfo_tokenNotFound_returns401() {
-        stubResolveByHash(null, false);
+    void getUserInfo_bearerIndexMiss_returns401() {
+        stubBearerIndexMiss();
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
 
         assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
         assertErrorBody(response, "invalid_token", "Token not found");
-        verify(userTokenRegionResolver, times(1)).resolveByAccessTokenHash(anyString(),
-                eq(UserTokenRegionResolver.CALL_SITE_USERINFO_TOKEN_LOOKUP));
-        // The exhausted-metric emission lives inside UserTokenRegionResolver and is covered by
-        // UserTokenRegionResolverTest. UserInfoResource itself no longer records it.
+        verify(bearerIndexRegionResolver, times(1)).resolveByHash(anyString());
+        // Exhausted-metric emission lives inside BearerIndexRegionResolver and is covered by
+        // BearerIndexRegionResolverTest. UserInfoResource itself no longer records it.
         verify(oauthProxyMetrics, never()).recordCrossRegionFallbackExhausted(
                 anyString(), anyString(), anyString(), anyString(), anyInt(), anyString());
     }
 
     @Test
+    void getUserInfo_bearerIndexExpired_returns401() {
+        stubBearerIndexExpired(USER, "github");
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        assertErrorBody(response, "invalid_token", "Token has expired");
+        verify(userTokenRegionResolver, never()).resolveByUserProvider(anyString(), anyString(), anyString());
+        verify(upstreamRefreshService, never()).refreshUpstream(anyString());
+    }
+
+    @Test
     void getUserInfo_oktaRowMissing_upstreamRefreshSucceeds_returns200() throws Exception {
-        String dbProvider = "databricks-sql-dbc-abc123.cloud.databricks.com";
-        long ttl = System.currentTimeMillis() / 1000 + 3600;
-        TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
-        stubResolveByHash(dbToken, false);
+        stubBearerIndex(USER, "", "databricks-sql-dbc-abc123.cloud.databricks.com", false);
         stubResolveByUserProvider(USER, PROVIDER, null, false);
         when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
                 .thenReturn(new OktaTokens("new_at", "new_rt", idToken, 3600));
@@ -213,16 +258,18 @@ class UserInfoResourceTest {
         assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
         verify(upstreamRefreshService, times(1)).refreshUpstream(PROVIDER_USER_ID);
         verify(tokenStore, times(1)).storeUserToken(eq(USER), eq(PROVIDER), any(TokenWrapper.class));
+        // The freshly-rotated Okta bearer must be indexed so the next /userinfo resolves via the
+        // bearer-index table without a miss.
+        verify(bearerIndexStore, times(1)).putBearer(anyString(), eq(USER), eq(""), eq(PROVIDER),
+                anyLong(), anyLong());
+        verify(oauthProxyMetrics).recordBearerIndexWrite(true);
         verify(oauthProxyMetrics).recordExchangeStep(eq(ExchangeStep.UPSTREAM_REFRESH),
                 eq(OauthProviderLabel.OKTA), eq(true), isNull(), eq(""), eq("us-east-1"), anyDouble());
     }
 
     @Test
     void getUserInfo_oktaRowMissing_upstreamRefreshFails_returns401() {
-        String dbProvider = "databricks-sql-dbc-abc123.cloud.databricks.com";
-        long ttl = System.currentTimeMillis() / 1000 + 3600;
-        TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
-        stubResolveByHash(dbToken, false);
+        stubBearerIndex(USER, "", "databricks-sql-dbc-abc123.cloud.databricks.com", false);
         stubResolveByUserProvider(USER, PROVIDER, null, false);
         when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
                 .thenThrow(new UpstreamRefreshException("token revoked"));
@@ -233,16 +280,15 @@ class UserInfoResourceTest {
         assertErrorBody(response, "server_error", "Okta token record not found");
         verify(upstreamRefreshService, times(1)).refreshUpstream(PROVIDER_USER_ID);
         verify(tokenStore, never()).storeUserToken(anyString(), anyString(), any(TokenWrapper.class));
+        verify(bearerIndexStore, never()).putBearer(anyString(), anyString(), anyString(), anyString(),
+                anyLong(), anyLong());
         verify(oauthProxyMetrics).recordExchangeStep(eq(ExchangeStep.UPSTREAM_REFRESH),
                 eq(OauthProviderLabel.OKTA), eq(false), eq("unauthorized"), eq(""), eq("us-east-1"), anyDouble());
     }
 
     @Test
     void getUserInfo_oktaRowMissing_upstreamLockFails_returns401() {
-        String dbProvider = "databricks-sql-dbc-abc123.cloud.databricks.com";
-        long ttl = System.currentTimeMillis() / 1000 + 3600;
-        TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
-        stubResolveByHash(dbToken, false);
+        stubBearerIndex(USER, "", "databricks-sql-dbc-abc123.cloud.databricks.com", false);
         stubResolveByUserProvider(USER, PROVIDER, null, false);
         when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
                 .thenThrow(new IllegalStateException("lock not acquired"));
@@ -259,11 +305,9 @@ class UserInfoResourceTest {
 
     @Test
     void getUserInfo_oktaRowExistsButIdTokenNull_upstreamRefreshSucceeds_returns200() throws Exception {
-        String dbProvider = "databricks-vector-search-dbc-xyz.cloud.databricks.com";
         long ttl = System.currentTimeMillis() / 1000 + 3600;
-        TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
         TokenWrapper oktaNoIdToken = new TokenWrapper(USER, PROVIDER, null, "old_at", null, ttl);
-        stubResolveByHash(dbToken, false);
+        stubBearerIndex(USER, "", "databricks-vector-search-dbc-xyz.cloud.databricks.com", false);
         stubResolveByUserProvider(USER, PROVIDER, oktaNoIdToken, false);
         when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
                 .thenReturn(new OktaTokens("new_at", "new_rt", idToken, 3600));
@@ -279,11 +323,9 @@ class UserInfoResourceTest {
 
     @Test
     void getUserInfo_oktaRowExistsButIdTokenNull_upstreamRefreshFails_returns401() {
-        String dbProvider = "databricks-vector-search-dbc-xyz.cloud.databricks.com";
         long ttl = System.currentTimeMillis() / 1000 + 3600;
-        TokenWrapper dbToken = new TokenWrapper(USER, dbProvider, null, ACCESS_TOKEN, null, ttl);
         TokenWrapper oktaNoIdToken = new TokenWrapper(USER, PROVIDER, null, "old_at", null, ttl);
-        stubResolveByHash(dbToken, false);
+        stubBearerIndex(USER, "", "databricks-vector-search-dbc-xyz.cloud.databricks.com", false);
         stubResolveByUserProvider(USER, PROVIDER, oktaNoIdToken, false);
         when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
                 .thenThrow(new UpstreamRefreshException("no upstream token"));
@@ -309,13 +351,9 @@ class UserInfoResourceTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void getUserInfo_perClientRow_publishesMcpClientIdClaim() {
-        long ttl = System.currentTimeMillis() / 1000 + 3600;
-        // Per-client bearer row: TokenStore backends extract clientId from the partition-key
-        // prefix into TokenWrapper.clientId on read.
-        TokenWrapper perClient = new TokenWrapper(
-                USER, PROVIDER, idToken, ACCESS_TOKEN, "refresh", ttl, "Cursor");
-        stubResolveByHash(perClient, false);
+    void getUserInfo_bearerIndexCarriesClientId_publishesMcpClientIdClaim() {
+        // Bearer-index row carries clientId; /userinfo surfaces mcp_client_id verbatim from it.
+        stubBearerIndex(USER, "Cursor", PROVIDER, false);
         stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, false);
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
@@ -323,15 +361,97 @@ class UserInfoResourceTest {
         assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
         Map<String, Object> body = (Map<String, Object>) response.getEntity();
         assertEquals("Cursor", body.get("mcp_client_id"),
-                "Per-client bearer rows must surface mcp_client_id from the partition-key prefix");
+                "mcp_client_id must come straight from the bearer-index row");
         assertEquals(PROVIDER, body.get("mcp_resource_idp"));
     }
 
     @Test
+    void userinfo_idTokenSecondsFromExpiry_servesFromCache_noUpstreamRefresh() throws Exception {
+        // 0s skew on /userinfo: an id_token whose exp is just a few seconds in the future is
+        // still strictly fresh and must not trigger an upstream refresh.
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        String soonExpIdToken = createIdTokenWithExpEpoch(USER, System.currentTimeMillis() / 1000 + 5);
+        TokenWrapper soonExpRow = new TokenWrapper(USER, PROVIDER, soonExpIdToken, null, null, ttl);
+        stubBearerIndex(USER, "", PROVIDER, false);
+        stubResolveByUserProvider(USER, PROVIDER, soonExpRow, false);
+        when(oktaSessionCacheConfig.enabled()).thenReturn(true);
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        verify(upstreamRefreshService, never()).refreshUpstream(anyString());
+        verify(oauthProxyMetrics).recordUserinfoOktaCacheOutcome("fresh_hit");
+    }
+
+    @Test
+    void userinfo_idTokenExpired_refreshSucceeds_servesFreshClaims_emitsExpiredRefreshed() throws Exception {
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        String expiredIdToken = createIdTokenWithExpEpoch(USER, System.currentTimeMillis() / 1000 - 60);
+        TokenWrapper staleRow = new TokenWrapper(USER, PROVIDER, expiredIdToken, "old_at", "old_rt", ttl);
+        stubBearerIndex(USER, "", PROVIDER, false);
+        stubResolveByUserProvider(USER, PROVIDER, staleRow, false);
+        when(oktaSessionCacheConfig.enabled()).thenReturn(true);
+        when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
+                .thenReturn(new OktaTokens("new_at", "new_rt", idToken, 3600));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        verify(upstreamRefreshService, times(1)).refreshUpstream(PROVIDER_USER_ID);
+        verify(oauthProxyMetrics).recordUserinfoOktaCacheOutcome("expired_refreshed");
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
-    void getUserInfo_legacyBareRow_omitsMcpClientIdClaim() {
-        // Legacy bare row: TokenWrapper.clientId() == null.
-        stubResolveByHash(tokenWrapper, false);
+    void userinfo_idTokenExpired_refreshFails_servesStaleClaims_emitsStaleClaimsServed() throws Exception {
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        String staleIdToken = createIdTokenWithExpEpoch(USER, System.currentTimeMillis() / 1000 - 60);
+        TokenWrapper staleRow = new TokenWrapper(USER, PROVIDER, staleIdToken, "old_at", "old_rt", ttl);
+        stubBearerIndex(USER, "", PROVIDER, false);
+        stubResolveByUserProvider(USER, PROVIDER, staleRow, false);
+        when(oktaSessionCacheConfig.enabled()).thenReturn(true);
+        when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
+                .thenThrow(new UpstreamRefreshException("transient"));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus(),
+                "Stale-claims fallback must keep /userinfo at 200 when the upstream-provider bearer is still valid");
+        verify(oauthProxyMetrics).recordUserinfoOktaCacheOutcome("stale_claims_served");
+        Map<String, Object> body = (Map<String, Object>) response.getEntity();
+        assertEquals(USER, body.get("sub"),
+                "Identity claims (sub/email/short_id) are stable across refreshes; serve from stale cache");
+        org.junit.jupiter.api.Assertions.assertFalse(body.containsKey("exp"),
+                "buildUserInfo strips exp/iat regardless of staleness");
+    }
+
+    @Test
+    void userinfo_idTokenAbsent_refreshFails_returns401_unchanged() {
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        TokenWrapper rowNoIdToken = new TokenWrapper(USER, PROVIDER, null, "old_at", null, ttl);
+        stubBearerIndex(USER, "", PROVIDER, false);
+        stubResolveByUserProvider(USER, PROVIDER, rowNoIdToken, false);
+        // Cache flag isn't consulted on this path (no parseable id_token to even consider as
+        // "fresh" or "stale-served"), so we use a lenient stub for parity with the other
+        // cache-aware tests in this class.
+        lenient().when(oktaSessionCacheConfig.enabled()).thenReturn(true);
+        when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
+                .thenThrow(new UpstreamRefreshException("no upstream RT"));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        assertErrorBody(response, "server_error", "Okta token record not found");
+        // No stale-claims fallback because there is no parseable id_token to serve from.
+        verify(oauthProxyMetrics, never()).recordUserinfoOktaCacheOutcome("stale_claims_served");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getUserInfo_bearerIndexClientIdEmpty_omitsMcpClientIdClaim() {
+        // Bearer-index row with empty clientId (e.g. /userinfo upstream-refresh write site, or a
+        // legacy bearer that never carried a clientId): /userinfo must omit the claim entirely.
+        stubBearerIndex(USER, "", PROVIDER, false);
         stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, false);
 
         Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
@@ -339,7 +459,7 @@ class UserInfoResourceTest {
         assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
         Map<String, Object> body = (Map<String, Object>) response.getEntity();
         org.junit.jupiter.api.Assertions.assertFalse(body.containsKey("mcp_client_id"),
-                "Legacy bare rows must omit the mcp_client_id claim entirely (no default, no placeholder)");
+                "Bearer-index rows with empty clientId must omit mcp_client_id (no default, no placeholder)");
         assertEquals(PROVIDER, body.get("mcp_resource_idp"));
     }
 }
