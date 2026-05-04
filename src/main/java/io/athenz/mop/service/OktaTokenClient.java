@@ -89,7 +89,9 @@ public class OktaTokenClient {
             );
             com.nimbusds.oauth2.sdk.RefreshTokenGrant grant =
                     new com.nimbusds.oauth2.sdk.RefreshTokenGrant(new RefreshToken(trimmed));
-            TokenRequest tokenRequest = new TokenRequest(tokenEndpoint, clientAuth, grant);
+            com.nimbusds.oauth2.sdk.Scope scope =
+                    new com.nimbusds.oauth2.sdk.Scope("openid", "profile", "email", "offline_access");
+            TokenRequest tokenRequest = new TokenRequest(tokenEndpoint, clientAuth, grant, scope);
             TokenResponse tokenResponse;
             try (var ignored = UpstreamHttpCallLabels.withLabels(
                     OauthProviderLabel.OKTA, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {

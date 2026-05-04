@@ -162,8 +162,10 @@ class TokenExchangeServiceSplunkImplTest {
                         Instant.now().getEpochSecond() + 300));
         when(splunkClient.getUser(MGMT, "admin-bearer", human))
                 .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+        // Mirror lookup returns false the first time (pre-create), true the second time (post-create verify).
         when(splunkClient.getUser(MGMT, "admin-bearer", "mcp." + human))
-                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("mcp_user", "yahoo_user")));
         when(splunkClient.mintToken(MGMT, "admin-bearer", "mcp." + human, "mcp", "+1h"))
                 .thenReturn("tok");
 
@@ -181,7 +183,8 @@ class TokenExchangeServiceSplunkImplTest {
         when(splunkClient.getUser(MGMT, "admin-bearer", human))
                 .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
         when(splunkClient.getUser(MGMT, "admin-bearer", "mcp." + human))
-                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("mcp_user", "yahoo_user")));
         when(splunkClient.mintToken(MGMT, "admin-bearer", "mcp." + human, "mcp", "+1h"))
                 .thenReturn("tok");
 
@@ -198,7 +201,8 @@ class TokenExchangeServiceSplunkImplTest {
         when(splunkClient.getUser(MGMT, "admin-bearer", human))
                 .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
         when(splunkClient.getUser(MGMT, "admin-bearer", "mcp." + human))
-                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("mcp_user", "yahoo_user")));
         when(splunkClient.mintToken(MGMT, "admin-bearer", "mcp." + human, "mcp", "+1h"))
                 .thenReturn("tok");
 
@@ -215,7 +219,8 @@ class TokenExchangeServiceSplunkImplTest {
         when(splunkClient.getUser(MGMT, "admin-bearer", human))
                 .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("power")));
         when(splunkClient.getUser(MGMT, "admin-bearer", "mcp." + human))
-                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("power", "yahoo_user")));
         when(splunkClient.mintToken(MGMT, "admin-bearer", "mcp." + human, "mcp", "+1h"))
                 .thenReturn("tok");
 
@@ -225,7 +230,10 @@ class TokenExchangeServiceSplunkImplTest {
     }
 
     @Test
-    void getAccessToken_mintReturnsBlank_unauthorized() throws Exception {
+    void getAccessToken_mintTokenThrowsEmptyResponse_unauthorizedWithUpstream() throws Exception {
+        // With the new SplunkManagementClient contract, mintToken throws SplunkApiException when
+        // Splunk returns an empty/missing token in its response body — the exchange layer must
+        // surface that as a 401-ready unauthorized result with an errorMessage attached.
         String human = "ivy";
         TokenExchangeDO req = new TokenExchangeDO(List.of("s"), "r", "d", MGMT,
                 new TokenWrapper("u", "okta", idTokenWithShortId(human), "a", "rt",
@@ -233,11 +241,15 @@ class TokenExchangeServiceSplunkImplTest {
         when(splunkClient.getUser(MGMT, "admin-bearer", human))
                 .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
         when(splunkClient.getUser(MGMT, "admin-bearer", "mcp.ivy"))
-                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("mcp_user", "yahoo_user")));
         when(splunkClient.mintToken(anyString(), anyString(), anyString(), anyString(), anyString()))
-                .thenReturn("   ");
+                .thenThrow(new SplunkApiException(200, "mintToken", "empty token in Splunk response"));
 
-        assertEquals(AuthResult.UNAUTHORIZED, service.getAccessTokenFromResourceAuthorizationServer(req).authResult());
+        AuthorizationResultDO r = service.getAccessTokenFromResourceAuthorizationServer(req);
+        assertEquals(AuthResult.UNAUTHORIZED, r.authResult());
+        assertNotNull(r.errorMessage());
+        assertTrue(r.errorMessage().contains("empty token in Splunk response"));
     }
 
     @Test
@@ -251,7 +263,9 @@ class TokenExchangeServiceSplunkImplTest {
                 .thenReturn(new SplunkManagementClient.SplunkUserLookup(true,
                         List.of("power_other", "user_yamas-026", "yahoo_user")));
         when(splunkClient.getUser(MGMT, "admin-bearer", "mcp.alice"))
-                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true,
+                        List.of("mcp_user", "power_other", "user_yamas-026", "yahoo_user")));
         when(splunkClient.mintToken(MGMT, "admin-bearer", "mcp.alice", "mcp", "+1h"))
                 .thenReturn("splunk-secret-token");
 
@@ -274,7 +288,8 @@ class TokenExchangeServiceSplunkImplTest {
         when(splunkClient.getUser(MGMT, "admin-bearer", human))
                 .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
         when(splunkClient.getUser(MGMT, "admin-bearer", "mcp.newbie"))
-                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("mcp_user", "yahoo_user")));
         when(splunkClient.mintToken(MGMT, "admin-bearer", "mcp.newbie", "mcp", "+1h"))
                 .thenReturn("t1");
 
@@ -334,7 +349,11 @@ class TokenExchangeServiceSplunkImplTest {
     }
 
     @Test
-    void getAccessToken_mintFails_unauthorized() throws Exception {
+    void getAccessToken_mintFails_unauthorizedWithUpstreamMessage() throws Exception {
+        // Real-world repro: mirror user appears post-create but Splunk mintToken 400's
+        // with "User does not exist" (cluster propagation delay). The upstream message
+        // must reach the AuthorizationResultDO.errorMessage() so AuthorizerService can
+        // surface it as a 401 invalid_token body to the client.
         String human = "dave";
         TokenExchangeDO req = new TokenExchangeDO(List.of("s"), "r", "d", MGMT,
                 new TokenWrapper("u", "okta", idTokenWithShortId(human), "a", "rt",
@@ -342,11 +361,85 @@ class TokenExchangeServiceSplunkImplTest {
         when(splunkClient.getUser(MGMT, "admin-bearer", human))
                 .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
         when(splunkClient.getUser(MGMT, "admin-bearer", "mcp.dave"))
-                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("mcp_user", "yahoo_user")));
         when(splunkClient.mintToken(anyString(), anyString(), anyString(), anyString(), anyString()))
-                .thenReturn(null);
+                .thenThrow(new SplunkApiException(400, "mintToken", "User \"mcp.dave\" does not exist."));
+
         AuthorizationResultDO r = service.getAccessTokenFromResourceAuthorizationServer(req);
         assertEquals(AuthResult.UNAUTHORIZED, r.authResult());
+        assertNotNull(r.errorMessage());
+        assertTrue(r.errorMessage().contains("User \"mcp.dave\" does not exist."));
+    }
+
+    @Test
+    void getAccessToken_createUserThrowsAndMirrorMissingAfterCreate_unauthorizedWithUpstream() throws Exception {
+        // The headline bug from the schituprolu repro: Splunk createUser returns 403
+        // "Role=… is not grantable", code historically swallowed it and proceeded,
+        // hitting a misleading "user does not exist" mintToken error. New behavior:
+        // catch the SplunkApiException, post-verify with a second getUser, and surface
+        // the real upstream cause (the 403 message) — never call mintToken.
+        String human = "schituprolu";
+        TokenExchangeDO req = new TokenExchangeDO(List.of("s"), "r", "d", MGMT,
+                new TokenWrapper("u", "okta", idTokenWithShortId(human), "a", "rt",
+                        Instant.now().getEpochSecond() + 300));
+        when(splunkClient.getUser(MGMT, "admin-bearer", human))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("power_ads-pbp-008")));
+        // Mirror lookup returns false both pre- and post-create (createUser 403'd, no row exists).
+        when(splunkClient.getUser(MGMT, "admin-bearer", "mcp." + human))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+        org.mockito.Mockito.doThrow(new SplunkApiException(403, "createUser", "Role=power_ads-pbp-008 is not grantable"))
+                .when(splunkClient).createUser(eq(MGMT), eq("admin-bearer"), eq("mcp." + human), anyString(), any());
+
+        AuthorizationResultDO r = service.getAccessTokenFromResourceAuthorizationServer(req);
+        assertEquals(AuthResult.UNAUTHORIZED, r.authResult());
+        assertNotNull(r.errorMessage());
+        assertTrue(r.errorMessage().contains("Role=power_ads-pbp-008 is not grantable"));
+        // Critical: mintToken must NOT be called — would have produced the misleading
+        // "user does not exist" 400 that masked the real cause for ~6 months.
+        verify(splunkClient, never()).mintToken(anyString(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void getAccessToken_mirrorMissingAfterCreateButNoUpstreamError_unauthorizedWithGenericMessage() throws Exception {
+        // createUser silently returns ok (e.g. eventual-consistency lag) but the
+        // post-create getUser still doesn't see the row. Plan calls for a clear
+        // "not present after createUser (no upstream error captured)" message.
+        String human = "leo";
+        TokenExchangeDO req = new TokenExchangeDO(List.of("s"), "r", "d", MGMT,
+                new TokenWrapper("u", "okta", idTokenWithShortId(human), "a", "rt",
+                        Instant.now().getEpochSecond() + 300));
+        when(splunkClient.getUser(MGMT, "admin-bearer", human))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+        when(splunkClient.getUser(MGMT, "admin-bearer", "mcp." + human))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(false, List.of()));
+        // createUser returns normally — no exception.
+
+        AuthorizationResultDO r = service.getAccessTokenFromResourceAuthorizationServer(req);
+        assertEquals(AuthResult.UNAUTHORIZED, r.authResult());
+        assertNotNull(r.errorMessage());
+        assertTrue(r.errorMessage().contains("not present after createUser"));
+        verify(splunkClient, never()).mintToken(anyString(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void getAccessToken_updateUserRolesThrows_unauthorizedWithUpstream() throws Exception {
+        String human = "nia";
+        TokenExchangeDO req = new TokenExchangeDO(List.of("s"), "r", "d", MGMT,
+                new TokenWrapper("u", "okta", idTokenWithShortId(human), "a", "rt",
+                        Instant.now().getEpochSecond() + 300));
+        when(splunkClient.getUser(MGMT, "admin-bearer", human))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("yahoo_user")));
+        // Mirror exists with roles that drift -> updateUserRoles is called.
+        when(splunkClient.getUser(MGMT, "admin-bearer", "mcp." + human))
+                .thenReturn(new SplunkManagementClient.SplunkUserLookup(true, List.of("stale-role")));
+        org.mockito.Mockito.doThrow(new SplunkApiException(403, "updateUserRoles", "Role=stale-role is not grantable"))
+                .when(splunkClient).updateUserRoles(eq(MGMT), eq("admin-bearer"), eq("mcp." + human), any());
+
+        AuthorizationResultDO r = service.getAccessTokenFromResourceAuthorizationServer(req);
+        assertEquals(AuthResult.UNAUTHORIZED, r.authResult());
+        assertTrue(r.errorMessage().contains("Role=stale-role is not grantable"));
+        verify(splunkClient, never()).mintToken(anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test

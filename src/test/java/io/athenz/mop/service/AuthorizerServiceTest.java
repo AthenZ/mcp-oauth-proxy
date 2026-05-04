@@ -1124,4 +1124,138 @@ class AuthorizerServiceTest {
         assertNull(r);
         verifyNoInteractions(refreshCoordinationService);
     }
+
+    // -- UpstreamExchangeException propagation (NPE -> 401 batch-2 fix) --------------------
+    //
+    // Pre-fix: every audience-style TokenExchangeService impl returned (UNAUTHORIZED, null)
+    // on failure and AuthorizerService dereferenced atDO.token().ttl() unconditionally → NPE → 500.
+    // Post-fix: AuthorizerService throws UpstreamExchangeException carrying the upstream
+    // errorMessage so TokenResource can map it to 401 invalid_token. Generic — every audience
+    // provider (Splunk, Databricks, GCP Workforce, Grafana, Evaluate, Okta-exchange, ZTS).
+
+    private void stubResourceMetaAndExchange(String resource, AuthorizationResultDO atDO) {
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read"), "domain1", AudienceConstants.PROVIDER_OKTA, "auth-server", false, null, ""
+        );
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        when(configService.getRemoteServerEndpoint("auth-server")).thenReturn("https://auth.example.com/token");
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("auth-server"))
+                .thenReturn(tokenExchangeService);
+        when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class)))
+                .thenReturn(atDO);
+    }
+
+    @Test
+    void getTokenFromAuthorizationServer_unauthorizedWithMessage_throwsUpstreamExchangeException() {
+        // Splunk-style failure: impl returns unauthorized("Role=… is not grantable").
+        // Must throw UpstreamExchangeException with that message verbatim — TokenResource
+        // surfaces it as the 401 error_description.
+        String resource = "https://api.example.com";
+        TokenWrapper inputToken = new TokenWrapper(
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
+                Instant.now().getEpochSecond() + 300);
+        stubResourceMetaAndExchange(resource,
+                AuthorizationResultDO.unauthorized("Splunk createUser failed: status=403, message=Role=power_ads-pbp-008 is not grantable"));
+
+        UpstreamExchangeException ex = assertThrows(UpstreamExchangeException.class,
+                () -> authorizerService.getTokenFromAuthorizationServer("subj", "read", resource, inputToken));
+        assertEquals(
+                "Splunk createUser failed: status=403, message=Role=power_ads-pbp-008 is not grantable",
+                ex.getMessage());
+    }
+
+    @Test
+    void getTokenFromAuthorizationServer_unauthorizedWithoutMessage_throwsGenericUpstreamExchangeException() {
+        // Legacy unauthorized() without errorMessage (e.g. provider impl not yet migrated).
+        // Falls back to a generic message — never NPE, never 500.
+        String resource = "https://api.example.com";
+        TokenWrapper inputToken = new TokenWrapper(
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
+                Instant.now().getEpochSecond() + 300);
+        stubResourceMetaAndExchange(resource,
+                new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null));
+
+        UpstreamExchangeException ex = assertThrows(UpstreamExchangeException.class,
+                () -> authorizerService.getTokenFromAuthorizationServer("subj", "read", resource, inputToken));
+        assertTrue(ex.getMessage().contains("upstream token exchange failed"));
+    }
+
+    @Test
+    void getTokenFromAuthorizationServer_grafanaUnauthorizedWithMessage_throwsUpstreamExchangeException() {
+        // Generic across providers — same throw for grafana, no audience-specific branching.
+        String resource = "https://grafana.example.com/dashboard";
+        TokenWrapper inputToken = new TokenWrapper(
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
+                Instant.now().getEpochSecond() + 300);
+        stubResourceMetaAndExchange(resource,
+                AuthorizationResultDO.unauthorized("Grafana exchange: token mint failed for shortId=alice (see server logs for upstream HTTP status)"));
+
+        UpstreamExchangeException ex = assertThrows(UpstreamExchangeException.class,
+                () -> authorizerService.getTokenFromAuthorizationServer("subj", "read", resource, inputToken));
+        assertTrue(ex.getMessage().contains("Grafana exchange"));
+    }
+
+    @Test
+    void getTokenFromAuthorizationServer_nullAtDO_throwsGenericUpstreamExchangeException() {
+        // accessTokenIssuer returns null entirely — no NPE, falls through to generic throw.
+        String resource = "https://api.example.com";
+        TokenWrapper inputToken = new TokenWrapper(
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
+                Instant.now().getEpochSecond() + 300);
+        stubResourceMetaAndExchange(resource, null);
+
+        UpstreamExchangeException ex = assertThrows(UpstreamExchangeException.class,
+                () -> authorizerService.getTokenFromAuthorizationServer("subj", "read", resource, inputToken));
+        assertTrue(ex.getMessage().contains("upstream token exchange failed"));
+    }
+
+    @Test
+    void getTokenFromAuthorizationServer_authorizedWithNullToken_throwsGenericUpstreamExchangeException() {
+        // Pathological: AuthResult.AUTHORIZED but token() == null. Pre-fix this hit NPE
+        // on atDO.token().ttl(). Post-fix it throws UpstreamExchangeException so the
+        // caller never sees a 500.
+        String resource = "https://api.example.com";
+        TokenWrapper inputToken = new TokenWrapper(
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
+                Instant.now().getEpochSecond() + 300);
+        stubResourceMetaAndExchange(resource,
+                new AuthorizationResultDO(AuthResult.AUTHORIZED, null));
+
+        assertThrows(UpstreamExchangeException.class,
+                () -> authorizerService.getTokenFromAuthorizationServer("subj", "read", resource, inputToken));
+    }
+
+    @Test
+    void getTokenFromAuthorizationServer_jagBranch_unauthorizedFinalAt_throwsUpstreamExchangeException() {
+        // Cover the JAG branch (line 234 in AuthorizerService) — same guard, same throw.
+        String resource = "https://api.example.com";
+        String authServer = "auth-server-jag";
+        String jagIssuer = "jag-issuer-x";
+
+        ResourceMeta resourceMeta = new ResourceMeta(
+                Arrays.asList("read"), "domain1", AudienceConstants.PROVIDER_OKTA, authServer, true, jagIssuer, ""
+        );
+        TokenWrapper inputToken = new TokenWrapper(
+                "user.testuser", AudienceConstants.PROVIDER_OKTA, "id-token", "access-token", "refresh-token",
+                Instant.now().getEpochSecond() + 300);
+        TokenWrapper jagToken = new TokenWrapper(null, null, "jag-id", null, null, 600L);
+        AuthorizationResultDO jagOk = new AuthorizationResultDO(AuthResult.AUTHORIZED, jagToken);
+
+        when(configService.getResourceMeta(resource)).thenReturn(resourceMeta);
+        when(configService.getRemoteServerEndpoint(authServer)).thenReturn("https://auth.example.com/token");
+        when(configService.getRemoteServerEndpoint(jagIssuer)).thenReturn("https://jag.example.com/token");
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(authServer))
+                .thenReturn(tokenExchangeService);
+        TokenExchangeService jagService = mock(TokenExchangeService.class);
+        when(tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(jagIssuer))
+                .thenReturn(jagService);
+        when(jagService.getJWTAuthorizationGrantFromIdentityProvider(any(TokenExchangeDO.class)))
+                .thenReturn(jagOk);
+        when(tokenExchangeService.getAccessTokenFromResourceAuthorizationServer(any(TokenExchangeDO.class)))
+                .thenReturn(AuthorizationResultDO.unauthorized("Databricks prod-eng upstream HTTP 401: invalid_grant"));
+
+        UpstreamExchangeException ex = assertThrows(UpstreamExchangeException.class,
+                () -> authorizerService.getTokenFromAuthorizationServer("subj", "read", resource, inputToken));
+        assertTrue(ex.getMessage().contains("Databricks prod-eng upstream HTTP 401"));
+    }
 }

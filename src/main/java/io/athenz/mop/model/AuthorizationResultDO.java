@@ -15,9 +15,30 @@
  */
 package io.athenz.mop.model;
 
-public record AuthorizationResultDO(AuthResult authResult, TokenWrapper token, String oauthScope) {
+/**
+ * Result of a token-exchange / authorization step.
+ *
+ * <p>The optional {@code errorMessage} carries the upstream provider's failure detail
+ * (e.g. Splunk {@code messages[].text}, GCP STS {@code error_description}) so the caller
+ * (typically {@link io.athenz.mop.service.AuthorizerService}) can propagate a meaningful
+ * 401 {@code invalid_token} body instead of swallowing the cause.</p>
+ */
+public record AuthorizationResultDO(AuthResult authResult, TokenWrapper token, String oauthScope, String errorMessage) {
+
+    public AuthorizationResultDO(AuthResult authResult, TokenWrapper token, String oauthScope) {
+        this(authResult, token, oauthScope, null);
+    }
 
     public AuthorizationResultDO(AuthResult authResult, TokenWrapper token) {
-        this(authResult, token, null);
+        this(authResult, token, null, null);
+    }
+
+    /**
+     * Build an {@link AuthResult#UNAUTHORIZED} result carrying an upstream-provided failure
+     * message. Use this from {@link io.athenz.mop.service.TokenExchangeService} implementations
+     * whenever you have a non-blank reason to surface to the client.
+     */
+    public static AuthorizationResultDO unauthorized(String errorMessage) {
+        return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null, null, errorMessage);
     }
 }

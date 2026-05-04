@@ -193,7 +193,8 @@ public class AuthorizeResource extends BaseResource {
             log.info("resource: {} with non default idp: {}", request.getResource(), resourceMeta.idpServer());
             TokenWrapper tokenWrapper = authorizerService.getUserToken(subject, resourceMeta.idpServer());
             if (tokenWrapper == null) {
-                log.error("no token found for subject: {} provider: {}", subject, resourceMeta.idpServer());
+                log.info("No existing token for subject={} provider={}; redirecting to provider authorize",
+                        subject, resourceMeta.idpServer());
                 String redirectUri = String.format("https://%s/%s/authorize", host, resourceMeta.idpServer());
                 log.info("redirecting to {} for authorization", redirectUri);
                 return recordAuthorizeRedirect(buildRedirect(redirectUri, code), oauthClient, true, null);

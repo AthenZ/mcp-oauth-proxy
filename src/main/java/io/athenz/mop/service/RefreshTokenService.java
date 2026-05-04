@@ -16,6 +16,7 @@
 package io.athenz.mop.service;
 
 import io.athenz.mop.model.RefreshTokenLockKey;
+import io.athenz.mop.model.RefreshTokenRecord;
 import io.athenz.mop.model.RefreshTokenRotateResult;
 import io.athenz.mop.model.RefreshTokenValidationResult;
 
@@ -62,16 +63,42 @@ public interface RefreshTokenService {
     /**
      * Validate refresh token and resolve replay/active.
      * Binding: clientId must match. Expiry and status enforced.
+     *
+     * <p>When the row is found in {@code ROTATED} status, this method consults the
+     * <em>rotated-grace window</em> ({@code server.refresh-token.rotated-grace-seconds}). If the
+     * rotation happened within the grace window, the result is
+     * {@link RefreshTokenValidationResult.Status#ROTATED_GRACE_SUCCESSOR} carrying the most recent
+     * ACTIVE descendant in the same family. Older rotations remain
+     * {@link RefreshTokenValidationResult.Status#ROTATED_REPLAY} (genuine stolen-RT defense).</p>
      */
     RefreshTokenValidationResult validate(String refreshToken, String clientId);
 
     /**
      * Rotate token: mark current as ROTATED, insert new ACTIVE token in same family.
-     * Atomic via TransactWriteItems with condition status=ACTIVE. Strict single-use rotation; no grace cache.
+     * Atomic via TransactWriteItems with condition status=ACTIVE.
      *
-     * @return the new MOP token and new row primary key (for updating upstream token by key), or null if validation failed or concurrent rotation (replay)
+     * <p>Calls are serialized cross-pod by a per-RT distributed lock keyed on the SHA-256 hash of
+     * the presented refresh token. A per-pod in-memory cache also holds the result for a short
+     * window so concurrent callers presenting the same RT receive the same rotation outcome
+     * (singleflight); see {@code server.refresh-token.inflight-cache-seconds}.</p>
+     *
+     * @return the new MOP token and new row primary key (for updating upstream token by key), or
+     *     null if validation failed or concurrent rotation (replay)
      */
     RefreshTokenRotateResult rotate(String refreshToken, String clientId);
+
+    /**
+     * Re-rotate against a grace successor: when {@link #validate} returned
+     * {@link RefreshTokenValidationResult.Status#ROTATED_GRACE_SUCCESSOR}, the duplicate caller
+     * still needs a working RT pair. This rotates the most recent ACTIVE child in the family —
+     * staying in the same family (no revoke), and minting a brand-new RT for the duplicate
+     * caller. Idempotent under contention via the same per-RT lock used by {@link #rotate}.
+     *
+     * @param successor the most recent ACTIVE descendant returned from {@code validate}
+     * @return the freshly minted RT pair, or null if the successor was rotated/revoked while we
+     *     were trying (in which case the caller should fall back to {@code invalid_grant})
+     */
+    RefreshTokenRotateResult rotateGraceSuccessor(RefreshTokenRecord successor);
 
     /**
      * Revoke all tokens in the family (status = REVOKED). Query by token_family_id (GSI2).

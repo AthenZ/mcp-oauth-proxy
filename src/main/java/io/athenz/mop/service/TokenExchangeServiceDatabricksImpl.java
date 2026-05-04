@@ -85,29 +85,31 @@ public class TokenExchangeServiceDatabricksImpl implements TokenExchangeService 
     public AuthorizationResultDO getAccessTokenFromResourceAuthorizationServer(TokenExchangeDO tokenExchangeDO) {
         if (tokenExchangeDO == null || tokenExchangeDO.tokenWrapper() == null) {
             log.warn("Databricks {} exchange: missing token wrapper", providerLabel);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Databricks " + providerLabel + " exchange: missing token wrapper");
         }
         String idToken = StringUtils.trimToNull(tokenExchangeDO.tokenWrapper().idToken());
         if (idToken == null) {
             log.warn("Databricks {} exchange: missing Okta id_token", providerLabel);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Databricks " + providerLabel + " exchange: missing Okta id_token");
         }
         String resource = tokenExchangeDO.resource();
         Optional<DatabricksWorkspaceResolver.DatabricksWorkspace> resolved =
                 DatabricksWorkspaceResolver.resolve(resource, config);
         if (resolved.isEmpty()) {
             log.warn("Databricks {} exchange: invalid or unsupported resource URI for workspace extraction", providerLabel);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized(
+                    "Databricks " + providerLabel + " exchange: invalid or unsupported resource URI");
         }
         DatabricksWorkspaceResolver.DatabricksWorkspace ws = resolved.get();
         String oauthScope = StringUtils.trimToNull(config.oauthScope());
         if (oauthScope == null) {
             log.warn("Databricks {} exchange: oauth-scope is blank", providerLabel);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Databricks " + providerLabel + " exchange: oauth-scope is blank");
         }
         if (scopeContainsOfflineAccess(oauthScope)) {
             log.warn("Databricks {} exchange: offline_access is not allowed in configured oauth-scope", providerLabel);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized(
+                    "Databricks " + providerLabel + " exchange: offline_access is not allowed in configured oauth-scope");
         }
 
         String tokenUrl = ws.workspaceBaseUrl().replaceAll("/+$", "") + TOKEN_PATH;
@@ -124,6 +126,7 @@ public class TokenExchangeServiceDatabricksImpl implements TokenExchangeService 
 
             String requestId = response.requestId().orElse(null);
             if (response.statusCode() != 200) {
+                String snippet = abbreviateBody(response.body());
                 log.warn(
                         "Databricks {} token exchange failed: status={} workspaceHost={} scope={} requestId={} bodySnippet={}",
                         providerLabel,
@@ -131,15 +134,19 @@ public class TokenExchangeServiceDatabricksImpl implements TokenExchangeService 
                         ws.hostname(),
                         oauthScope,
                         requestId,
-                        abbreviateBody(response.body()));
-                return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+                        snippet);
+                return AuthorizationResultDO.unauthorized(
+                        "Databricks " + providerLabel + " upstream HTTP " + response.statusCode()
+                                + " (workspace=" + ws.hostname() + "): " + snippet);
             }
 
             DatabricksTokenJson parsed = objectMapper.readValue(response.body(), DatabricksTokenJson.class);
             if (parsed == null || StringUtils.isBlank(parsed.accessToken)) {
                 log.warn("Databricks {} exchange: success status but missing access_token workspaceHost={} requestId={}",
                         providerLabel, ws.hostname(), requestId);
-                return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+                return AuthorizationResultDO.unauthorized(
+                        "Databricks " + providerLabel + " exchange: success status but missing access_token (workspace="
+                                + ws.hostname() + ")");
             }
             long ttl = parsed.expiresIn != null && parsed.expiresIn > 0 ? parsed.expiresIn : DEFAULT_EXPIRES_SECONDS;
             String returnedScope = StringUtils.isNotBlank(parsed.scope) ? parsed.scope.trim() : oauthScope;
@@ -157,7 +164,8 @@ public class TokenExchangeServiceDatabricksImpl implements TokenExchangeService 
             oauthProxyMetrics.recordUpstreamRequest(
                     providerLabel, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN, 0, region, seconds);
             log.warn("Databricks {} token exchange error: workspaceHost={} message={}", providerLabel, ws.hostname(), e.getMessage());
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized(
+                    "Databricks " + providerLabel + " transport error (workspace=" + ws.hostname() + "): " + e.getMessage());
         }
     }
 

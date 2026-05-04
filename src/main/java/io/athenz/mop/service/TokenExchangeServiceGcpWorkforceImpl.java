@@ -90,25 +90,26 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
     public AuthorizationResultDO getAccessTokenFromResourceAuthorizationServer(TokenExchangeDO tokenExchangeDO) {
         TokenWrapper oktaToken = tokenExchangeDO != null ? tokenExchangeDO.tokenWrapper() : null;
         if (oktaToken == null) {
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Google GCP exchange: missing token wrapper");
         }
         String oktaIdToken = oktaToken.idToken();
         if (oktaIdToken == null || oktaIdToken.isBlank()) {
             log.warn("Google GCP exchange: missing Okta id_token");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Google GCP exchange: missing Okta id_token");
         }
         String resource = tokenExchangeDO.resource();
         io.athenz.mop.model.ResourceMeta resourceMeta = configService.getResourceMeta(resource);
         if (resourceMeta == null || resourceMeta.audience() == null) {
             log.warn("Google GCP exchange: no resource meta or audience for resource: {}", resource);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized(
+                    "Google GCP exchange: no resource meta or audience for resource " + resource);
         }
         String audience = resourceMeta.audience();
         Map<String, ServiceConfig> services = googleWorkforceConfig.services();
         ServiceConfig serviceConfig = services != null ? services.get(audience) : null;
         if (serviceConfig == null) {
             log.warn("Google GCP exchange: unsupported audience: {}", audience);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Google GCP exchange: unsupported audience " + audience);
         }
         String roleName = serviceConfig.gcpRoleName().orElse(DEFAULT_GCP_ROLE_NAME);
 
@@ -116,7 +117,7 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
         String shortId = shortIdObj != null ? shortIdObj.toString().trim() : null;
         if (shortId == null || shortId.isBlank()) {
             log.warn("Google GCP exchange: missing short_id claim in Okta id_token");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Google GCP exchange: missing short_id claim in Okta id_token");
         }
         String roleMember = "user." + shortId;
         GcpZmsPrincipalScope zmsScope = zmsServiceImpl.getScopeForPrincipal(roleMember, roleName);
@@ -143,12 +144,16 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
 
         if (!athenzOk) {
             log.warn("Google GCP exchange: Athenz ID token exchange failed");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            String upstream = athenzResult != null ? athenzResult.errorMessage() : null;
+            return AuthorizationResultDO.unauthorized(
+                    "Google GCP exchange: Athenz ID token exchange failed"
+                            + (upstream != null ? " (" + upstream + ")" : ""));
         }
         String athenzIdToken = athenzResult.token().idToken();
         if (athenzIdToken == null || athenzIdToken.isBlank()) {
             log.warn("Google GCP exchange: Athenz ID token exchange returned no id_token");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized(
+                    "Google GCP exchange: Athenz ID token exchange returned no id_token");
         }
 
         long tSts = System.nanoTime();
@@ -158,7 +163,8 @@ public class TokenExchangeServiceGcpWorkforceImpl implements TokenExchangeServic
         recordGcpStep(ExchangeStep.GCP_GOOGLE_STS, oauthProviderLabel, oauthClient, region, tSts, stsOk);
         if (!stsOk) {
             log.warn("Google GCP exchange: Google STS exchange failed");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized(
+                    "Google GCP exchange: Google STS exchange failed for audience " + audience);
         }
 
         TokenWrapper result = new TokenWrapper(

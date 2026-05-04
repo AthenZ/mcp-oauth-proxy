@@ -18,6 +18,7 @@ package io.athenz.mop.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
@@ -140,10 +141,13 @@ class SplunkManagementClientImplTest {
     }
 
     @Test
-    void mintToken_nullBase() throws Exception {
+    void mintToken_nullBase_throws() throws Exception {
         SplunkHttpExecutor exec = mock(SplunkHttpExecutor.class);
         SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
-        assertNull(client.mintToken("", BEARER, "u", "aud", "+1h"));
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.mintToken("", BEARER, "u", "aud", "+1h"));
+        assertEquals(0, ex.status());
+        assertEquals("mintToken", ex.operation());
         verify(exec, never()).send(any());
     }
 
@@ -164,55 +168,75 @@ class SplunkManagementClientImplTest {
     }
 
     @Test
-    void mintToken_badStatus() throws Exception {
-        SplunkHttpExecutor exec = req -> mockResponse(400, "{}");
+    void mintToken_badStatus_throwsWithParsedMessage() throws Exception {
+        // Real Splunk 400 body shape from the schituprolu repro doc.
+        String body = "{\"messages\":[{\"type\":\"ERROR\",\"text\":\"User \\\"mcp.foo\\\" does not exist.\"}]}";
+        SplunkHttpExecutor exec = req -> mockResponse(400, body);
         SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
-        assertNull(client.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        assertEquals(400, ex.status());
+        assertEquals("mintToken", ex.operation());
+        assertEquals("User \"mcp.foo\" does not exist.", ex.upstreamMessage());
+        assertTrue(ex.getMessage().contains("status=400"));
     }
 
     @Test
-    void mintToken_emptyEntry() throws Exception {
+    void mintToken_emptyEntry_throws() throws Exception {
         SplunkHttpExecutor exec = req -> mockResponse(200, "{\"entry\":[]}");
         SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
-        assertNull(client.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        assertTrue(ex.upstreamMessage().contains("no entry"));
     }
 
     @Test
-    void mintToken_missingOrNonTextualToken() throws Exception {
+    void mintToken_missingOrNonTextualToken_throws() throws Exception {
         ObjectMapper om = new ObjectMapper();
-        SplunkManagementClientImpl client = new SplunkManagementClientImpl(om, req -> mockResponse(200, "{\"entry\":[{\"content\":{}}]}"));
-        assertNull(client.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(om,
+                req -> mockResponse(200, "{\"entry\":[{\"content\":{}}]}"));
+        SplunkApiException ex1 = assertThrows(SplunkApiException.class,
+                () -> client.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        assertTrue(ex1.upstreamMessage().contains("empty token"));
 
-        SplunkManagementClientImpl client2 = new SplunkManagementClientImpl(om, req -> mockResponse(200,
-                "{\"entry\":[{\"content\":{\"token\":{}}}]}"));
-        assertNull(client2.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        SplunkManagementClientImpl client2 = new SplunkManagementClientImpl(om,
+                req -> mockResponse(200, "{\"entry\":[{\"content\":{\"token\":{}}}]}"));
+        assertThrows(SplunkApiException.class,
+                () -> client2.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
     }
 
     @Test
-    void mintToken_ioException() throws Exception {
+    void mintToken_ioException_throws() throws Exception {
         SplunkHttpExecutor exec = req -> {
-            throw new IOException("x");
+            throw new IOException("net-broken");
         };
         SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
-        assertNull(client.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        assertEquals(0, ex.status());
+        assertTrue(ex.upstreamMessage().startsWith("transport: "));
     }
 
     @Test
-    void mintToken_interruptedException_restoresInterrupt() throws Exception {
+    void mintToken_interruptedException_restoresInterruptAndThrows() throws Exception {
         SplunkHttpExecutor exec = req -> {
             throw new InterruptedException("x");
         };
         SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
         Thread.interrupted();
-        assertNull(client.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.mintToken(BASE, BEARER, "mirror", "aud", "+1h"));
+        assertTrue(ex.upstreamMessage().startsWith("interrupted: "));
         assertTrue(Thread.interrupted());
     }
 
     @Test
-    void createUser_nullBase_doesNotSend() throws Exception {
+    void createUser_nullBase_throws() throws Exception {
         SplunkHttpExecutor exec = mock(SplunkHttpExecutor.class);
         SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
-        client.createUser("", BEARER, "u", "pw", List.of("r"));
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.createUser("", BEARER, "u", "pw", List.of("r")));
+        assertEquals("createUser", ex.operation());
         verify(exec, never()).send(any());
     }
 
@@ -228,10 +252,25 @@ class SplunkManagementClientImplTest {
     }
 
     @Test
-    void updateUser_nullBase_doesNotSend() throws Exception {
+    void createUser_403NotGrantable_throwsSplunkApiExceptionWithParsedMessage() throws Exception {
+        // Real Splunk 403 body shape from the schituprolu repro doc.
+        String body = "{\"messages\":[{\"type\":\"ERROR\",\"text\":\"Role=power_ads-pbp-008 is not grantable\"}]}";
+        SplunkHttpExecutor exec = req -> mockResponse(403, body);
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.createUser(BASE, BEARER, "mcp.alice", "p", List.of("power_ads-pbp-008")));
+        assertEquals(403, ex.status());
+        assertEquals("createUser", ex.operation());
+        assertEquals("Role=power_ads-pbp-008 is not grantable", ex.upstreamMessage());
+    }
+
+    @Test
+    void updateUser_nullBase_throws() throws Exception {
         SplunkHttpExecutor exec = mock(SplunkHttpExecutor.class);
         SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
-        client.updateUserRoles("", BEARER, "u", List.of("r"));
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.updateUserRoles("", BEARER, "u", List.of("r")));
+        assertEquals("updateUserRoles", ex.operation());
         verify(exec, never()).send(any());
     }
 
@@ -247,21 +286,76 @@ class SplunkManagementClientImplTest {
     }
 
     @Test
-    void postForm_non2xx_doesNotThrow() throws Exception {
-        SplunkHttpExecutor exec = req -> mockResponse(500, "");
+    void postForm_non2xx_throwsWithRawBodyWhenNotJson() throws Exception {
+        SplunkHttpExecutor exec = req -> mockResponse(500, "<html>bad gateway</html>");
         SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
-        client.createUser(BASE, BEARER, "u", "p", List.of("r"));
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.createUser(BASE, BEARER, "u", "p", List.of("r")));
+        assertEquals(500, ex.status());
+        // Non-JSON body forwarded verbatim — no parse, no truncation.
+        assertEquals("<html>bad gateway</html>", ex.upstreamMessage());
     }
 
     @Test
-    void postForm_interruptedException_restoresInterrupt() throws Exception {
+    void postForm_non2xx_blankBody_returnsPlaceholder() throws Exception {
+        SplunkHttpExecutor exec = req -> mockResponse(502, "");
+        SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.createUser(BASE, BEARER, "u", "p", List.of("r")));
+        assertEquals(502, ex.status());
+        assertEquals("<empty body>", ex.upstreamMessage());
+    }
+
+    @Test
+    void postForm_interruptedException_restoresInterruptAndThrows() throws Exception {
         SplunkHttpExecutor exec = req -> {
             throw new InterruptedException("x");
         };
         SplunkManagementClientImpl client = new SplunkManagementClientImpl(new ObjectMapper(), exec);
         Thread.interrupted();
-        client.createUser(BASE, BEARER, "u", "p", List.of("r"));
+        SplunkApiException ex = assertThrows(SplunkApiException.class,
+                () -> client.createUser(BASE, BEARER, "u", "p", List.of("r")));
+        assertTrue(ex.upstreamMessage().startsWith("interrupted: "));
         assertTrue(Thread.interrupted());
+    }
+
+    @Test
+    void parseSplunkMessage_blankFirstMessageText_skipsAndReturnsNextNonBlank() {
+        // First entry's text is whitespace; second entry's text is the real error.
+        // Asserts the helper iterates rather than indexing .get(0) blindly.
+        SplunkManagementClientImpl client =
+                new SplunkManagementClientImpl(new ObjectMapper(), req -> mockResponse(200, "{}"));
+        String body = "{\"messages\":["
+                + "{\"type\":\"INFO\",\"text\":\"   \"},"
+                + "{\"type\":\"ERROR\",\"text\":\"Role=power_ads-pbp-008 is not grantable\"}"
+                + "]}";
+        assertEquals("Role=power_ads-pbp-008 is not grantable", client.parseSplunkMessage(body));
+    }
+
+    @Test
+    void parseSplunkMessage_unparseableBody_returnsRawBodyVerbatim() {
+        SplunkManagementClientImpl client =
+                new SplunkManagementClientImpl(new ObjectMapper(), req -> mockResponse(200, "{}"));
+        String body = "totally not json";
+        // Verbatim — no truncation, no abbreviation.
+        assertEquals(body, client.parseSplunkMessage(body));
+    }
+
+    @Test
+    void parseSplunkMessage_blankBody_returnsPlaceholder() {
+        SplunkManagementClientImpl client =
+                new SplunkManagementClientImpl(new ObjectMapper(), req -> mockResponse(200, "{}"));
+        assertEquals("<empty body>", client.parseSplunkMessage(""));
+        assertEquals("<empty body>", client.parseSplunkMessage(null));
+    }
+
+    @Test
+    void parseSplunkMessage_jsonWithNoUsableText_fallsBackToRawBody() {
+        SplunkManagementClientImpl client =
+                new SplunkManagementClientImpl(new ObjectMapper(), req -> mockResponse(200, "{}"));
+        String body = "{\"messages\":[{\"type\":\"INFO\",\"text\":\"\"},{\"type\":\"INFO\"}]}";
+        // No non-blank text -> raw body.
+        assertEquals(body, client.parseSplunkMessage(body));
     }
 
 

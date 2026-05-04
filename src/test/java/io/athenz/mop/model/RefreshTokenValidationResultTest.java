@@ -74,10 +74,11 @@ class RefreshTokenValidationResultTest {
     @Test
     void testStatusEnumValues() {
         RefreshTokenValidationResult.Status[] values = RefreshTokenValidationResult.Status.values();
-        assertEquals(4, values.length);
+        assertEquals(5, values.length);
         assertNotNull(RefreshTokenValidationResult.Status.INVALID);
         assertNotNull(RefreshTokenValidationResult.Status.REVOKED);
         assertNotNull(RefreshTokenValidationResult.Status.ROTATED_REPLAY);
+        assertNotNull(RefreshTokenValidationResult.Status.ROTATED_GRACE_SUCCESSOR);
         assertNotNull(RefreshTokenValidationResult.Status.ACTIVE);
     }
 
@@ -89,6 +90,8 @@ class RefreshTokenValidationResultTest {
                 RefreshTokenValidationResult.Status.valueOf("REVOKED"));
         assertEquals(RefreshTokenValidationResult.Status.ROTATED_REPLAY,
                 RefreshTokenValidationResult.Status.valueOf("ROTATED_REPLAY"));
+        assertEquals(RefreshTokenValidationResult.Status.ROTATED_GRACE_SUCCESSOR,
+                RefreshTokenValidationResult.Status.valueOf("ROTATED_GRACE_SUCCESSOR"));
         assertEquals(RefreshTokenValidationResult.Status.ACTIVE,
                 RefreshTokenValidationResult.Status.valueOf("ACTIVE"));
     }
@@ -97,11 +100,27 @@ class RefreshTokenValidationResultTest {
     void testConstructorWithAllParams() {
         RefreshTokenRecord record = sampleRecord();
         RefreshTokenValidationResult result = new RefreshTokenValidationResult(
-                RefreshTokenValidationResult.Status.ACTIVE, record, "replaced-token-value");
+                RefreshTokenValidationResult.Status.ACTIVE, record, "replaced-token-value", null);
 
         assertEquals(RefreshTokenValidationResult.Status.ACTIVE, result.status());
         assertSame(record, result.record());
         assertEquals("replaced-token-value", result.replacedByTokenValue());
+        assertNull(result.successor());
+    }
+
+    @Test
+    void testRotatedGraceSuccessor() {
+        RefreshTokenRecord parent = sampleRecord();
+        RefreshTokenRecord successor = new RefreshTokenRecord(
+                "id2", parent.providerUserId(), parent.userId(), parent.clientId(), parent.provider(),
+                parent.providerSubject(), parent.encryptedUpstreamRefreshToken(), "ACTIVE",
+                parent.tokenFamilyId(), parent.refreshTokenId(), null, 0L, 1L, 2L, 3L);
+        RefreshTokenValidationResult result =
+                RefreshTokenValidationResult.rotatedGraceSuccessor(parent, successor);
+
+        assertEquals(RefreshTokenValidationResult.Status.ROTATED_GRACE_SUCCESSOR, result.status());
+        assertSame(parent, result.record());
+        assertSame(successor, result.successor());
     }
 
     @Test

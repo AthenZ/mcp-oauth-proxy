@@ -149,6 +149,24 @@ application:
     tableName: mcp-oauth-proxy-refresh-tokens
     expirySeconds: 7776000
     ttlBufferDays: 7
+    # Layer 2 — token-age grace. Tolerate ROTATED-status replays whose rotated_at is within this
+    # many seconds. Serves the duplicate caller from the family successor instead of revoking.
+    # 7200 = 2h. Sliding-grace post-Paranoids target: 172800 (48h).
+    rotatedGraceSeconds: 7200
+    # Layer 2 — family-idle grace gate (defense-in-depth, opt-in). Set > 0 to require recent
+    # family activity in addition to the token-age check; 0 disables the gate.
+    # Default 0 (disabled) for the 2h ship. Sliding-grace post-Paranoids target: 172800 (48h)
+    # to pair with rotatedGraceSeconds also at 172800.
+    familyIdleGraceSeconds: 0
+    # Layer 1 (per-RT singleflight): per-pod in-flight result cache TTL.
+    inflightCacheSeconds: 30
+    # Per-RT distributed-lock TTL written into mcp-oauth-proxy-refresh-locks. Sized to comfortably
+    # outlast a worst-case rotate() (read + validate + TransactWrite under DDB retry pressure).
+    # Does NOT cover the upstream Okta refresh; that runs after the lock is released.
+    inflightLockTtlSeconds: 30
+    # 12 retries with 100ms initial backoff (×2, capped at 2000ms) ≈ 17s worst-case wait.
+    inflightLockMaxRetries: 12
+    inflightLockInitialBackoffMs: 100
   refreshLock:
     tableName: mcp-oauth-proxy-refresh-locks
     ttlSeconds: 8

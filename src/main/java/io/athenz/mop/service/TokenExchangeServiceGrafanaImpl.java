@@ -69,7 +69,7 @@ public class TokenExchangeServiceGrafanaImpl implements TokenExchangeService {
         TokenWrapper oktaWrap = tokenExchangeDO != null ? tokenExchangeDO.tokenWrapper() : null;
         if (oktaWrap == null || StringUtils.isBlank(oktaWrap.idToken())) {
             log.warn("Grafana exchange: missing Okta id_token");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Grafana exchange: missing Okta id_token");
         }
 
         String baseUrl = tokenExchangeDO.remoteServer();
@@ -78,13 +78,14 @@ public class TokenExchangeServiceGrafanaImpl implements TokenExchangeService {
         }
         if (StringUtils.isBlank(baseUrl)) {
             log.warn("Grafana exchange: missing remote server (Grafana base URL)");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Grafana exchange: missing remote server (Grafana base URL)");
         }
 
         String saId = configService.getRemoteServerServiceAccountId(REMOTE_SERVER_KEY);
         if (StringUtils.isBlank(saId)) {
             log.warn("Grafana exchange: missing service-account-id for remote server {}", REMOTE_SERVER_KEY);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized(
+                    "Grafana exchange: missing service-account-id for remote server " + REMOTE_SERVER_KEY);
         }
 
         String usernameClaim = StringUtils.defaultIfBlank(
@@ -93,7 +94,7 @@ public class TokenExchangeServiceGrafanaImpl implements TokenExchangeService {
         String shortId = StringUtils.trimToNull(claimVal != null ? claimVal.toString() : null);
         if (StringUtils.isBlank(shortId)) {
             log.warn("Grafana exchange: missing claim {} in id_token", usernameClaim);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Grafana exchange: missing claim " + usernameClaim + " in id_token");
         }
 
         Map<String, String> creds = k8SSecretsProvider.getCredentials(null);
@@ -101,7 +102,7 @@ public class TokenExchangeServiceGrafanaImpl implements TokenExchangeService {
         if (StringUtils.isBlank(adminBearer)) {
             log.error("Grafana exchange: admin token not configured in credentials map under key {}",
                     grafanaConfig.adminTokenSecretKey());
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Grafana exchange: admin token not configured");
         }
 
         String prefix = StringUtils.defaultIfBlank(grafanaConfig.tokenNamePrefix(), "mcp.");
@@ -112,7 +113,8 @@ public class TokenExchangeServiceGrafanaImpl implements TokenExchangeService {
         String key = grafanaManagementClient.mintToken(baseUrl, saId, adminBearer, tokenName, secondsToLive);
         if (StringUtils.isBlank(key)) {
             log.warn("Grafana exchange: token mint failed for shortId={}", shortId);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized(
+                    "Grafana exchange: token mint failed for shortId=" + shortId + " (see server logs for upstream HTTP status)");
         }
 
         log.info("Grafana exchange: token mint ok shortId={} tokenName={}", shortId, tokenName);

@@ -69,12 +69,12 @@ public class TokenExchangeServiceSplunkImpl implements TokenExchangeService {
         TokenWrapper oktaWrap = tokenExchangeDO != null ? tokenExchangeDO.tokenWrapper() : null;
         if (oktaWrap == null || StringUtils.isBlank(oktaWrap.idToken())) {
             log.warn("Splunk exchange: missing Okta id_token");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Splunk exchange: missing Okta id_token");
         }
         String mgmtBase = tokenExchangeDO.remoteServer();
         if (StringUtils.isBlank(mgmtBase)) {
             log.warn("Splunk exchange: missing remote server (mgmt base URL)");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Splunk exchange: missing remote server (mgmt base URL)");
         }
 
         String usernameClaim =
@@ -83,14 +83,14 @@ public class TokenExchangeServiceSplunkImpl implements TokenExchangeService {
         String humanUser = StringUtils.trimToNull(claimVal != null ? claimVal.toString() : null);
         if (StringUtils.isBlank(humanUser)) {
             log.warn("Splunk exchange: missing claim {} in id_token", usernameClaim);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Splunk exchange: missing claim " + usernameClaim + " in id_token");
         }
 
         Map<String, String> creds = k8SSecretsProvider.getCredentials(null);
         String adminBearer = creds.get(splunkConfig.adminTokenSecretKey());
         if (StringUtils.isBlank(adminBearer)) {
             log.error("Splunk exchange: splunk admin token not configured in credentials map");
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+            return AuthorizationResultDO.unauthorized("Splunk exchange: admin token not configured");
         }
 
         String prefix = StringUtils.defaultIfBlank(splunkConfig.mirrorUserPrefix(), "mcp.");
@@ -119,11 +119,35 @@ public class TokenExchangeServiceSplunkImpl implements TokenExchangeService {
         boolean rolesMatch = mirrorExisted && currentMirrorRoles.equals(desiredSet);
 
         if (!mirrorExisted) {
+            // Capture rather than rethrow so we can post-verify and surface the more useful
+            // "user truly does not exist after createUser" error when both signals coincide.
+            String upstreamFailure = null;
             String password = generateMirrorPassword();
-            splunkManagementClient.createUser(mgmtBase, adminBearer, mirrorUser, password, desiredRoles);
+            try {
+                splunkManagementClient.createUser(mgmtBase, adminBearer, mirrorUser, password, desiredRoles);
+            } catch (SplunkApiException e) {
+                upstreamFailure = e.getMessage();
+                log.error("Splunk exchange: createUser failed for mirrorUser={} desiredRoles={}: {}",
+                        mirrorUser, desiredRoles, e.getMessage());
+            }
+            SplunkManagementClient.SplunkUserLookup verify =
+                    splunkManagementClient.getUser(mgmtBase, adminBearer, mirrorUser);
+            if (!verify.found()) {
+                String msg = upstreamFailure != null
+                        ? upstreamFailure
+                        : "Splunk mirror user " + mirrorUser + " not present after createUser (no upstream error captured)";
+                log.error("Splunk exchange: mirror user {} not present after createUser ({}); aborting mint",
+                        mirrorUser, msg);
+                return AuthorizationResultDO.unauthorized(msg);
+            }
             log.info("Splunk exchange: created mirror user {}", mirrorUser);
         } else if (!rolesMatch) {
-            splunkManagementClient.updateUserRoles(mgmtBase, adminBearer, mirrorUser, desiredRoles);
+            try {
+                splunkManagementClient.updateUserRoles(mgmtBase, adminBearer, mirrorUser, desiredRoles);
+            } catch (SplunkApiException e) {
+                log.error("Splunk exchange: updateUserRoles failed for mirrorUser={}: {}", mirrorUser, e.getMessage());
+                return AuthorizationResultDO.unauthorized(e.getMessage());
+            }
             log.info("Splunk exchange: updated mirror user roles {}", mirrorUser);
         } else {
             log.info("Splunk exchange: mirror user roles unchanged {}", mirrorUser);
@@ -131,10 +155,12 @@ public class TokenExchangeServiceSplunkImpl implements TokenExchangeService {
 
         String splunkAudience = splunkConfig.splunkTokenAudience();
         String expiresOn = splunkConfig.tokenExpiresOn();
-        String token = splunkManagementClient.mintToken(mgmtBase, adminBearer, mirrorUser, splunkAudience, expiresOn);
-        if (StringUtils.isBlank(token)) {
-            log.warn("Splunk exchange: token mint failed for mirrorUser={}", mirrorUser);
-            return new AuthorizationResultDO(AuthResult.UNAUTHORIZED, null);
+        String token;
+        try {
+            token = splunkManagementClient.mintToken(mgmtBase, adminBearer, mirrorUser, splunkAudience, expiresOn);
+        } catch (SplunkApiException e) {
+            log.error("Splunk exchange: mintToken failed for mirrorUser={}: {}", mirrorUser, e.getMessage());
+            return AuthorizationResultDO.unauthorized(e.getMessage());
         }
 
         log.info("Splunk exchange: token mint ok mirrorUser={} mirrorExisted={} rolesChanged={}",
