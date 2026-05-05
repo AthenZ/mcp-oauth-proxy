@@ -110,7 +110,7 @@ public class AuthorizeErrorResource {
         String primaryCta;
         if (bucket == Bucket.NOT_ASSIGNED) {
             heading = "You don&#39;t have access to this application yet";
-            body = "Your Yahoo Okta account isn&#39;t entitled to MCP-on-Proxy. "
+            body = "Your Yahoo Okta account isn&#39;t entitled to MCP OAuth Proxy. "
                     + "To request access, open a yo/iiq request for the appropriate Okta application group.";
             primaryCta = "<a class=\"btn primary\" href=\"" + escapeAttr(iiqUrl)
                     + "\" target=\"_blank\" rel=\"noopener noreferrer\">Request access via yo/iiq</a>";
@@ -130,7 +130,7 @@ public class AuthorizeErrorResource {
                 + "<html lang=\"en\"><head>\n"
                 + "<meta charset=\"utf-8\">\n"
                 + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-                + "<title>MCP-on-Proxy - Sign-in error</title>\n"
+                + "<title>MCP OAuth Proxy - Sign-in error</title>\n"
                 + "<style>\n"
                 + "  :root { color-scheme: light dark; }\n"
                 + "  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto,\n"
