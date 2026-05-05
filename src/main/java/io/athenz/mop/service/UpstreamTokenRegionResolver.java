@@ -66,14 +66,15 @@ public class UpstreamTokenRegionResolver {
      * not carry one), so triggered/exhausted metrics use {@code "unknown"}.
      */
     public UpstreamTokenResolution resolveByProviderUserId(String providerUserId) {
-        Optional<UpstreamTokenRecord> local = upstreamTokenStore.get(providerUserId);
+        Optional<UpstreamTokenRecord> local = upstreamTokenStore.get(providerUserId).filter(UpstreamTokenRecord::isActive);
         if (local.isPresent()) {
             return new UpstreamTokenResolution(local.get(), false);
         }
         if (!crossRegionFallback.isRefreshAndUpstreamActive()) {
             return new UpstreamTokenResolution(null, false);
         }
-        Optional<UpstreamTokenRecord> peer = crossRegionFallback.getUpstreamToken(providerUserId);
+        Optional<UpstreamTokenRecord> peer = crossRegionFallback.getUpstreamToken(providerUserId)
+                .filter(UpstreamTokenRecord::isActive);
         if (peer.isPresent()) {
             recordTriggered();
             return new UpstreamTokenResolution(peer.get(), true);
@@ -92,7 +93,8 @@ public class UpstreamTokenRegionResolver {
         if (!crossRegionFallback.isRefreshAndUpstreamActive()) {
             return Optional.empty();
         }
-        Optional<UpstreamTokenRecord> peer = crossRegionFallback.getUpstreamToken(providerUserId);
+        Optional<UpstreamTokenRecord> peer = crossRegionFallback.getUpstreamToken(providerUserId)
+                .filter(UpstreamTokenRecord::isActive);
         if (peer.isEmpty()) {
             return Optional.empty();
         }

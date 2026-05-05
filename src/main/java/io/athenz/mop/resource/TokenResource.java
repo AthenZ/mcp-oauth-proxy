@@ -23,7 +23,9 @@ import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RefreshTokenService;
 import io.athenz.mop.service.UpstreamExchangeException;
+import io.athenz.mop.service.UpstreamProviderClassifier;
 import io.athenz.mop.service.UpstreamRefreshException;
+import io.athenz.mop.service.UpstreamRefreshResponse;
 import io.athenz.mop.service.UpstreamRefreshService;
 import io.athenz.mop.service.UpstreamRefreshTransientException;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
@@ -42,7 +44,6 @@ import jakarta.ws.rs.core.Response;
 import java.lang.invoke.MethodHandles;
 import java.security.Security;
 import java.security.cert.X509Certificate;
-import java.util.Optional;
 import java.util.function.Supplier;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -80,6 +81,9 @@ public class TokenResource {
     UpstreamRefreshService upstreamRefreshService;
 
     @Inject
+    UpstreamProviderClassifier upstreamProviderClassifier;
+
+    @Inject
     SecurityIdentity securityIdentity;
 
     @ConfigProperty(name = "server.refresh-token.expiry-seconds", defaultValue = "7776000")
@@ -114,6 +118,14 @@ public class TokenResource {
 
         telemetryRequestContext.setOauthClient(OauthClientLabel.normalize(request.getClientId()));
 
+        Response invalidTarget = validateResourceMappedIfPresent(request);
+        if (invalidTarget != null) {
+            String oauthClient = telemetryRequestContext.oauthClient();
+            String grantType = request.getGrantType() != null ? request.getGrantType() : "unknown";
+            oauthProxyMetrics.recordTokenIssuance("unknown", grantType, false, "invalid_target", oauthClient);
+            return invalidTarget;
+        }
+
         // Route to appropriate handler based on grant_type
         if ("authorization_code".equals(request.getGrantType())) {
             return handleAuthorizationCodeGrant(request);
@@ -132,6 +144,38 @@ public class TokenResource {
                     false, "unsupported_grant_type", telemetryRequestContext.oauthClient());
             return r;
         }
+    }
+
+    /**
+     * Reject token requests whose wire {@code resource} parameter does not map to any
+     * ResourceMeta we know about, with 400 {@code invalid_target} per RFC 8707 §2. Returns
+     * {@code null} (caller proceeds normally) when {@code resource} is absent/blank or when
+     * it resolves to a known ResourceMeta (including pattern-matched wildcards).
+     *
+     * <p>Emits {@code mop_token_resource_validation_total} for every non-blank resource —
+     * either {@code (accepted, known_mapped)} or {@code (rejected, unknown_resource)}. Absent
+     * or blank resource is intentionally NOT observed, matching the behavior here (no rejection,
+     * no counter sample) so dashboards reflect only resources the gate actually inspected.
+     */
+    private Response validateResourceMappedIfPresent(OAuth2TokenRequest request) {
+        String resource = request.getResource();
+        if (resource == null || resource.trim().isEmpty()) {
+            return null;
+        }
+        String grantType = request.getGrantType() != null ? request.getGrantType() : "unknown";
+        String oauthClient = telemetryRequestContext.oauthClient();
+        if (configService.getResourceMeta(resource) != null) {
+            oauthProxyMetrics.recordTokenResourceValidation(true, "known_mapped", grantType, oauthClient);
+            return null;
+        }
+        log.warn("Rejecting token request with unknown resource: grant_type={} resource={} clientId={}",
+                grantType, resource, request.getClientId());
+        oauthProxyMetrics.recordTokenResourceValidation(false, "unknown_resource", grantType, oauthClient);
+        return Response.status(Response.Status.BAD_REQUEST)
+                .entity(OAuth2ErrorResponse.of(
+                        OAuth2ErrorResponse.ErrorCode.INVALID_TARGET,
+                        "Unknown resource: " + resource))
+                .build();
     }
 
     /**
@@ -230,37 +274,102 @@ public class TokenResource {
         }
         TokenResponse tokenResponse = (TokenResponse) response.getEntity();
         String resource = authCode.getResource() != null ? authCode.getResource() : request.getResource();
+        // provider and audience are declared outside the try/catch so the failure-path ERROR
+        // logs below can still report them; resourceMeta lookup itself is cheap and does not
+        // throw for unknown resources (returns null), so this does not widen the failure surface.
+        ResourceMeta resourceMeta = resource != null ? configService.getResourceMeta(resource) : null;
+        String provider = resourceMeta != null ? resourceMeta.idpServer() : configService.getDefaultIDP();
+        String audience = resourceMeta != null ? resourceMeta.audience() : null;
         try {
-            ResourceMeta resourceMeta = resource != null ? configService.getResourceMeta(resource) : null;
-            String provider = resourceMeta != null ? resourceMeta.idpServer() : configService.getDefaultIDP();
             String providerUserId = provider + "#" + authCode.getSubject();
             String subject = authCode.getSubject();
 
+            // Resolve the upstream refresh token to seed the new MoP refresh-token row with.
+            //
+            // The order matters and reflects the data flow at consent time:
+            //
+            //   1. For Okta, the canonical durable upstream RT lives in the
+            //      mcp-oauth-proxy-upstream-tokens (L2) table, seeded by
+            //      AuthorizerService.storeTokens during the Okta callback. Read that first.
+            //
+            //   2. For every non-Okta provider (Google/Slack/GitHub/Embrace/...), the
+            //      *Resource.authorize callback persists the upstream RT it just received from
+            //      the IdP into the mcp-oauth-proxy-tokens table as a bare (lookupKey, provider)
+            //      session marker via AuthorizerService.storeTokens. That row carries the
+            //      most-recently-issued upstream RT for this (provider, user) pair and is the
+            //      authoritative seed for a brand-new MoP refresh-tokens row. Read it before
+            //      falling back to the refresh-tokens GSI.
+            //
+            //      Why this matters: the GSI lookup (step 3) only finds something when at least
+            //      one prior MoP refresh-tokens row exists for this (provider, user). On the very
+            //      first MoP-side login for a given user/provider (or after every prior row has
+            //      been REVOKED), the GSI returns null and the new row would be created with no
+            //      upstream RT — the next /token refresh_token call then fails with "no upstream
+            //      refresh token", revoking the freshly-issued family. Reading the bare session
+            //      marker prevents this orphan-row failure mode.
+            //
+            //   3. As a final fallback, the refresh-tokens GSI (rotation-aware, sibling-aware).
+            //      Note that this path can return a stale or poisoned upstream RT inherited from
+            //      a sibling row whose status=ACTIVE only reflects MoP's local belief, not the
+            //      IdP's truth — see GoogleWorkspaceResource.lookupExistingUpstreamRefresh for
+            //      the inheritance probe that mitigates that for the consent-time write path.
+            // For promoted providers (okta + the 12 google-workspace providers) the canonical
+            // upstream RT is in the L2 mcp-oauth-proxy-upstream-tokens table; check there first.
+            // For native-IdP providers (slack/github/atlassian/embrace) the L2 row is intentionally
+            // absent and we go straight to the bare session marker.
             String upstreamRefresh = firstNonEmpty(
-                () -> AudienceConstants.PROVIDER_OKTA.equals(provider)
+                () -> upstreamProviderClassifier.isUpstreamPromoted(provider)
                         ? upstreamRefreshService.getCurrentUpstream(providerUserId)
                                 .map(rec -> rec.encryptedOktaRefreshToken())
                                 .filter(rt -> rt != null && !rt.isEmpty())
                                 .orElse(null)
                         : null,
-                () -> Optional.ofNullable(authorizerService.getUserToken(subject, provider))
-                                .map(TokenWrapper::refreshToken)
-                                .orElse(null),
-                () -> refreshTokenService.getUpstreamRefreshToken(subject, provider)
+                () -> readBareSessionMarkerUpstreamRt(subject, provider)
             );
+            if (upstreamRefresh == null || upstreamRefresh.isEmpty()) {
+                upstreamRefresh = refreshTokenService.getUpstreamRefreshToken(subject, provider);
+            }
 
-            if (AudienceConstants.PROVIDER_OKTA.equals(provider) && upstreamRefresh != null && !upstreamRefresh.isEmpty()) {
+            // Seed L2 for any promoted provider whose authorize callback just delivered a fresh
+            // upstream RT. Idempotent under contention: storeInitialUpstreamToken skips the write
+            // when an ACTIVE row already carries the same RT, and re-seeds only when the existing
+            // row is non-ACTIVE (revoked) so the user-driven re-consent recovers cleanly.
+            if (upstreamProviderClassifier.isUpstreamPromoted(provider)
+                    && upstreamRefresh != null && !upstreamRefresh.isEmpty()) {
                 upstreamRefreshService.storeInitialUpstreamToken(providerUserId, upstreamRefresh);
             }
+            // The audience label (declared above with provider, since we need it in the ERROR
+            // logs in the catch) is the resource-side identity (Splunk, Glean, Grafana, ...). It
+            // does NOT change the provider column (which remains the IdP — okta, slack, github,
+            // etc.). It is recorded purely for diagnostics so that, when scanning the
+            // refresh-tokens table by (userId, provider=okta), an operator can tell which audience
+            // each Okta-rooted family was minted for. For non-Okta IdPs where audience equals
+            // provider, we still record it to keep the column populated and uniform; absence
+            // signals an unmapped resource (or the resource didn't declare audience yet).
+            // For any promoted provider (okta + the 12 google-workspace providers) the canonical
+            // upstream RT lives in L2; do NOT also write it to the legacy
+            // encrypted_upstream_refresh_token column on the new MoP refresh-token row. Writing
+            // it there would re-introduce the sibling-inheritance trap that motivated the L2
+            // promotion (Bug #1) — a stale "ACTIVE" sibling row's column gets read on the next
+            // /token even though the L2 row has the truth.
             String mopRefresh = refreshTokenService.store(
                     authCode.getSubject(),
                     request.getClientId(),
                     provider,
                     authCode.getSubject(),
-                    AudienceConstants.PROVIDER_OKTA.equals(provider) ? null : upstreamRefresh
+                    upstreamProviderClassifier.isUpstreamPromoted(provider) ? null : upstreamRefresh,
+                    audience
             );
             if (mopRefresh == null) {
-                log.warn("RefreshTokenService.store returned null; returning token response without refresh");
+                // store() returned null — the implementation chose not to persist (e.g. backend
+                // unreachable, conditional check failed). The client gets a usable access_token
+                // but no refresh_token, which silently degrades sliding-session behavior; raise
+                // it to ERROR so operators see it in dashboards. Response stays 200 because the
+                // login itself succeeded; only the durability of the refresh path was lost.
+                log.error("RefreshTokenService.store returned null; refresh_token will be omitted from response. "
+                        + "subject={} clientId={} provider={} audience={} resource={} — "
+                        + "client will not be able to slide its session and must re-login when access_token expires.",
+                        authCode.getSubject(), request.getClientId(), provider, audience, resourceForMetrics);
                 return recordTokenGrant(resourceForMetrics, "authorization_code", t0, oauthClient, Response.ok(tokenResponse).build());
             }
             TokenResponse withRefresh = new TokenResponse(
@@ -274,7 +383,17 @@ public class TokenResource {
             log.info("Attached MOP refresh token to authorization_code token response for subject={} clientId={}", authCode.getSubject(), request.getClientId());
             return recordTokenGrant(resourceForMetrics, "authorization_code", t0, oauthClient, Response.ok(withRefresh).build());
         } catch (Exception e) {
-            log.warn("Could not create MOP refresh token; returning token response without refresh: {}", e.getMessage());
+            // Same contract as the null-return branch above: response stays 200 (the access_token
+            // is valid and the user can use the resource), but the refresh path is silently lost.
+            // This is the symptom that masked the AWS DBE "No Crypto Action configured" bug for
+            // ~7 minutes in stage on 2026-05-03 — the WARN was buried in normal traffic and the
+            // exception class/cause were dropped (only e.getMessage() was logged). Promote to
+            // ERROR with the full stack trace and the offending exception class so the next
+            // regression of this kind is loud and self-explanatory in ops dashboards.
+            log.error("Could not create MOP refresh token; refresh_token will be omitted from response. "
+                            + "subject={} clientId={} provider={} audience={} resource={} cause={}: {}",
+                    authCode.getSubject(), request.getClientId(), provider, audience, resourceForMetrics,
+                    e.getClass().getName(), e.getMessage(), e);
             return recordTokenGrant(resourceForMetrics, "authorization_code", t0, oauthClient, Response.ok(tokenResponse).build());
         }
     }
@@ -416,12 +535,52 @@ public class TokenResource {
                 }
                 String providerUserId = rotateSourceRecord.providerUserId();
                 RefreshAndTokenResult refreshResult;
-                if (providerUserId != null && providerUserId.startsWith(AudienceConstants.PROVIDER_OKTA + "#")) {
-                    upstreamRefreshService.ensureMigratedFromLegacyIfNeeded(providerUserId, rotateSourceRecord);
+                // Promoted providers (okta + the 12 google-workspace providers) all go through
+                // the centralized L2 upstream-refresh path. Native-IdP providers (slack, github,
+                // atlassian, embrace, ...) keep using the legacy per-row upstream RT.
+                boolean providerPromoted = upstreamProviderClassifier.isUpstreamPromoted(provider);
+                if (providerPromoted) {
+                    if (providerUserId == null || !providerUserId.contains("#")) {
+                        // Defensive: the rotated-source row was written by an old code path that
+                        // did not include a provider#sub key. Reconstruct it so the L2 lookup
+                        // works. This branch should be unreachable for newly minted rows.
+                        providerUserId = provider + "#" + userId;
+                    }
+                    // Read-side legacy migration. Runs for ANY promoted provider, not just Okta:
+                    // the L2 promotion was rolled out *after* Google families were already in
+                    // flight under the legacy per-row upstream-RT model. Without this seed step
+                    // the very first refresh_token /token call after deployment would find no
+                    // L2 row and throw "no upstream RT — re-authentication required", revoking
+                    // an otherwise healthy family. Idempotent: storeInitialUpstreamToken inside
+                    // ensureMigratedFromLegacyIfNeeded short-circuits when an active row already
+                    // exists with the same RT.
+                    upstreamRefreshService.ensureMigratedFromLegacyIfNeeded(
+                            providerUserId, provider, rotateSourceRecord);
                     try {
-                        var oktaTokens = upstreamRefreshService.refreshUpstream(providerUserId);
+                        UpstreamRefreshResponse upstream = upstreamRefreshService.refreshUpstream(
+                                providerUserId, provider, request.getClientId());
+                        // Reuse completeRefreshWithOktaTokens for every promoted provider — its
+                        // Okta-specific work (OktaSessionCache.put) is gated on provider==okta and
+                        // the rest of the body (tokenStore write, downstream resource exchange,
+                        // bearer index repop) is provider-agnostic. We adapt the response into an
+                        // OktaTokens shape so the existing call signature is unchanged.
+                        var adapted = new io.athenz.mop.service.OktaTokens(
+                                upstream.accessToken(),
+                                upstream.refreshToken(),
+                                upstream.idToken(),
+                                (int) Math.min(Integer.MAX_VALUE, Math.max(0L, upstream.expiresInSeconds())));
                         refreshResult = authorizerService.completeRefreshWithOktaTokens(
-                                userId, provider, request.getResource(), oktaTokens, request.getClientId());
+                                userId, provider, request.getResource(), adapted, request.getClientId());
+                        // After a successful promoted-provider refresh, nullify any legacy
+                        // encrypted_upstream_refresh_token columns lingering on per-MCP-client
+                        // rows. The L2 row is now the source of truth and a stale legacy column
+                        // would re-introduce the sibling-inheritance trap that motivated the
+                        // L2 promotion. No-op on the Okta path because Okta rows already write
+                        // null into that column on rotation; here we paint over any historical
+                        // residue once per (user, provider) pair.
+                        if (refreshResult != null && !AudienceConstants.PROVIDER_OKTA.equals(provider)) {
+                            refreshTokenService.nullifyLegacyUpstreamColumnForUserProvider(userId, provider);
+                        }
                     } catch (IllegalStateException e) {
                         log.warn("refresh_token grant: upstream refresh lock not acquired: {}", e.getMessage());
                         return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient,
@@ -430,10 +589,6 @@ public class TokenResource {
                                                 "Temporarily unavailable; please retry"))
                                         .build());
                     } catch (UpstreamRefreshTransientException e) {
-                        // Cross-region replication lag (peer rotated the upstream token; local pod
-                        // hasn't seen it yet even after a brief in-process wait). The user's MoP
-                        // refresh-token family is still valid — do NOT revoke. Return 401 so the
-                        // client retries; the next attempt typically lands after replication.
                         log.warn("refresh_token grant: transient upstream refresh failure (replication lag): {}", e.getMessage());
                         return recordTokenGrant(resourceUri, "refresh_token", t0, oauthClient,
                                 Response.status(Response.Status.UNAUTHORIZED)
@@ -617,6 +772,34 @@ public class TokenResource {
             if (value != null && !value.isEmpty()) {
                 return value;
             }
+        }
+        return null;
+    }
+
+    /**
+     * Read the upstream refresh token from the bare {@code (key, provider)} session marker row
+     * that {@code AuthorizerService.storeTokens} writes to {@code mcp-oauth-proxy-tokens} during
+     * the IdP callback (e.g. {@code GoogleWorkspaceResource.authorize}). This row carries the
+     * most-recently-issued upstream RT for this {@code (provider, user)} pair regardless of
+     * whether any MoP refresh-tokens row exists yet, and is the only seed source that survives
+     * a fully-cleared family table.
+     *
+     * <p>The session marker is keyed by {@code lookupKey} (the value returned by
+     * {@code getUsername} for the provider, often but not always equal to the OAuth subject).
+     * The {@code /token} request only carries the OAuth {@code subject} from the auth code, so
+     * we read by {@code subject} first; for providers whose username claim differs, the
+     * fallback caller should pass the {@code lookupKey} variant on a subsequent call. In
+     * practice for Google {@code subject == lookupKey} since the username claim is the Google
+     * subject. Returns {@code null} for Okta (which uses the dedicated L2 upstream-tokens
+     * table) and when no marker row is found.
+     */
+    private String readBareSessionMarkerUpstreamRt(String key, String provider) {
+        if (AudienceConstants.PROVIDER_OKTA.equals(provider) || key == null || provider == null) {
+            return null;
+        }
+        TokenWrapper marker = authorizerService.getUserToken(key, provider);
+        if (marker != null && marker.refreshToken() != null && !marker.refreshToken().isEmpty()) {
+            return marker.refreshToken();
         }
         return null;
     }

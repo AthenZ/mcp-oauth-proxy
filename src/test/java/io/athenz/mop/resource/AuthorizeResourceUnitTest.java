@@ -22,6 +22,7 @@ import io.athenz.mop.service.AuthorizationCodeService;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RedirectUriValidator;
+import io.athenz.mop.service.RefreshTokenService;
 import io.athenz.mop.service.UpstreamRefreshService;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
 import io.quarkus.oidc.AccessTokenCredential;
@@ -83,6 +84,9 @@ class AuthorizeResourceUnitTest {
     private UpstreamRefreshService upstreamRefreshService;
 
     @Mock
+    private RefreshTokenService refreshTokenService;
+
+    @Mock
     private OauthProxyMetrics oauthProxyMetrics;
 
     @Mock
@@ -98,6 +102,7 @@ class AuthorizeResourceUnitTest {
         authorizeResource.redirectUriValidator = redirectUriValidator;
         authorizeResource.configService = configService;
         authorizeResource.upstreamRefreshService = upstreamRefreshService;
+        authorizeResource.refreshTokenService = refreshTokenService;
         authorizeResource.oauthProxyMetrics = oauthProxyMetrics;
         authorizeResource.userInfo = userInfo;
         authorizeResource.host = "mop.example.com";
@@ -132,7 +137,9 @@ class AuthorizeResourceUnitTest {
         when(userInfo.getSubject()).thenReturn(SUBJECT);
         when(userInfo.get(eq(USERNAME_CLAIM))).thenReturn(USERNAME);
         when(upstreamRefreshService.getCurrentUpstream(anyString())).thenReturn(Optional.empty());
-        when(authorizerService.getUserToken(anyString(), anyString())).thenReturn(null);
+        // computeRefreshToStore now reads the canonical upstream RT from refresh-tokens; null
+        // means "no existing RT to reuse, store the OIDC-supplied one verbatim".
+        when(refreshTokenService.getUpstreamRefreshToken(anyString(), anyString())).thenReturn(null);
         when(authorizationCodeService.generateCode(anyString(), anyString(), anyString(), any(),
                 anyString(), anyString(), anyString(), any())).thenReturn("auth-code-123");
 
@@ -173,7 +180,7 @@ class AuthorizeResourceUnitTest {
         when(userInfo.getSubject()).thenReturn(SUBJECT);
         when(userInfo.get(eq(USERNAME_CLAIM))).thenReturn(USERNAME);
         when(upstreamRefreshService.getCurrentUpstream(anyString())).thenReturn(Optional.empty());
-        when(authorizerService.getUserToken(anyString(), anyString())).thenReturn(null);
+        when(refreshTokenService.getUpstreamRefreshToken(anyString(), anyString())).thenReturn(null);
         when(authorizationCodeService.generateCode(anyString(), anyString(), anyString(), any(),
                 anyString(), anyString(), anyString(), any())).thenReturn("auth-code-null");
 

@@ -30,4 +30,19 @@ public interface UpstreamTokenConfig {
 
     @WithDefault("7")
     int ttlBufferDays();
+    @WithName("revoked-retention-days")
+    @WithDefault("14")
+    int revokedRetentionDays();
+    
+    @WithName("l2-at-reuse-grace-seconds")
+    @WithDefault("30")
+    long l2AtReuseGraceSeconds();
+
+    @WithName("l2-at-reuse-min-remaining-seconds")
+    @WithDefault("60")
+    long l2AtReuseMinRemainingSeconds();
+
+    @WithName("replication-wait-millis")
+    @WithDefault("750")
+    long replicationWaitMillis();
 }

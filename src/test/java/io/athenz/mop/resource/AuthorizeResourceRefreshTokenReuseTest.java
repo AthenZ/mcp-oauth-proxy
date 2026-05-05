@@ -15,10 +15,10 @@
  */
 package io.athenz.mop.resource;
 
-import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.model.UpstreamTokenRecord;
 import io.athenz.mop.service.AudienceConstants;
 import io.athenz.mop.service.AuthorizerService;
+import io.athenz.mop.service.RefreshTokenService;
 import io.athenz.mop.service.UpstreamRefreshService;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,8 +34,14 @@ import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for AuthorizeResource refresh token reuse: when the user already has an active
- * Okta refresh token (e.g. from a previous login for another resource), we reuse it instead of
- * overwriting with the new one from the current OIDC response.
+ * upstream refresh token (e.g. from a previous login for another resource), we reuse it instead
+ * of overwriting with the new one from the current OIDC response.
+ *
+ * <p>Reuse now reads the canonical upstream RT from {@code mcp-oauth-proxy-refresh-tokens} via
+ * {@link RefreshTokenService#getUpstreamRefreshToken(String, String)}; the legacy per-client
+ * {@code (clientId#userId, provider)} row in {@code mcp-oauth-proxy-tokens} is no longer
+ * written. Expiry / empty filtering is handled inside {@code getUpstreamRefreshToken}'s
+ * {@code resolveBestUpstream} path, so this resource just trusts a non-empty return value.</p>
  */
 @ExtendWith(MockitoExtension.class)
 class AuthorizeResourceRefreshTokenReuseTest {
@@ -53,6 +59,9 @@ class AuthorizeResourceRefreshTokenReuseTest {
     @Mock
     private UpstreamRefreshService upstreamRefreshService;
 
+    @Mock
+    private RefreshTokenService refreshTokenService;
+
     private AuthorizeResource authorizeResource;
 
     @BeforeEach
@@ -60,12 +69,13 @@ class AuthorizeResourceRefreshTokenReuseTest {
         authorizeResource = new AuthorizeResource();
         authorizeResource.authorizerService = authorizerService;
         authorizeResource.upstreamRefreshService = upstreamRefreshService;
+        authorizeResource.refreshTokenService = refreshTokenService;
         authorizeResource.providerDefault = PROVIDER;
     }
 
     @Test
     void computeRefreshToStore_whenNoExistingToken_returnsOidcRefreshToken() {
-        when(authorizerService.getUserToken(eq(LOOKUP_KEY), eq(PROVIDER))).thenReturn(null);
+        when(refreshTokenService.getUpstreamRefreshToken(eq(LOOKUP_KEY), eq(PROVIDER))).thenReturn(null);
 
         String result = authorizeResource.computeRefreshToStore(LOOKUP_KEY, NEW_FROM_OIDC);
 
@@ -74,7 +84,7 @@ class AuthorizeResourceRefreshTokenReuseTest {
 
     @Test
     void computeRefreshToStore_whenNoExistingToken_andOidcRefreshNull_returnsNull() {
-        when(authorizerService.getUserToken(eq(LOOKUP_KEY), eq(PROVIDER))).thenReturn(null);
+        when(refreshTokenService.getUpstreamRefreshToken(eq(LOOKUP_KEY), eq(PROVIDER))).thenReturn(null);
 
         String result = authorizeResource.computeRefreshToStore(LOOKUP_KEY, null);
 
@@ -83,15 +93,8 @@ class AuthorizeResourceRefreshTokenReuseTest {
 
     @Test
     void computeRefreshToStore_whenExistingActiveToken_returnsExistingRefresh() {
-        long ttlInFuture = System.currentTimeMillis() / 1000 + 3600;
-        TokenWrapper existing = new TokenWrapper(
-                LOOKUP_KEY,
-                PROVIDER,
-                "id-token",
-                "access-token",
-                EXISTING_REFRESH,
-                ttlInFuture);
-        when(authorizerService.getUserToken(eq(LOOKUP_KEY), eq(PROVIDER))).thenReturn(existing);
+        when(refreshTokenService.getUpstreamRefreshToken(eq(LOOKUP_KEY), eq(PROVIDER)))
+                .thenReturn(EXISTING_REFRESH);
 
         String result = authorizeResource.computeRefreshToStore(LOOKUP_KEY, NEW_FROM_OIDC);
 
@@ -99,66 +102,8 @@ class AuthorizeResourceRefreshTokenReuseTest {
     }
 
     @Test
-    void computeRefreshToStore_whenExistingTokenExpired_returnsOidcRefreshToken() {
-        long ttlInPast = System.currentTimeMillis() / 1000 - 60;
-        TokenWrapper existing = new TokenWrapper(
-                LOOKUP_KEY,
-                PROVIDER,
-                "id-token",
-                "access-token",
-                EXISTING_REFRESH,
-                ttlInPast);
-        when(authorizerService.getUserToken(eq(LOOKUP_KEY), eq(PROVIDER))).thenReturn(existing);
-
-        String result = authorizeResource.computeRefreshToStore(LOOKUP_KEY, NEW_FROM_OIDC);
-
-        assertEquals(NEW_FROM_OIDC, result);
-    }
-
-    @Test
-    void computeRefreshToStore_whenExistingTokenHasNullRefresh_returnsOidcRefreshToken() {
-        long ttlInFuture = System.currentTimeMillis() / 1000 + 3600;
-        TokenWrapper existing = new TokenWrapper(
-                LOOKUP_KEY,
-                PROVIDER,
-                "id-token",
-                "access-token",
-                null,
-                ttlInFuture);
-        when(authorizerService.getUserToken(eq(LOOKUP_KEY), eq(PROVIDER))).thenReturn(existing);
-
-        String result = authorizeResource.computeRefreshToStore(LOOKUP_KEY, NEW_FROM_OIDC);
-
-        assertEquals(NEW_FROM_OIDC, result);
-    }
-
-    @Test
-    void computeRefreshToStore_whenExistingTokenHasEmptyRefresh_returnsOidcRefreshToken() {
-        long ttlInFuture = System.currentTimeMillis() / 1000 + 3600;
-        TokenWrapper existing = new TokenWrapper(
-                LOOKUP_KEY,
-                PROVIDER,
-                "id-token",
-                "access-token",
-                "",
-                ttlInFuture);
-        when(authorizerService.getUserToken(eq(LOOKUP_KEY), eq(PROVIDER))).thenReturn(existing);
-
-        String result = authorizeResource.computeRefreshToStore(LOOKUP_KEY, NEW_FROM_OIDC);
-
-        assertEquals(NEW_FROM_OIDC, result);
-    }
-
-    @Test
-    void computeRefreshToStore_whenExistingTokenHasNullTtl_returnsOidcRefreshToken() {
-        TokenWrapper existing = new TokenWrapper(
-                LOOKUP_KEY,
-                PROVIDER,
-                "id-token",
-                "access-token",
-                EXISTING_REFRESH,
-                null);
-        when(authorizerService.getUserToken(eq(LOOKUP_KEY), eq(PROVIDER))).thenReturn(existing);
+    void computeRefreshToStore_whenExistingTokenIsEmpty_returnsOidcRefreshToken() {
+        when(refreshTokenService.getUpstreamRefreshToken(eq(LOOKUP_KEY), eq(PROVIDER))).thenReturn("");
 
         String result = authorizeResource.computeRefreshToStore(LOOKUP_KEY, NEW_FROM_OIDC);
 

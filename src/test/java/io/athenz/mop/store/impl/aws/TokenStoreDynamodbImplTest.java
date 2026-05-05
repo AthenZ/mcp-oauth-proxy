@@ -503,43 +503,21 @@ class TokenStoreDynamodbImplTest {
 
     @Test
     void compositeUserKey_clientIdWithHash_sanitizes() {
-        // Defense-in-depth: DCR registration also rejects '#'; if one slips through, sanitize
-        // by replacing '#' with '_' so split-on-first-'#' still recovers the right (clientId, userId).
         assertEquals("Cur_sor#" + TEST_USER, TokenStoreDynamodbImpl.compositeUserKey("Cur#sor", TEST_USER));
     }
 
     @Test
-    void storeUserToken_withClientId_writesCompositePartitionKey() {
-        PutItemResponse putItemResponse = (PutItemResponse) PutItemResponse.builder()
-                .sdkHttpResponse(mockHttpResponse)
-                .build();
-        when(dynamoDbClient.putItem(any(PutItemRequest.class))).thenReturn(putItemResponse);
-
+    void storeUserToken_withClientId_isNoOp() {
         tokenStore.storeUserToken(TEST_USER, TEST_PROVIDER, "Cursor", testToken);
 
-        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
-        verify(dynamoDbClient).putItem(captor.capture());
-        Map<String, AttributeValue> item = captor.getValue().item();
-        assertEquals("Cursor#" + TEST_USER, item.get(TokenTableAttribute.USER.attr()).s(),
-                "Per-client bearer row's partition key must be '<clientId>#<userId>'");
-        assertEquals(TEST_PROVIDER, item.get(TokenTableAttribute.PROVIDER.attr()).s());
-        assertEquals(testAccessToken, item.get(TokenTableAttribute.ACCESS_TOKEN.attr()).s());
+        verify(dynamoDbClient, org.mockito.Mockito.never()).putItem(any(PutItemRequest.class));
     }
 
     @Test
-    void storeUserToken_withNullClientId_writesBarePartitionKey() {
-        PutItemResponse putItemResponse = (PutItemResponse) PutItemResponse.builder()
-                .sdkHttpResponse(mockHttpResponse)
-                .build();
-        when(dynamoDbClient.putItem(any(PutItemRequest.class))).thenReturn(putItemResponse);
-
+    void storeUserToken_withNullClientId_isNoOp() {
         tokenStore.storeUserToken(TEST_USER, TEST_PROVIDER, (String) null, testToken);
 
-        ArgumentCaptor<PutItemRequest> captor = ArgumentCaptor.forClass(PutItemRequest.class);
-        verify(dynamoDbClient).putItem(captor.capture());
-        Map<String, AttributeValue> item = captor.getValue().item();
-        assertEquals(TEST_USER, item.get(TokenTableAttribute.USER.attr()).s(),
-                "Null clientId must degrade to bare userId partition key");
+        verify(dynamoDbClient, org.mockito.Mockito.never()).putItem(any(PutItemRequest.class));
     }
 
     @Test

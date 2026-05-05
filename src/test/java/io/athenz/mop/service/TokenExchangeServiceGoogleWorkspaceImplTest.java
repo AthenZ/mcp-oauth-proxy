@@ -15,15 +15,10 @@
  */
 package io.athenz.mop.service;
 
-import com.nimbusds.oauth2.sdk.ParseException;
-import com.nimbusds.oauth2.sdk.TokenRequest;
-import com.nimbusds.oauth2.sdk.TokenResponse;
-import com.nimbusds.oauth2.sdk.http.HTTPResponse;
 import io.athenz.mop.model.AuthResult;
 import io.athenz.mop.model.AuthorizationResultDO;
 import io.athenz.mop.model.TokenExchangeDO;
 import io.athenz.mop.model.TokenWrapper;
-import io.athenz.mop.secret.K8SSecretsProvider;
 import io.athenz.mop.telemetry.MetricsRegionProvider;
 import io.athenz.mop.telemetry.OauthProviderLabel;
 import io.athenz.mop.telemetry.OauthProxyMetrics;
@@ -37,23 +32,23 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
-import java.io.IOException;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.when;
 
+/**
+ * Tests for the slimmed-down {@link TokenExchangeServiceGoogleWorkspaceImpl}.
+ *
+ * <p>The Google upstream-refresh HTTP call has moved to
+ * {@link GoogleWorkspaceUpstreamRefreshClient}; the legacy
+ * {@code refreshWithUpstreamToken} on this class is now an unreachable safety stub that logs an
+ * error and returns null. The remaining responsibilities — provider-label management,
+ * resource-authorization-server pass-through, and unsupported-grant guards — are exercised here.
+ */
 class TokenExchangeServiceGoogleWorkspaceImplTest {
-
-    @Mock
-    private K8SSecretsProvider k8SSecretsProvider;
-
-    @Mock
-    private TokenClient tokenClient;
 
     @Mock
     private OauthProxyMetrics oauthProxyMetrics;
@@ -78,8 +73,6 @@ class TokenExchangeServiceGoogleWorkspaceImplTest {
         when(telemetryProviderResolver.fromResourceUri(any())).thenReturn("google-cloud-platform");
         when(telemetryRequestContext.oauthClient()).thenReturn("unknown");
         when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
-        tokenExchangeService.clientId = "test-client-id";
-        tokenExchangeService.clientSecretKey = "google-client-secret";
         tokenExchangeService.setProviderLabel(OauthProviderLabel.GOOGLE_CLOUD_PLATFORM);
 
         tokenWrapper = new TokenWrapper(
@@ -126,80 +119,17 @@ class TokenExchangeServiceGoogleWorkspaceImplTest {
         assertEquals("Not implemented yet", exception.getMessage());
     }
 
+    /**
+     * After the L2 promotion, the legacy direct refresh path is unreachable for promoted Google
+     * providers and exists only as a safety stub. It must always return null and never call out
+     * to Google. The test asserts the contract for both null and non-null inputs so any future
+     * change that re-introduces a direct call will fail this test.
+     */
     @Test
-    void testRefreshWithUpstreamToken_returnsNullWhenTokenNull() {
+    void testRefreshWithUpstreamToken_alwaysReturnsNullPostL2Promotion() {
         assertNull(tokenExchangeService.refreshWithUpstreamToken(null));
-    }
-
-    @Test
-    void testRefreshWithUpstreamToken_returnsNullWhenTokenEmpty() {
         assertNull(tokenExchangeService.refreshWithUpstreamToken(""));
-        assertNull(tokenExchangeService.refreshWithUpstreamToken("   "));
-    }
-
-    @Test
-    void testRefreshWithUpstreamToken_returnsNullWhenClientIdNotConfigured() {
-        tokenExchangeService.clientId = "";
-        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
-    }
-
-    @Test
-    void testRefreshWithUpstreamToken_returnsNullWhenClientSecretKeyNotConfigured() {
-        tokenExchangeService.clientSecretKey = "";
-        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
-    }
-
-    @Test
-    void testRefreshWithUpstreamToken_returnsNullWhenCredentialsNull() {
-        when(k8SSecretsProvider.getCredentials(null)).thenReturn(null);
-        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
-    }
-
-    @Test
-    void testRefreshWithUpstreamToken_returnsNullWhenSecretMissingForKey() {
-        when(k8SSecretsProvider.getCredentials(null)).thenReturn(Collections.emptyMap());
-        assertNull(tokenExchangeService.refreshWithUpstreamToken("valid-refresh-token"));
-    }
-
-    @Test
-    void testRefreshWithUpstreamToken_success_returnsTokenWrapper() throws ParseException, IOException {
-        Map<String, String> credentials = new HashMap<>();
-        credentials.put("google-client-secret", "secret-value");
-        when(k8SSecretsProvider.getCredentials(null)).thenReturn(credentials);
-
-        String jsonSuccess = "{\"access_token\":\"new-workspace-access\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"new-workspace-refresh\"}";
-        HTTPResponse mockHttpResponse = new HTTPResponse(200);
-        mockHttpResponse.setContentType("application/json");
-        mockHttpResponse.setBody(jsonSuccess);
-        TokenResponse mockTokenResponse = TokenResponse.parse(mockHttpResponse);
-        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(mockTokenResponse);
-
-        TokenWrapper result = tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token");
-
-        assertNotNull(result);
-        assertEquals("new-workspace-access", result.accessToken());
-        assertEquals("new-workspace-refresh", result.refreshToken());
-        assertEquals(3600L, result.ttl());
-        verify(tokenClient, times(1)).execute(any(TokenRequest.class));
-    }
-
-    @Test
-    void testRefreshWithUpstreamToken_errorResponse_returnsNull() throws ParseException, IOException {
-        Map<String, String> credentials = new HashMap<>();
-        credentials.put("google-client-secret", "secret-value");
-        when(k8SSecretsProvider.getCredentials(null)).thenReturn(credentials);
-
-        String jsonError = "{\"error\":\"invalid_grant\",\"error_description\":\"Token expired\"}";
-        HTTPResponse mockHttpResponse = new HTTPResponse(400);
-        mockHttpResponse.setContentType("application/json");
-        mockHttpResponse.setBody(jsonError);
-        TokenResponse mockTokenResponse = TokenResponse.parse(mockHttpResponse);
-        when(tokenClient.execute(any(TokenRequest.class))).thenReturn(mockTokenResponse);
-
-        TokenWrapper result = tokenExchangeService.refreshWithUpstreamToken("upstream-refresh-token");
-
-        assertNull(result);
-        verify(tokenClient, times(1)).execute(any(TokenRequest.class));
+        assertNull(tokenExchangeService.refreshWithUpstreamToken("any-non-empty-rt"));
     }
 
     @Test

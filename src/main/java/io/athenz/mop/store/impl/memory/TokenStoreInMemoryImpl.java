@@ -51,23 +51,8 @@ public class TokenStoreInMemoryImpl implements TokenStore, AuthCodeStore, TokenS
 
     @Override
     public void storeUserToken(String user, String provider, String clientId, TokenWrapper token) {
-        String partitionKey = compositeUserKey(clientId, user);
-        // Mirror the DynamoDB backend's read-side behavior: the wrapper held in cache carries the
-        // bare userId in {@code key} and the clientId in {@code clientId}, so /userinfo can surface
-        // the {@code mcp_client_id} claim and downstream (userId, provider) lookups stay unchanged.
-        TokenWrapper enriched = new TokenWrapper(
-                token.key(),
-                token.provider(),
-                token.idToken(),
-                token.accessToken(),
-                token.refreshToken(),
-                token.ttl(),
-                clientId);
-        tokenCache.as(CaffeineCache.class).put(partitionKey, CompletableFuture.completedFuture(enriched));
-        if (enriched.accessToken() != null) {
-            String hash = JwtUtils.hashAccessToken(enriched.accessToken());
-            hashToUserMap.put(hash, partitionKey);
-        }
+        log.debug("storeUserToken(clientId): no-op for user={} provider={} clientId={} (bearer-index handles per-client lookup)",
+                user, provider, clientId);
     }
 
     @Override

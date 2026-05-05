@@ -74,7 +74,8 @@ public final class RefreshTokenStoreDynamodbHelpers {
 
     /**
      * Query {@link RefreshTableConstants#GSI_USER_PROVIDER} for a (userId, provider) pair and
-     * return the best non-revoked, unexpired record (highest issued_at).
+     * return the best non-revoked, unexpired record (highest issued_at) <em>that actually carries
+     * an upstream refresh token</em>.
      *
      * <p>The {@code encrypted_upstream_refresh_token} attribute is configured for client-side
      * encryption (see {@code DynamodbClientProvider#buildRefreshTokensTableEncryptionConfig}).
@@ -82,8 +83,23 @@ public final class RefreshTokenStoreDynamodbHelpers {
      * {@code PutItem} and similar base-table operations; results returned from a GSI {@code Query}
      * carry the raw ciphertext as a Binary attribute, which our String-typed marshalling
      * ({@link #getS}) reads back as {@code null}. We therefore use the GSI to identify the
-     * winning row by (status, expiry, issued_at) and then re-fetch that row by primary key on
-     * the base table so the encryption interceptor can decrypt the upstream refresh token.
+     * winning row by (status, expiry, has-legacy-RT, issued_at) and then re-fetch that row by
+     * primary key on the base table so the encryption interceptor can decrypt the upstream
+     * refresh token.
+     *
+     * <p>Why the "has-legacy-RT" filter matters: post-L2-promotion (okta + the 12 google-workspace
+     * providers), every newly-issued MoP refresh-token row for a promoted provider is written
+     * with {@code encrypted_upstream_refresh_token} explicitly NULL — the canonical upstream RT
+     * lives in the {@code mcp-oauth-proxy-upstream-tokens} (L2) table. Without this filter the
+     * rank-by-{@code issued_at} loop would pick a brand-new L2-only row whose legacy column is
+     * null, return it to the caller, and the caller would interpret that as "no usable upstream
+     * RT" — even when older sibling rows still carry valid pre-rollout legacy ciphertext that
+     * could rescue the request. The filter makes this method's contract "give me the newest row
+     * I can <em>actually</em> seed an upstream-RT lookup from", which is what every call site
+     * wants. Inspection of the raw {@code B} attribute is required because GSI projections do not
+     * trigger DBE decryption, so {@code record.encryptedUpstreamRefreshToken()} (a String view of
+     * a Binary attribute) is null on every GSI item regardless of whether the underlying row
+     * actually carries a token.
      *
      * <p>Returns {@code null} when no row qualifies.
      */
@@ -112,6 +128,14 @@ public final class RefreshTokenStoreDynamodbHelpers {
             if (RefreshTableConstants.STATUS_REVOKED.equals(record.status())) {
                 continue;
             }
+            // Skip rows that don't carry an upstream RT in the legacy column. Inspect the raw
+            // Binary/String attribute on the GSI item directly: itemToRecord() reads via getS()
+            // which returns null for a Binary attribute, so we cannot rely on the decoded String
+            // view here. Test-only writers may use the String form; production writers always
+            // use Binary via DBE, so we accept either.
+            if (!hasLegacyUpstreamRt(item)) {
+                continue;
+            }
             if (best == null || record.issuedAt() > best.issuedAt()) {
                 best = record;
             }
@@ -130,6 +154,20 @@ public final class RefreshTokenStoreDynamodbHelpers {
             }
         }
         return best;
+    }
+
+    private static boolean hasLegacyUpstreamRt(Map<String, AttributeValue> item) {
+        AttributeValue v = item.get(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr());
+        if (v == null) {
+            return false;
+        }
+        if (v.b() != null && v.b().asByteArray().length > 0) {
+            return true;
+        }
+        if (v.s() != null && !v.s().isEmpty()) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -184,6 +222,7 @@ public final class RefreshTokenStoreDynamodbHelpers {
                 getS(item, RefreshTableAttribute.USER_ID.attr()),
                 getS(item, RefreshTableAttribute.CLIENT_ID.attr()),
                 getS(item, RefreshTableAttribute.PROVIDER.attr()),
+                getS(item, RefreshTableAttribute.AUDIENCE.attr()),
                 getS(item, RefreshTableAttribute.PROVIDER_SUBJECT.attr()),
                 getS(item, RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr()),
                 getS(item, RefreshTableAttribute.STATUS.attr()),

@@ -39,8 +39,21 @@ public class DataStoreProducer {
     @Any
     Instance<TokenStoreAsync> tokenStoresAsync;
 
+    @Inject
+    @Any
+    Instance<BearerIndexStore> bearerIndexStores;
+
     @ConfigProperty(name = "server.token-store.implementation", defaultValue = "enterprise")
     String storeImplementation;
+
+    /**
+     * Implementation selector for the new {@code mcp-oauth-proxy-bearer-index} store. Mirrors
+     * {@link #storeImplementation}'s {@code memory|enterprise} switch but lives behind its own
+     * property so the dev profile (memory) and prod/stage (enterprise) can be configured
+     * independently of the existing tokens store implementation.
+     */
+    @ConfigProperty(name = "server.bearer-index.implementation", defaultValue = "enterprise")
+    String bearerIndexImplementation;
 
     @Produces
     public TokenStore selectTokenStore() {
@@ -77,6 +90,18 @@ public class DataStoreProducer {
                 return tokenStoresAsync.select(new AnnotationLiteral<EnterpriseStoreQualifier>() {}).get();
             default:
                 throw new RuntimeException("Unknown async token store implementation: " + storeImplementation);
+        }
+    }
+
+    @Produces
+    public BearerIndexStore selectBearerIndexStore() {
+        switch (bearerIndexImplementation) {
+            case "memory":
+                return bearerIndexStores.select(new AnnotationLiteral<MemoryStoreQualifier>() {}).get();
+            case "enterprise":
+                return bearerIndexStores.select(new AnnotationLiteral<EnterpriseStoreQualifier>() {}).get();
+            default:
+                throw new RuntimeException("Unknown bearer index store implementation: " + bearerIndexImplementation);
         }
     }
 }

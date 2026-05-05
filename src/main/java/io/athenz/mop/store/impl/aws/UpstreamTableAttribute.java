@@ -17,6 +17,16 @@ package io.athenz.mop.store.impl.aws;
 
 /**
  * DynamoDB attribute names for {@code mcp-oauth-proxy-upstream-tokens} (partition key only).
+ *
+ * <p>The original table was Okta-only; the {@code encrypted_okta_refresh_token} attribute name
+ * is now used for any promoted provider's canonical RT (Google Workspace today). The name is
+ * misleading but renaming requires a cross-region DBE schema migration we do not want to
+ * couple with the L2 promotion change.
+ *
+ * <p>The {@code LAST_MINTED_*} attributes stage the most-recently-minted access token so a
+ * second client arriving at the L2 lock within a short grace window can reuse it without
+ * issuing a fresh upstream refresh. They are written atomically alongside the rotated RT in
+ * {@link UpstreamTokenStoreDynamoDbImpl#updateWithVersionCheck}.
  */
 public enum UpstreamTableAttribute {
     PROVIDER_USER_ID("provider_user_id"),
@@ -25,7 +35,14 @@ public enum UpstreamTableAttribute {
     VERSION("version"),
     TTL("ttl"),
     CREATED_AT("created_at"),
-    UPDATED_AT("updated_at");
+    UPDATED_AT("updated_at"),
+    STATUS("status"),
+    REVOKED_AT("revoked_at"),
+    REVOKED_REASON("revoked_reason"),
+    ROTATION_COUNT("rotation_count"),
+    LAST_MINTED_ACCESS_TOKEN("last_minted_access_token"),
+    LAST_MINTED_AT_EXPIRES_AT("last_minted_at_expires_at"),
+    LAST_MINTED_AT_ROTATION_VERSION("last_minted_at_rotation_version");
 
     private final String name;
 

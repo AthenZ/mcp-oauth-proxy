@@ -6,6 +6,7 @@
  */
 package io.athenz.mop.telemetry;
 
+import io.athenz.mop.service.UpstreamProviderClassifier;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
@@ -14,11 +15,14 @@ import io.opentelemetry.api.metrics.DoubleHistogram;
 import io.opentelemetry.api.metrics.LongCounter;
 import io.opentelemetry.api.metrics.LongUpDownCounter;
 import io.opentelemetry.api.metrics.Meter;
+import io.opentelemetry.api.metrics.ObservableLongGauge;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongSupplier;
 
 @ApplicationScoped
 public class OauthProxyMetrics {
@@ -44,17 +48,79 @@ public class OauthProxyMetrics {
     private static final AttributeKey<String> ENDPOINT = AttributeKey.stringKey("endpoint");
     private static final AttributeKey<String> OPERATION = AttributeKey.stringKey("operation");
     private static final AttributeKey<String> USERINFO_FAILURE_REASON = AttributeKey.stringKey("userinfo_failure_reason");
+    private static final AttributeKey<String> REASON = AttributeKey.stringKey("reason");
+
+    /**
+     * Outcomes emitted from {@code UpstreamRefreshService.refreshUpstream} when the shared Okta
+     * upstream session cache is enabled. Tracks where a refresh request was satisfied so we can
+     * tune sizes/TTLs and report Okta load reduction.
+     */
+    public static final List<String> UPSTREAM_OKTA_CACHE_OUTCOMES = List.of(
+            "l0_hit", "l1_hit", "hit_post_lock", "miss_refreshed");
+
+    /**
+     * Outcomes emitted from {@code UpstreamRefreshService.refreshUpstreamPromoted} for any
+     * provider that goes through the L2 promotion + per-client L0 cache path (today: every
+     * google-* provider). Same observable shape as {@link #UPSTREAM_OKTA_CACHE_OUTCOMES} but the
+     * counter additionally carries a {@code provider} label so the dashboard can break out
+     * google-docs vs google-slides vs google-drive vs … without aggregating across sub-products.
+     * The {@code reuse_within_grace} outcome is the Path E hit (cached AT staged on the L2 row by
+     * a recently-refreshed sibling client).
+     */
+    public static final List<String> UPSTREAM_PROMOTED_CACHE_OUTCOMES = List.of(
+            "l0_hit", "hit_post_lock", "reuse_within_grace", "miss_refreshed");
+
+    /**
+     * Outcomes emitted from {@code UserInfoResource.serveUserinfo} when the shared Okta upstream
+     * session cache is enabled. {@code stale_claims_served} is the safety-net path: refresh
+     * failed but the cache still held a (now-expired) parseable id_token whose claims are
+     * stable across refreshes — we serve them rather than 401 a request whose upstream-provider
+     * bearer is still valid.
+     */
+    public static final List<String> USERINFO_OKTA_CACHE_OUTCOMES = List.of(
+            "fresh_hit", "expired_refreshed", "absent_refreshed", "stale_claims_served");
+
+    private static final List<String> OKTA_SESSION_CACHE_EVICTION_REASONS = List.of(
+            "size", "expired_write", "explicit", "collected");
 
     private static final List<String> CROSS_REGION_FALLBACK_CALL_SITES = List.of(
             "authorize_user_token",
             "authorizer_get_user_token",
             "userinfo_token_lookup",
             "userinfo_okta_lookup",
+            "userinfo_bearer_lookup",
+            "upstream_okta_cache_lookup",
             "refresh_token_validate",
             "refresh_token_get_pk",
             "refresh_token_get_upstream",
             "upstream_token_get",
             "auth_code_tokens_get");
+
+    /**
+     * Outcomes emitted from the bearer-index lookup path
+     * ({@link io.athenz.mop.service.BearerIndexRegionResolver#resolveByHash(String)} and the
+     * /userinfo read site that consumes it).
+     * <ul>
+     *   <li>{@code hit} — local bearer-index row present and not yet TTL-evicted.</li>
+     *   <li>{@code from_fallback} — local miss but the cross-region peer table had the row
+     *       (Global Tables replication lag).</li>
+     *   <li>{@code miss} — both regions missed; /userinfo will return 401 and the MCP client's
+     *       refresh grant will mint a new bearer.</li>
+     * </ul>
+     */
+    public static final List<String> BEARER_INDEX_LOOKUP_OUTCOMES = List.of(
+            "hit", "from_fallback", "miss");
+
+    /**
+     * Outcomes emitted from every bearer-index write call site (login, token-exchange,
+     * refresh-grant rotation, /userinfo's internal Okta refresh, warm-cache mint).
+     */
+    public static final List<String> BEARER_INDEX_WRITE_OUTCOMES = List.of(
+            "success", "failure");
+
+    public static final List<List<String>> TOKEN_RESOURCE_VALIDATION_OUTCOMES = List.of(
+            List.of("accepted", "known_mapped"),
+            List.of("rejected", "unknown_resource"));
 
     private Meter meter;
     private LongCounter httpErrors4xx;
@@ -81,12 +147,24 @@ public class OauthProxyMetrics {
     private LongCounter authCodeValidationTotal;
     private LongCounter upstreamTokenCasAbortedPeerNewerTotal;
     private LongCounter upstreamTokenReplicationWaitTotal;
+    private LongCounter upstreamOktaRevokedTotal;
     private LongCounter refreshTokenInflightLockTotal;
     private LongCounter refreshTokenInflightCacheServedTotal;
     private LongCounter refreshTokenGraceServedTotal;
     private LongCounter refreshTokenReplayRevokedTotal;
     private DoubleHistogram refreshTokenInflightLockWaitSeconds;
     private DoubleHistogram refreshTokenRotateHoldSeconds;
+    private LongCounter upstreamOktaCacheTotal;
+    private LongCounter upstreamPromotedCacheTotal;
+    private LongCounter userinfoOktaCacheTotal;
+    private LongCounter oktaSessionCacheEvictionsTotal;
+    private LongCounter bearerIndexLookupTotal;
+    private LongCounter bearerIndexWriteTotal;
+    private LongCounter tokenResourceValidationTotal;
+    private final AtomicReference<LongSupplier> oktaSessionCacheSizeSupplier = new AtomicReference<>(() -> 0L);
+    /** Held to keep the asynchronous gauge alive (otherwise it can be GC'd by the SDK). */
+    @SuppressWarnings("unused")
+    private ObservableLongGauge oktaSessionCacheSizeGauge;
 
     @PostConstruct
     void init() {
@@ -140,6 +218,11 @@ public class OauthProxyMetrics {
         upstreamTokenReplicationWaitTotal = meter
                 .counterBuilder("mop_upstream_token_replication_wait_total")
                 .build();
+        upstreamOktaRevokedTotal = meter
+                .counterBuilder("mop_upstream_okta_revoked_total")
+                .setDescription("Centralized Okta upstream-token rows soft-deleted (status flipped from ACTIVE) "
+                        + "after Okta returned invalid_grant. Labels: reason=REVOKED_INVALID_GRANT|...")
+                .build();
 
         refreshTokenInflightLockTotal = meter
                 .counterBuilder("mop_refresh_token_inflight_lock_total")
@@ -169,6 +252,57 @@ public class OauthProxyMetrics {
                 .setDescription("Time the per-RT lock was held (acquire to release) inside RefreshTokenServiceImpl.rotate()")
                 .setExplicitBucketBoundariesAdvice(HISTOGRAM_BUCKETS)
                 .build();
+
+        upstreamOktaCacheTotal = meter
+                .counterBuilder("mop_upstream_okta_cache_total")
+                .setDescription("Outcome of refreshUpstream() when the shared Okta upstream session cache is enabled. "
+                        + "Labels: outcome=l0_hit|l1_hit|hit_post_lock|miss_refreshed.")
+                .build();
+        upstreamPromotedCacheTotal = meter
+                .counterBuilder("mop_upstream_promoted_cache_total")
+                .setDescription("Outcome of refreshUpstreamPromoted() for any provider on the L2 promotion path "
+                        + "(google-* providers today). Labels: provider=<google-docs|google-slides|...>, "
+                        + "outcome=l0_hit|hit_post_lock|reuse_within_grace|miss_refreshed.")
+                .build();
+        userinfoOktaCacheTotal = meter
+                .counterBuilder("mop_userinfo_okta_cache_total")
+                .setDescription("Outcome of /userinfo's id_token freshness branch when the shared Okta upstream "
+                        + "session cache is enabled. Labels: outcome=fresh_hit|expired_refreshed|absent_refreshed|"
+                        + "stale_claims_served.")
+                .build();
+        oktaSessionCacheEvictionsTotal = meter
+                .counterBuilder("mop_okta_session_cache_evictions_total")
+                .setDescription("Caffeine RemovalListener events on the per-pod Okta upstream session cache. "
+                        + "Labels: reason=size|expired_write|explicit|collected.")
+                .build();
+        bearerIndexLookupTotal = meter
+                .counterBuilder("mop_bearer_index_lookup_total")
+                .setDescription("Outcome of /userinfo bearer-index lookups against the "
+                        + "mcp-oauth-proxy-bearer-index DynamoDB table (and optional cross-region peer). "
+                        + "Labels: outcome=hit|from_fallback|miss.")
+                .build();
+        bearerIndexWriteTotal = meter
+                .counterBuilder("mop_bearer_index_write_total")
+                .setDescription("Outcome of bearer-index writes from the five mint sites (login, "
+                        + "token-exchange, refresh-grant rotation, warm-cache mint, /userinfo's Okta refresh). "
+                        + "Labels: outcome=success|failure.")
+                .build();
+        tokenResourceValidationTotal = meter
+                .counterBuilder("mop_token_resource_validation_total")
+                .setDescription("Outcome of the RFC 8707 resource-indicator validation gate in "
+                        + "TokenResource.generateTokenOAuth2 (the perimeter that rejects unknown "
+                        + "resources with 400 invalid_target before any DB lookup, RT validation, "
+                        + "or upstream call). Labels: "
+                        + "outcome=accepted|rejected, reason=known_mapped|unknown_resource, "
+                        + "oauth_grant_type=authorization_code|client_credentials|refresh_token|unknown, "
+                        + "oauth_client. Absent/blank resource is not observed by design.")
+                .build();
+        oktaSessionCacheSizeGauge = meter
+                .gaugeBuilder("mop_okta_session_cache_size")
+                .ofLongs()
+                .setDescription("Approximate per-pod entry count for the shared Okta upstream session cache (L0).")
+                .buildWithCallback(measurement ->
+                        measurement.record(oktaSessionCacheSizeSupplier.get().getAsLong(), Attributes.empty()));
     }
 
     /**
@@ -214,6 +348,9 @@ public class OauthProxyMetrics {
         Attributes replWaitStillStale = Attributes.builder().put(OUTCOME, "still_stale").build();
         upstreamTokenReplicationWaitTotal.add(0, replWaitSucceeded);
         upstreamTokenReplicationWaitTotal.add(0, replWaitStillStale);
+
+        upstreamOktaRevokedTotal.add(0, Attributes.builder()
+                .put(REASON, "REVOKED_INVALID_GRANT").build());
 
         for (String outcome : List.of("acquired", "wait_succeeded", "timeout", "interrupted")) {
             refreshTokenInflightLockTotal.add(0, Attributes.builder().put(OUTCOME, outcome).build());
@@ -265,6 +402,40 @@ public class OauthProxyMetrics {
             authCodeValidationTotal.add(0, Attributes.of(
                     OAUTH_PROVIDER, OauthProviderLabel.UNKNOWN,
                     ERROR_TYPE, reason));
+        }
+
+        for (String outcome : UPSTREAM_OKTA_CACHE_OUTCOMES) {
+            upstreamOktaCacheTotal.add(0, Attributes.builder().put(OUTCOME, outcome).build());
+        }
+        for (String provider : UpstreamProviderClassifier.GOOGLE_WORKSPACE_PROVIDERS) {
+            for (String outcome : UPSTREAM_PROMOTED_CACHE_OUTCOMES) {
+                upstreamPromotedCacheTotal.add(0, Attributes.builder()
+                        .put(OAUTH_PROVIDER, provider)
+                        .put(OUTCOME, outcome)
+                        .build());
+            }
+        }
+        for (String outcome : USERINFO_OKTA_CACHE_OUTCOMES) {
+            userinfoOktaCacheTotal.add(0, Attributes.builder().put(OUTCOME, outcome).build());
+        }
+        for (String reason : OKTA_SESSION_CACHE_EVICTION_REASONS) {
+            oktaSessionCacheEvictionsTotal.add(0, Attributes.builder().put(REASON, reason).build());
+        }
+        for (String outcome : BEARER_INDEX_LOOKUP_OUTCOMES) {
+            bearerIndexLookupTotal.add(0, Attributes.builder().put(OUTCOME, outcome).build());
+        }
+        for (String outcome : BEARER_INDEX_WRITE_OUTCOMES) {
+            bearerIndexWriteTotal.add(0, Attributes.builder().put(OUTCOME, outcome).build());
+        }
+        for (List<String> outcomeReason : TOKEN_RESOURCE_VALIDATION_OUTCOMES) {
+            for (String grant : List.of("authorization_code", "client_credentials", "refresh_token")) {
+                tokenResourceValidationTotal.add(0, Attributes.builder()
+                        .put(OUTCOME, outcomeReason.get(0))
+                        .put(REASON, outcomeReason.get(1))
+                        .put(OAUTH_GRANT_TYPE, grant)
+                        .put(OAUTH_CLIENT, "")
+                        .build());
+            }
         }
     }
 
@@ -511,6 +682,18 @@ public class OauthProxyMetrics {
     }
 
     /**
+     * Records every soft-delete of a centralized Okta upstream-token row. Today fires only on
+     * Okta {@code invalid_grant} responses (with {@code reason="REVOKED_INVALID_GRANT"}); the
+     * label is left open so future revoke causes (admin revoke, scheduled cleanup, etc.) can be
+     * distinguished without a new counter.
+     *
+     * @param reason a {@code STATUS_REVOKED_*} constant from {@code UpstreamTokenRecord}
+     */
+    public void recordUpstreamOktaRevoked(String reason) {
+        upstreamOktaRevokedTotal.add(1, Attributes.builder().put(REASON, nullToEmpty(reason)).build());
+    }
+
+    /**
      * Outcome of trying to take the per-RT distributed lock guarding the rotate path.
      * {@code outcome} is one of: {@code acquired} (this caller won and rotated),
      * {@code wait_succeeded} (lost the race; waited and reused another caller's result),
@@ -596,6 +779,112 @@ public class OauthProxyMetrics {
         authCodeValidationTotal.add(1, Attributes.of(
                 OAUTH_PROVIDER, OauthProviderLabel.normalize(oauthProvider),
                 ERROR_TYPE, nullToEmpty(failureReason)));
+    }
+
+    /**
+     * Records the outcome of a single {@code UpstreamRefreshService.refreshUpstream(...)} call
+     * when the shared Okta upstream session cache is enabled.
+     *
+     * @param outcome one of {@code l0_hit}, {@code l1_hit}, {@code hit_post_lock}, {@code miss_refreshed}.
+     */
+    public void recordUpstreamOktaCacheOutcome(String outcome) {
+        upstreamOktaCacheTotal.add(1, Attributes.builder().put(OUTCOME, nullToEmpty(outcome)).build());
+    }
+
+    /**
+     * Records the outcome of {@code refreshUpstreamPromoted} for any provider on the L2 path.
+     * Counterpart to {@link #recordUpstreamOktaCacheOutcome(String)} but with a {@code provider}
+     * label so dashboards can break down per-google-workspace-product cache effectiveness.
+     *
+     * @param provider one of the google-workspace provider strings (see
+     *                 {@link UpstreamProviderClassifier#GOOGLE_WORKSPACE_PROVIDERS}).
+     * @param outcome  one of {@code l0_hit}, {@code hit_post_lock}, {@code reuse_within_grace},
+     *                 {@code miss_refreshed}.
+     */
+    public void recordUpstreamPromotedCacheOutcome(String provider, String outcome) {
+        upstreamPromotedCacheTotal.add(1, Attributes.builder()
+                .put(OAUTH_PROVIDER, nullToEmpty(provider))
+                .put(OUTCOME, nullToEmpty(outcome))
+                .build());
+    }
+
+    /**
+     * Records the outcome of {@code /userinfo}'s id_token freshness branch when the shared
+     * Okta upstream session cache is enabled.
+     *
+     * @param outcome one of {@code fresh_hit}, {@code expired_refreshed}, {@code absent_refreshed},
+     *                {@code stale_claims_served}.
+     */
+    public void recordUserinfoOktaCacheOutcome(String outcome) {
+        userinfoOktaCacheTotal.add(1, Attributes.builder().put(OUTCOME, nullToEmpty(outcome)).build());
+    }
+
+    /**
+     * Records a Caffeine eviction event from the per-pod Okta upstream session cache.
+     *
+     * @param reason one of {@code size}, {@code expired_write}, {@code explicit}, {@code collected}.
+     */
+    public void recordOktaSessionCacheEviction(String reason) {
+        oktaSessionCacheEvictionsTotal.add(1, Attributes.builder().put(REASON, nullToEmpty(reason)).build());
+    }
+
+    /**
+     * Wires the per-pod Okta upstream session cache into the {@code mop_okta_session_cache_size}
+     * observable gauge. Called once at cache initialization. Replacing the supplier is safe;
+     * the gauge always reads the latest registered supplier.
+     */
+    public void registerOktaSessionCacheSizeGauge(LongSupplier supplier) {
+        if (supplier != null) {
+            oktaSessionCacheSizeSupplier.set(supplier);
+        }
+    }
+
+    /**
+     * Records the outcome of a bearer-index lookup performed by /userinfo against the new
+     * {@code mcp-oauth-proxy-bearer-index} table (with optional cross-region peer fallback).
+     *
+     * @param outcome one of {@code hit}, {@code from_fallback}, {@code miss}
+     */
+    public void recordBearerIndexLookup(String outcome) {
+        bearerIndexLookupTotal.add(1, Attributes.builder().put(OUTCOME, nullToEmpty(outcome)).build());
+    }
+
+    /**
+     * Records the outcome of a bearer-index write attempt at one of the five mint sites.
+     *
+     * @param success {@code true} when the put returned without throwing; {@code false} when the
+     *                bearer-index write threw and was swallowed by the caller (the bearer is still
+     *                returned to the MCP client; /userinfo will 401 once and the client refresh
+     *                will repopulate).
+     */
+    public void recordBearerIndexWrite(boolean success) {
+        bearerIndexWriteTotal.add(1, Attributes.builder()
+                .put(OUTCOME, success ? "success" : "failure")
+                .build());
+    }
+
+    /**
+     * Records the outcome of the RFC 8707 §2 resource-indicator validation gate in
+     * {@code TokenResource.generateTokenOAuth2}. Emit one sample per /token request whose wire
+     * {@code resource} parameter was non-blank (absent/blank is intentionally not observed).
+     *
+     * @param accepted {@code true} when the resource resolved to a known {@code ResourceMeta}
+     *                 (proceeds to per-grant handler); {@code false} when it did not (rejected
+     *                 with 400 {@code invalid_target}).
+     * @param reason   classification: {@code known_mapped} for accepted, {@code unknown_resource}
+     *                 for rejected. The label is kept open so future failure shapes
+     *                 (e.g. {@code malformed_uri}) can be added without a new counter.
+     * @param oauthGrantType wire {@code grant_type}, or {@code "unknown"} if missing.
+     * @param oauthClient    normalized client id (empty string if absent).
+     */
+    public void recordTokenResourceValidation(boolean accepted, String reason,
+                                              String oauthGrantType, String oauthClient) {
+        tokenResourceValidationTotal.add(1, Attributes.builder()
+                .put(OUTCOME, accepted ? "accepted" : "rejected")
+                .put(REASON, nullToEmpty(reason))
+                .put(OAUTH_GRANT_TYPE, nullToEmpty(oauthGrantType))
+                .put(OAUTH_CLIENT, nullToEmpty(oauthClient))
+                .build());
     }
 
     private static String nullToEmpty(String s) {

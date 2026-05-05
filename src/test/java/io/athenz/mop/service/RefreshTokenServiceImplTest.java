@@ -327,6 +327,76 @@ class RefreshTokenServiceImplTest {
     }
 
     @Test
+    void getUpstreamRefreshToken_skipsRowsWithNullLegacyRtPicksOlderSiblingThatHasOne() {
+        // Regression: post-L2-promotion, the most-recently-issued MoP refresh-token row for a
+        // promoted provider (e.g. google-docs) is written with legacy_rt=null. The pre-fix GSI
+        // ranker picked the newest row regardless of whether it carried a legacy RT, so when an
+        // L2 row was missing and the GSI fallback was the last hope, this method would return
+        // the newest L2-only row (legacy_rt=null), the caller would interpret that as "no
+        // upstream RT", and the user got bumped to the reconnect page even though older sibling
+        // rows still carried valid pre-rollout legacy ciphertext.
+        long now = System.currentTimeMillis() / 1000;
+
+        // Newest row: ROTATED, legacy_rt explicitly absent (post-L2-promotion shape).
+        Map<String, AttributeValue> newestNoLegacy = new HashMap<>();
+        newestNoLegacy.put(RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id-newest").build());
+        newestNoLegacy.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("google-docs#user1").build());
+        newestNoLegacy.put(RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build());
+        newestNoLegacy.put(RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("post-promotion-client").build());
+        newestNoLegacy.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("google-docs").build());
+        newestNoLegacy.put(RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ROTATED).build());
+        newestNoLegacy.put(RefreshTableAttribute.ISSUED_AT.attr(), AttributeValue.builder().n(String.valueOf(now)).build());
+        newestNoLegacy.put(RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build());
+
+        // Older row: ACTIVE, has a legacy RT (pre-rollout shape).
+        Map<String, AttributeValue> olderWithLegacy = new HashMap<>();
+        olderWithLegacy.put(RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id-older").build());
+        olderWithLegacy.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("google-docs#user1").build());
+        olderWithLegacy.put(RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build());
+        olderWithLegacy.put(RefreshTableAttribute.CLIENT_ID.attr(), AttributeValue.builder().s("pre-rollout-client").build());
+        olderWithLegacy.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("google-docs").build());
+        olderWithLegacy.put(RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr(),
+                AttributeValue.builder().s("legacy-upstream-rt").build());
+        olderWithLegacy.put(RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build());
+        olderWithLegacy.put(RefreshTableAttribute.ISSUED_AT.attr(), AttributeValue.builder().n(String.valueOf(now - 86400)).build());
+        olderWithLegacy.put(RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build());
+
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(newestNoLegacy, olderWithLegacy)).build());
+        // No GetItem stub: olderWithLegacy already carries a non-empty legacy RT in its String
+        // form (the test mocks bypass DBE), so queryBestUpstreamRefresh's post-rank re-fetch
+        // branch — which only fires when the winning row's legacy_rt String view is null/empty —
+        // is not triggered here. The fix is exercised purely on the GSI ranking step.
+
+        String result = service.getUpstreamRefreshToken("user1", "google-docs");
+        assertEquals("legacy-upstream-rt", result,
+                "GSI fallback must skip rows whose legacy column is null and inherit from the "
+                + "newest sibling that actually carries an upstream RT");
+    }
+
+    @Test
+    void getUpstreamRefreshToken_returnsNullWhenAllRowsHaveNullLegacyRt() {
+        // Truly post-L2-promotion world: every row has legacy_rt=null because L2 is the canonical
+        // store. With L2 missing on the caller side, the GSI fallback must return null (not
+        // accidentally seed from a row whose legacy column is null), so the caller can render
+        // the reconnect page rather than minting a refresh-token chain rooted at a phantom RT.
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> rowA = new HashMap<>();
+        rowA.put(RefreshTableAttribute.REFRESH_TOKEN_ID.attr(), AttributeValue.builder().s("id-a").build());
+        rowA.put(RefreshTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s("google-slides#user1").build());
+        rowA.put(RefreshTableAttribute.USER_ID.attr(), AttributeValue.builder().s("user1").build());
+        rowA.put(RefreshTableAttribute.PROVIDER.attr(), AttributeValue.builder().s("google-slides").build());
+        rowA.put(RefreshTableAttribute.STATUS.attr(), AttributeValue.builder().s(RefreshTableConstants.STATUS_ACTIVE).build());
+        rowA.put(RefreshTableAttribute.ISSUED_AT.attr(), AttributeValue.builder().n(String.valueOf(now)).build());
+        rowA.put(RefreshTableAttribute.EXPIRES_AT.attr(), AttributeValue.builder().n(String.valueOf(now + 3600)).build());
+
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(rowA)).build());
+
+        assertNull(service.getUpstreamRefreshToken("user1", "google-slides"));
+    }
+
+    @Test
     void getUpstreamRefreshToken_returnsEncryptedUpstreamWhenOneActiveItem() {
         long now = System.currentTimeMillis() / 1000;
         Map<String, AttributeValue> item = new HashMap<>();
@@ -428,7 +498,7 @@ class RefreshTokenServiceImplTest {
         String token = service.generateSecureToken();
         long now = System.currentTimeMillis() / 1000;
         RefreshTokenRecord peerRecord = new RefreshTokenRecord(
-                "id1", OKTA_PID_USER1, "user1", "client1", AudienceConstants.PROVIDER_OKTA, "sub1",
+                "id1", OKTA_PID_USER1, "user1", "client1", AudienceConstants.PROVIDER_OKTA, null, "sub1",
                 null, RefreshTableConstants.STATUS_ACTIVE, "f1", null, null,
                 0L, now, now + 3600, now + 3600);
         lenient().when(resolver.resolveByHash(org.mockito.ArgumentMatchers.anyString()))
@@ -446,7 +516,7 @@ class RefreshTokenServiceImplTest {
         service.refreshTokenRegionResolver = resolver;
         long now = System.currentTimeMillis() / 1000;
         RefreshTokenRecord peerRecord = new RefreshTokenRecord(
-                "id-peer", OKTA_PID_USER1, "user1", "c1", AudienceConstants.PROVIDER_OKTA, "sub",
+                "id-peer", OKTA_PID_USER1, "user1", "c1", AudienceConstants.PROVIDER_OKTA, null, "sub",
                 "enc-peer-newer", RefreshTableConstants.STATUS_ACTIVE, "f1", null, null,
                 0L, now + 100, now + 7200, now + 7200);
         lenient().when(resolver.resolveBestUpstream("user1", AudienceConstants.PROVIDER_OKTA))
@@ -722,5 +792,109 @@ class RefreshTokenServiceImplTest {
 
         assertNull(result);
         verify(dynamoDbClient, never()).transactWriteItems(any(TransactWriteItemsRequest.class));
+    }
+
+    @Test
+    void store_writesAudienceAttributeWhenProvided() {
+        org.mockito.ArgumentCaptor<software.amazon.awssdk.services.dynamodb.model.PutItemRequest> req =
+                org.mockito.ArgumentCaptor.forClass(software.amazon.awssdk.services.dynamodb.model.PutItemRequest.class);
+
+        String raw = service.store("user1", "client1", AudienceConstants.PROVIDER_OKTA, "user1",
+                /*upstream*/ null, /*audience*/ "splunk");
+
+        assertNotNull(raw);
+        verify(dynamoDbClient).putItem(req.capture());
+        Map<String, AttributeValue> item = req.getValue().item();
+        assertEquals("splunk", item.get(RefreshTableAttribute.AUDIENCE.attr()).s(),
+                "audience must be persisted to the AUDIENCE attribute when caller passes a non-null value");
+        assertEquals(AudienceConstants.PROVIDER_OKTA, item.get(RefreshTableAttribute.PROVIDER.attr()).s(),
+                "provider must remain the IdP \u2014 audience is a separate diagnostic column");
+    }
+
+    @Test
+    void store_omitsAudienceAttributeWhenNullOrEmpty() {
+        org.mockito.ArgumentCaptor<software.amazon.awssdk.services.dynamodb.model.PutItemRequest> req =
+                org.mockito.ArgumentCaptor.forClass(software.amazon.awssdk.services.dynamodb.model.PutItemRequest.class);
+
+        service.store("user1", "client1", AudienceConstants.PROVIDER_OKTA, "user1",
+                /*upstream*/ null, /*audience*/ null);
+
+        verify(dynamoDbClient).putItem(req.capture());
+        Map<String, AttributeValue> item = req.getValue().item();
+        assertFalse(item.containsKey(RefreshTableAttribute.AUDIENCE.attr()),
+                "absent audience must remain absent (legacy-row compatible) rather than write an empty string");
+    }
+
+    @Test
+    void store_legacyFiveArgOverloadDelegatesWithNullAudience() {
+        org.mockito.ArgumentCaptor<software.amazon.awssdk.services.dynamodb.model.PutItemRequest> req =
+                org.mockito.ArgumentCaptor.forClass(software.amazon.awssdk.services.dynamodb.model.PutItemRequest.class);
+
+        // Exercise the legacy 5-arg signature on the interface (default method).
+        RefreshTokenService iface = service;
+        iface.store("user1", "client1", AudienceConstants.PROVIDER_OKTA, "user1", null);
+
+        verify(dynamoDbClient).putItem(req.capture());
+        assertFalse(req.getValue().item().containsKey(RefreshTableAttribute.AUDIENCE.attr()));
+    }
+
+    @Test
+    void rotate_carriesAudienceForwardToNewRow() {
+        // Build an ACTIVE row that already has an audience set (simulates a row written after the
+        // column was introduced). After rotation, the new ACTIVE row in the same family must
+        // carry the same audience label \u2014 rotation is identity-preserving for diagnostic fields.
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> active = new HashMap<>(activeRow("id1", now));
+        active.put(RefreshTableAttribute.AUDIENCE.attr(), AttributeValue.builder().s("splunk").build());
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(active)).build());
+        when(dynamoDbClient.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().item(active).build());
+
+        org.mockito.ArgumentCaptor<TransactWriteItemsRequest> txn =
+                org.mockito.ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+
+        var result = service.rotate(token, "client1");
+
+        assertNotNull(result, "rotate should succeed for ACTIVE row");
+        verify(dynamoDbClient).transactWriteItems(txn.capture());
+        // The TransactWriteItems carries two items: the conditional update on the parent
+        // (status ACTIVE -> ROTATED) and the put for the new ACTIVE child.
+        Map<String, AttributeValue> newRow = txn.getValue().transactItems().stream()
+                .filter(i -> i.put() != null)
+                .map(i -> i.put().item())
+                .findFirst()
+                .orElseThrow();
+        assertEquals("splunk", newRow.get(RefreshTableAttribute.AUDIENCE.attr()).s(),
+                "audience from parent row must be propagated to the rotated successor");
+    }
+
+    @Test
+    void rotate_legacyRowWithoutAudienceLeavesAudienceAbsentInSuccessor() {
+        // Backfill safety: rotating a pre-audience-column row must NOT invent an audience the
+        // original family never declared.
+        String token = service.generateSecureToken();
+        long now = System.currentTimeMillis() / 1000;
+        Map<String, AttributeValue> active = activeRow("id1", now);
+        when(dynamoDbClient.query(any(QueryRequest.class)))
+                .thenReturn(QueryResponse.builder().items(List.of(active)).build());
+        when(dynamoDbClient.getItem(any(GetItemRequest.class)))
+                .thenReturn(GetItemResponse.builder().item(active).build());
+
+        org.mockito.ArgumentCaptor<TransactWriteItemsRequest> txn =
+                org.mockito.ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+
+        var result = service.rotate(token, "client1");
+
+        assertNotNull(result);
+        verify(dynamoDbClient).transactWriteItems(txn.capture());
+        Map<String, AttributeValue> newRow = txn.getValue().transactItems().stream()
+                .filter(i -> i.put() != null)
+                .map(i -> i.put().item())
+                .findFirst()
+                .orElseThrow();
+        assertFalse(newRow.containsKey(RefreshTableAttribute.AUDIENCE.attr()),
+                "rotation must not invent audience for legacy rows that never had one");
     }
 }

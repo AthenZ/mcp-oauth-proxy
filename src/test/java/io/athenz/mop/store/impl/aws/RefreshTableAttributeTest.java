@@ -29,6 +29,7 @@ class RefreshTableAttributeTest {
         assertEquals("user_id", RefreshTableAttribute.USER_ID.attr());
         assertEquals("client_id", RefreshTableAttribute.CLIENT_ID.attr());
         assertEquals("provider", RefreshTableAttribute.PROVIDER.attr());
+        assertEquals("audience", RefreshTableAttribute.AUDIENCE.attr());
         assertEquals("provider_subject", RefreshTableAttribute.PROVIDER_SUBJECT.attr());
         assertEquals("encrypted_upstream_refresh_token", RefreshTableAttribute.ENCRYPTED_UPSTREAM_REFRESH_TOKEN.attr());
         assertEquals("status", RefreshTableAttribute.STATUS.attr());
@@ -44,7 +45,7 @@ class RefreshTableAttributeTest {
     @Test
     void testEnumValues() {
         RefreshTableAttribute[] values = RefreshTableAttribute.values();
-        assertEquals(16, values.length);
+        assertEquals(17, values.length);
     }
 
     @Test

@@ -20,6 +20,7 @@ import io.athenz.mop.service.AuthCodeRegionResolver;
 import io.athenz.mop.service.AuthorizerService;
 import io.athenz.mop.service.ConfigService;
 import io.athenz.mop.service.RefreshTokenService;
+import io.athenz.mop.service.UpstreamRefreshService;
 import io.quarkus.oidc.AccessTokenCredential;
 import io.quarkus.oidc.OidcSession;
 import io.quarkus.oidc.UserInfo;
@@ -69,6 +70,9 @@ public class GoogleWorkspaceResource extends BaseResource {
 
     @Inject
     RefreshTokenService refreshTokenService;
+
+    @Inject
+    UpstreamRefreshService upstreamRefreshService;
 
     @PathParam("provider")
     String provider;
@@ -145,7 +149,37 @@ public class GoogleWorkspaceResource extends BaseResource {
         return buildSuccessRedirect(authorizationCode.getRedirectUri(), state, authorizationCode.getState());
     }
 
+    /**
+     * Resolve any existing upstream Google refresh token for this {@code (provider, user)} pair
+     * so a brand-new MCP-client login can inherit a still-good RT when Google declined to mint
+     * a fresh one. Lookup order:
+     * <ol>
+     *   <li><b>L2 (canonical):</b> {@code mcp-oauth-proxy-upstream-tokens} keyed by
+     *       {@code provider#sub}. Post L2-promotion this is the source of truth — the row is
+     *       seeded on first consent and rotated on every refresh under the L2 lock, so its RT
+     *       is never stale relative to Google. If it's REVOKED (sourced via
+     *       {@code UpstreamRefreshService.getCurrentUpstream}, which already filters
+     *       non-ACTIVE rows), we fall through and let the normal "no refresh token" reconnect
+     *       page render — that is the explicit recovery path after revoke.</li>
+     *   <li><b>Legacy GSI fallback:</b> {@code mcp-oauth-proxy-refresh-tokens} GSI on
+     *       {@code (user_id, provider)}. Only fires during the migration window when L2 has
+     *       not been seeded yet; once a single refresh has succeeded post-promotion, the L2
+     *       row is present and this branch is unreachable.</li>
+     *   <li><b>Defensive lookupKey lookup:</b> very old rows keyed by email-localpart rather
+     *       than OAuth subject. Kept for backward compatibility.</li>
+     * </ol>
+     */
     private String lookupExistingUpstreamRefresh(String subject, String lookupKey, String provider) {
+        String providerUserId = provider + "#" + subject;
+        String l2 = upstreamRefreshService.getCurrentUpstream(providerUserId)
+                .map(rec -> rec.encryptedOktaRefreshToken())
+                .filter(rt -> rt != null && !rt.isEmpty())
+                .orElse(null);
+        if (l2 != null) {
+            log.info("{}: Inherited upstream refresh from L2 row (provider_user_id={})",
+                    provider, providerUserId);
+            return l2;
+        }
         String value = refreshTokenService.getUpstreamRefreshToken(subject, provider);
         if (value != null && !value.isEmpty()) {
             return value;
