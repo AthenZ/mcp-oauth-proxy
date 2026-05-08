@@ -183,7 +183,7 @@ public class UpstreamRefreshService {
                     providerUserId, existing.status(), existing.version());
         }
         String now = Instant.now().toString();
-        long ttl = computeTtlEpochSeconds();
+        long ttl = computeTtlEpochSeconds(providerUserId);
         UpstreamTokenRecord record = UpstreamTokenRecord.builder()
                 .providerUserId(providerUserId)
                 .encryptedOktaRefreshToken(oktaRefreshTokenPlain)
@@ -757,9 +757,15 @@ public class UpstreamRefreshService {
         }
     }
 
-    private long computeTtlEpochSeconds() {
+    /**
+     * Compute the Dynamo TTL (epoch seconds) for a freshly-seeded upstream-token row.
+     * The expiry window is resolved per-provider from the {@code provider#sub} partition key
+     * (see {@link UpstreamTokenConfig#expirySecondsForProvider(String)}), with the configured
+     * {@code ttlBufferDays} added as eviction grace.
+     */
+    private long computeTtlEpochSeconds(String providerUserId) {
         return Instant.now()
-                .plus(upstreamTokenConfig.expirySeconds(), ChronoUnit.SECONDS)
+                .plus(upstreamTokenConfig.expirySecondsForProvider(providerUserId), ChronoUnit.SECONDS)
                 .plus(upstreamTokenConfig.ttlBufferDays(), ChronoUnit.DAYS)
                 .getEpochSecond();
     }

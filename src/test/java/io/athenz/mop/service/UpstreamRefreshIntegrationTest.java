@@ -28,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
@@ -65,7 +66,7 @@ class UpstreamRefreshIntegrationTest {
 
     @Test
     void secondProviderRefresh_usesLatestVersionAfterConflict() {
-        lenient().when(upstreamTokenConfig.expirySeconds()).thenReturn(7776000L);
+        lenient().when(upstreamTokenConfig.expirySecondsForProvider(anyString())).thenReturn(7776000L);
         lenient().when(upstreamTokenConfig.ttlBufferDays()).thenReturn(7);
         lenient().when(oktaSessionCacheConfig.enabled()).thenReturn(false);
 
