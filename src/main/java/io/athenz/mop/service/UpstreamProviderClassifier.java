@@ -63,6 +63,8 @@ public class UpstreamProviderClassifier {
             "google-cloud-platform"
     );
 
+    public static final long GOOGLE_WORKSPACE_EXPIRY_SECONDS_FLOOR = 15_552_000L; // 6 months in seconds (180 days)
+
     private static final Set<String> PROMOTED_PROVIDERS;
     static {
         Set<String> all = new java.util.HashSet<>(GOOGLE_WORKSPACE_PROVIDERS);

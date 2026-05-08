@@ -40,6 +40,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -92,7 +93,7 @@ class UpstreamRefreshServiceTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(upstreamTokenConfig.expirySeconds()).thenReturn(7776000L);
+        lenient().when(upstreamTokenConfig.expirySecondsForProvider(anyString())).thenReturn(7776000L);
         lenient().when(upstreamTokenConfig.ttlBufferDays()).thenReturn(7);
         // Default cache disabled; cache-aware tests opt in by overriding.
         lenient().when(oktaSessionCacheConfig.enabled()).thenReturn(false);

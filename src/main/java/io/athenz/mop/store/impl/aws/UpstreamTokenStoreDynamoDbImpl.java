@@ -124,7 +124,7 @@ public class UpstreamTokenStoreDynamoDbImpl implements UpstreamTokenStore {
         String now = Instant.now().toString();
         long newVersion = expectedVersion + 1;
         long newRotationCount = current.rotationCount() + 1L;
-        long ttl = computeActiveTtlEpochSeconds();
+        long ttl = computeActiveTtlEpochSeconds(providerUserId);
 
         Map<String, AttributeValue> item = new HashMap<>();
         item.put(UpstreamTableAttribute.PROVIDER_USER_ID.attr(), AttributeValue.builder().s(providerUserId).build());
@@ -348,8 +348,16 @@ public class UpstreamTokenStoreDynamoDbImpl implements UpstreamTokenStore {
         }
     }
 
-    private long computeActiveTtlEpochSeconds() {
-        long expirySeconds = upstreamTokenConfig.expirySeconds();
+    /**
+     * Compute the Dynamo TTL attribute (epoch seconds) for an active row.
+     *
+     * <p>{@code expirySeconds} is resolved per-provider from the {@code provider#sub} partition
+     * key (see {@link UpstreamTokenConfig#expirySecondsForProvider(String)}). The
+     * {@code ttlBufferDays} grace is added on top so DynamoDB physically deletes the row a few
+     * days after it logically expires, leaving a window for late readers / forensics.
+     */
+    private long computeActiveTtlEpochSeconds(String providerUserId) {
+        long expirySeconds = upstreamTokenConfig.expirySecondsForProvider(providerUserId);
         int bufferDays = upstreamTokenConfig.ttlBufferDays();
         return Instant.now().plus(expirySeconds, ChronoUnit.SECONDS).plus(bufferDays, ChronoUnit.DAYS).getEpochSecond();
     }

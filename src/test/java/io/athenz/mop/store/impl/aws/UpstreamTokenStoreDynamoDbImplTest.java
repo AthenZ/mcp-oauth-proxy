@@ -41,6 +41,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -62,7 +63,8 @@ class UpstreamTokenStoreDynamoDbImplTest {
     @BeforeEach
     void setUp() {
         when(upstreamTokenConfig.tableName()).thenReturn(TABLE);
-        when(upstreamTokenConfig.expirySeconds()).thenReturn(7776000L);
+        lenient().when(upstreamTokenConfig.expirySecondsForProvider(anyString()))
+                .thenReturn(7776000L);
         when(upstreamTokenConfig.ttlBufferDays()).thenReturn(7);
     }
 

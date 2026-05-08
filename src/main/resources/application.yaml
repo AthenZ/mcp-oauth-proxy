@@ -345,8 +345,9 @@ server:
         key-id:
   refresh-token:
     table-name: ${MOP_REFRESH_TOKEN_TABLE_NAME:mcp-oauth-proxy-refresh-tokens}
-    expiry-seconds: ${MOP_REFRESH_EXPIRY_SECONDS:7776000}
-    ttl-buffer-days: ${MOP_REFRESH_TTL_BUFFER_DAYS:7}
+    # Paranoids alignment: MoP-issued RT lives 7 days, evicted 3 days after expiry.
+    expiry-seconds: ${MOP_REFRESH_EXPIRY_SECONDS:604800}
+    ttl-buffer-days: ${MOP_REFRESH_TTL_BUFFER_DAYS:3}
     # Layer 2 (rotated-grace window) — token-age predicate. When validate() finds a row in
     # ROTATED status whose rotated_at is within this many seconds, treat the call as a benign
     # client retry and serve from the family successor instead of revoking the family. Outside
@@ -384,8 +385,24 @@ server:
     initial-backoff-ms: ${MOP_REFRESH_LOCK_INITIAL_BACKOFF_MS:50}
   upstream-token:
     table-name: ${MOP_UPSTREAM_TOKEN_TABLE_NAME:mcp-oauth-proxy-upstream-tokens}
-    expiry-seconds: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS:7776000}
-    ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:7}
+    # Per-provider expiry, resolved at write time from the provider#sub partition key
+    # (UpstreamTokenConfig.expirySecondsForProvider). Default 30d covers any provider not
+    # listed in expiry-seconds-by-provider.
+    #
+    # The special key `google-workspace` is a single knob covering all 12 members of
+    # UpstreamProviderClassifier.GOOGLE_WORKSPACE_PROVIDERS — change this one value to retune
+    # every Google Workspace MCP at once. A per-provider exact-match entry (e.g.
+    # `google-drive: "31536000"`) wins over the group key when both are set.
+    #
+    # SAFETY NET: every Google Workspace provider is also clamped UP in code to
+    # GOOGLE_WORKSPACE_EXPIRY_SECONDS_FLOOR (6 months). Operators can extend this upward;
+    # they cannot accidentally shorten it below 6 months. Google Workspace issues the
+    # upstream RT only once per consent — losing the L2 row forces a re-consent.
+    expiry-seconds-default: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_DEFAULT:2592000}
+    expiry-seconds-by-provider:
+      okta: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_OKTA:86400}
+      google-workspace: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_GOOGLE_WORKSPACE:15552000}
+    ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:3}
   # Dedicated index keyed by H(bearer) for /userinfo bearer resolution. Each minted bearer owns
   # its own row, so multi-window /userinfo no longer 401s on GSI clobbering. The row stores no
   # token material — only (userId, clientId, provider, exp, ttl). DynamoDB TTL evicts rows

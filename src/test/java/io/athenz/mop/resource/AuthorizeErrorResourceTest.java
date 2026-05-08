@@ -168,10 +168,6 @@ class AuthorizeErrorResourceTest {
                 malicious);
 
         String html = (String) response.getEntity();
-        // The page intentionally embeds an <img> for the Yahoo brand logo, so we cannot assert
-        // there is no <img substring at all. Instead assert the attacker-controlled tag is not
-        // emitted as a real element (no `<img src=x` -- only `&lt;img src=x`) and that the full
-        // payload is present in HTML-escaped form.
         assertFalse(html.contains("<img src=x"),
                 "raw attacker <img> tag must not appear unescaped in rendered HTML");
         assertTrue(html.contains("&lt;img src=x onerror=alert(1)&gt;"),

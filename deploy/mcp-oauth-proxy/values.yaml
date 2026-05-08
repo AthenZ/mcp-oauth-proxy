@@ -180,8 +180,11 @@ application:
     initialBackoffMs: 50
   upstreamToken:
     tableName: mcp-oauth-proxy-upstream-tokens
-    expirySeconds: 7776000
-    ttlBufferDays: 7
+    expirySecondsDefault: "2592000"
+    expirySecondsByProvider:
+      okta: "86400"                  # 24h — paranoids tier; Okta RT rotates every refresh
+      google-workspace: "15552000"   # 6 months — applies to all Google Workspace MCPs
+    ttlBufferDays: 3
     # How long REVOKED L2 rows are retained before TTL eviction. Sized so an operator can
     # still inspect a recently-revoked row when triaging a refresh-token-revoked event.
     revokedRetentionDays: 14

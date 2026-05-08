@@ -311,7 +311,13 @@ data:
         initial-backoff-ms: {{ .Values.application.refreshLock.initialBackoffMs }}
       upstream-token:
         table-name: {{ .Values.application.upstreamToken.tableName | quote }}
-        expiry-seconds: {{ .Values.application.upstreamToken.expirySeconds }}
+        expiry-seconds-default: {{ .Values.application.upstreamToken.expirySecondsDefault | default "2592000" }}
+        {{- with .Values.application.upstreamToken.expirySecondsByProvider }}
+        expiry-seconds-by-provider:
+          {{- range $provider, $seconds := . }}
+          {{ $provider }}: {{ $seconds }}
+          {{- end }}
+        {{- end }}
         ttl-buffer-days: {{ .Values.application.upstreamToken.ttlBufferDays }}
         revoked-retention-days: {{ .Values.application.upstreamToken.revokedRetentionDays | default 14 }}
         l2-at-reuse-grace-seconds: {{ .Values.application.upstreamToken.l2AtReuseGraceSeconds | default 30 }}
