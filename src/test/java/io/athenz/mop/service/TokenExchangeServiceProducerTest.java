@@ -59,6 +59,9 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceSlackImpl tokenExchangeServiceSlackImpl;
 
     @Mock
+    private TokenExchangeServiceFigmaImpl tokenExchangeServiceFigmaImpl;
+
+    @Mock
     private TokenExchangeServiceEvaluateImpl tokenExchangeServiceEvaluateImpl;
 
     @Mock
@@ -206,6 +209,13 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("slack");
         assertNotNull(result);
         assertSame(tokenExchangeServiceSlackImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_Figma() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("figma");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceFigmaImpl, result);
     }
 
     @Test

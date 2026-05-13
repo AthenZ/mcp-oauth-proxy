@@ -105,6 +105,11 @@ class UpstreamRefreshServiceTest {
         // Path E grace defaults match production unless a specific test wants to widen them.
         upstreamRefreshService.l2AtReuseGraceSeconds = 30L;
         upstreamRefreshService.l2AtReuseMinRemainingSeconds = 60L;
+        // Per-provider refresh client dispatch lives on the classifier now; surface the Google
+        // mock through it so the legacy Google Workspace tests below don't have to know about
+        // the indirection.
+        lenient().when(upstreamProviderClassifier.resolveRefreshTokenClient(anyString()))
+                .thenReturn(java.util.Optional.of(googleWorkspaceUpstreamRefreshClient));
     }
 
     /** Build a minimal HS256-signed JWT carrying just an {@code exp} claim. */
@@ -669,7 +674,6 @@ class UpstreamRefreshServiceTest {
 
     @Test
     void refreshUpstream_promoted_pathC_callsGoogleAndCasWritesStagedAt() {
-        when(upstreamProviderClassifier.isGoogleWorkspace("google-slides")).thenReturn(true);
         when(idpSessionCache.get(any())).thenReturn(Optional.empty());
 
         UpstreamTokenRecord rec = UpstreamTokenRecord.builder()
@@ -714,7 +718,6 @@ class UpstreamRefreshServiceTest {
 
     @Test
     void refreshUpstream_promoted_pathE_reusesStagedAtWithinGrace() {
-        when(upstreamProviderClassifier.isGoogleWorkspace("google-slides")).thenReturn(true);
         when(idpSessionCache.get(any())).thenReturn(Optional.empty());
 
         // Row staged ~5 seconds ago: AT lifetime ~3599, remaining ~3594. With grace=30, the
@@ -761,7 +764,6 @@ class UpstreamRefreshServiceTest {
         // returns it WITHOUT consulting L2 or calling Google. Before this change the hit was
         // silent; now it ticks mop_upstream_promoted_cache_total{provider, outcome="l0_hit"} so the
         // dashboard can see what fraction of refresh requests are amortized by per-client cache.
-        when(upstreamProviderClassifier.isGoogleWorkspace("google-slides")).thenReturn(true);
         long now = Instant.now().getEpochSecond();
         IdpSessionEntry cached = IdpSessionEntry.from("cached-at", null, /* expiresIn */ 3500L, now);
         when(idpSessionCache.get("cursor#google-slides#alice")).thenReturn(Optional.of(cached));
@@ -780,7 +782,6 @@ class UpstreamRefreshServiceTest {
 
     @Test
     void refreshUpstream_promoted_invalidGrant_revokesL2Row() {
-        when(upstreamProviderClassifier.isGoogleWorkspace("google-slides")).thenReturn(true);
         when(idpSessionCache.get(any())).thenReturn(Optional.empty());
 
         UpstreamTokenRecord rec = UpstreamTokenRecord.builder()
@@ -811,7 +812,6 @@ class UpstreamRefreshServiceTest {
         // Diagnostic-accuracy contract: when the resolver returns null because the row is
         // genuinely missing, refreshUpstreamPromoted does a raw .get() to confirm absence and then
         // logs event=upstream_refresh_no_l2_row. The exception is still thrown unchanged.
-        when(upstreamProviderClassifier.isGoogleWorkspace("google-slides")).thenReturn(true);
         when(idpSessionCache.get(any())).thenReturn(Optional.empty());
         when(upstreamTokenRegionResolver.resolveByProviderUserId(GSLIDES_PID))
                 .thenReturn(new UpstreamTokenResolution(null, false));
@@ -836,7 +836,6 @@ class UpstreamRefreshServiceTest {
         // active-row read, so refreshUpstreamPromoted sees null and previously logged
         // "no_l2_row" (misleading: row exists, just revoked). With the fix, the raw .get() returns
         // the inactive row and the log line switches to event=upstream_refresh_aborted_revoked_at_read.
-        when(upstreamProviderClassifier.isGoogleWorkspace("google-slides")).thenReturn(true);
         when(idpSessionCache.get(any())).thenReturn(Optional.empty());
         when(upstreamTokenRegionResolver.resolveByProviderUserId(GSLIDES_PID))
                 .thenReturn(new UpstreamTokenResolution(null, false));

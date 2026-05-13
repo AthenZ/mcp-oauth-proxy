@@ -246,6 +246,8 @@ quarkus:
         strategy: keep-all-tokens
       token:
         issuer: any
+    figma:
+      tenant-enabled: false
     embrace:
       discovery-enabled: false
       auth-server-url: ${EMBRACE_AUTH_SERVER_URL:https://dash-api.embrace.io}
@@ -402,6 +404,7 @@ server:
     expiry-seconds-by-provider:
       okta: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_OKTA:86400}
       google-workspace: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_GOOGLE_WORKSPACE:15552000}
+      figma: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_FIGMA:7776000}
     ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:3}
   # Dedicated index keyed by H(bearer) for /userinfo bearer resolution. Each minted bearer owns
   # its own row, so multi-window /userinfo no longer 401s on GSI clobbering. The row stores no
@@ -450,6 +453,10 @@ server:
     k8s:
       name:
       namespace:
+  figma:
+    client-id: ${FIGMA_CLIENT_ID:}
+    client-secret-key: ${FIGMA_CLIENT_SECRET_KEY:figma-client-secret}
+    callback-redirect-uri: ${FIGMA_CALLBACK_REDIRECT_URI:}
   token-exchange:
     idp:
     google-workspace:

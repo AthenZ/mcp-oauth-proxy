@@ -46,6 +46,12 @@ data:
             slack:
               paths: "/slack/*"
               policy: authenticated
+            figma:
+              paths: "/figma/*"
+              # FigmaResource self-protects /figma/authorize via the FigmaPkceStateCache
+              # (single-use upstream `state` minted by AuthorizeResource). Quarkus OIDC
+              # is bypassed for Figma -- see the comment on `quarkus.oidc.figma` below.
+              policy: permit
             embrace:
               paths: "/embrace/*"
               policy: authenticated
@@ -180,6 +186,15 @@ data:
             strategy: keep-all-tokens
           token:
             issuer: any
+        # Figma is intentionally NOT a Quarkus OIDC tenant. Quarkus 3.30.6 HS256-signs
+        # the synthetic internal ID token using the tenant's client_secret verbatim,
+        # and Figma issues 30-char (240-bit) client secrets which fall below the
+        # 256-bit floor for HS256 -> JwtSignatureException on the upstream callback.
+        # MoP handles the full Figma OAuth code flow itself in FigmaResource, driven
+        # by the `server.figma.*` block (rendered further down). Re-enable a stock
+        # tenant here only after Figma rotates the client_secret to >=32 chars.
+        figma:
+          tenant-enabled: false
         embrace:
 {{- if (.Values.oidc.embrace.tlsInsecureClient | default false) }}
           tls:
@@ -365,6 +380,10 @@ data:
         k8s:
           name: {{ .Values.application.k8s.secretName | quote }}
           namespace: {{ .Values.application.k8s.namespace | quote }}
+      figma:
+        client-id: {{ .Values.oidc.figma.clientId | quote }}
+        client-secret-key: {{ .Values.oidc.figma.clientSecretKey | quote }}
+        callback-redirect-uri: {{ .Values.oidc.figma.callbackRedirectUri | quote }}
       token-exchange:
         idp: {{ .Values.oidc.provider }}
         google-workspace:
@@ -465,6 +484,9 @@ data:
             - name: slack
               endpoint: {{ .Values.oidc.slack.endpoint | quote }}
               username-claim: {{ .Values.oidc.slack.claim | quote }}
+            - name: figma
+              endpoint: {{ .Values.oidc.figma.endpoint | quote }}
+              username-claim: {{ .Values.oidc.figma.claim | quote }}
       resources:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}

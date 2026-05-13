@@ -35,6 +35,7 @@ class UpstreamTokenConfigTest {
     private static final long DEFAULT_30D = 2_592_000L;
     private static final long OKTA_24H = 86_400L;
     private static final long GOOGLE_180D = 15_552_000L;
+    private static final long FIGMA_90D = 7_776_000L;
 
     private static UpstreamTokenConfig configWith(Map<String, Long> map) {
         return new FakeConfig(DEFAULT_30D, map);
@@ -194,6 +195,41 @@ class UpstreamTokenConfigTest {
         UpstreamTokenConfig cfg = configWith(map);
 
         assertEquals(OKTA_24H, cfg.expirySecondsForProvider("okta"));
+    }
+
+    @Test
+    void figma_exactMatchOverride_returnsConfiguredLifetime() {
+        // Figma is L2 promoted but NOT in GOOGLE_WORKSPACE_PROVIDERS, so the floor does not
+        // apply. The exact-match key must yield the configured 90 d AT lifetime.
+        Map<String, Long> map = new HashMap<>();
+        map.put("figma", FIGMA_90D);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(FIGMA_90D, cfg.expirySecondsForProvider("figma"));
+        assertEquals(FIGMA_90D, cfg.expirySecondsForProvider("figma#1318454437468440704"));
+    }
+
+    @Test
+    void figma_unconfigured_fallsBackToDefault() {
+        // Without an exact-match key Figma falls through to the global default (30 d). This
+        // mirrors how the production deployments configure it: chart values.yaml and the env
+        // overrides set figma=7776000 explicitly. If that value is dropped, this test
+        // demonstrates the fallback (which is shorter than the real 90 d AT — operators must
+        // set the override).
+        UpstreamTokenConfig cfg = configWith(new HashMap<>());
+
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("figma#1234"));
+    }
+
+    @Test
+    void figma_groupKeyDoesNotApplyToFigma() {
+        // The google-workspace group key is scoped to Workspace providers only. Figma must NOT
+        // accidentally inherit a Google-tier expiry just because the group key is set.
+        Map<String, Long> map = new HashMap<>();
+        map.put(UpstreamTokenConfig.GOOGLE_WORKSPACE_GROUP_KEY, GOOGLE_180D);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("figma#u"));
     }
 
     @Test

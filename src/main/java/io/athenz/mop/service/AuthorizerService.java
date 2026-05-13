@@ -224,13 +224,41 @@ public class AuthorizerService {
      * bare {@code (lookupKey, provider)} row. Prefer the 7-arg overload for new callers.
      */
     public void storeTokens(String user, String lookupKey, String idToken, String accessToken, String refreshToken, String provider) {
-        storeTokens(user, lookupKey, idToken, accessToken, refreshToken, provider, null);
+        storeTokens(user, lookupKey, idToken, accessToken, refreshToken, provider, null, null);
     }
 
+    /**
+     * Backward-compatible 7-arg overload. Bare-row TTL falls back to the global
+     * {@code server.token-store.expiry}. Use the 8-arg overload to honor a real upstream
+     * access-token lifetime (e.g. Figma's 90 d) on the bare row at fresh-consent time.
+     */
     public void storeTokens(String user, String lookupKey, String idToken, String accessToken, String refreshToken, String provider, String clientId) {
-        log.info("storing tokens for lookupKey: {} and user: {} from provider: {} (clientId={})", lookupKey, user, provider, clientId);
+        storeTokens(user, lookupKey, idToken, accessToken, refreshToken, provider, clientId, null);
+    }
+
+    /**
+     * 8-arg overload that lets the caller pin the bare-row TTL to the upstream access-token
+     * lifetime (in seconds) instead of the global {@code server.token-store.expiry} cap.
+     *
+     * <p>This matters for L2-promoted providers with long-lived ATs: without an explicit lifetime,
+     * a 90-day Figma AT (or similar) would still see its bare {@code (lookupKey, provider)} row
+     * evicted at {@code now + server.token-store.expiry + 5m} (~8h in stage/prod), forcing the
+     * AuthorizeResource "already-authorized?" check to fail and the user to re-consent before
+     * the real upstream AT actually expires.
+     *
+     * <p>{@code accessTokenLifetimeSeconds} is honored only when non-null and positive; null
+     * preserves the legacy behavior. The 5-minute {@link #TOKEN_STORE_TTL_GRACE_SECONDS} grace
+     * is always added on top so the row is not evicted at the very edge of the upstream AT.
+     */
+    public void storeTokens(String user, String lookupKey, String idToken, String accessToken, String refreshToken,
+                            String provider, String clientId, Long accessTokenLifetimeSeconds) {
+        log.info("storing tokens for lookupKey: {} and user: {} from provider: {} (clientId={}, accessTokenLifetimeSeconds={})",
+                lookupKey, user, provider, clientId, accessTokenLifetimeSeconds);
         long nowSeconds = Instant.now().getEpochSecond();
-        long absoluteTtl = nowSeconds + ttl + TOKEN_STORE_TTL_GRACE_SECONDS;
+        long effectiveTtl = (accessTokenLifetimeSeconds != null && accessTokenLifetimeSeconds > 0)
+                ? accessTokenLifetimeSeconds
+                : ttl;
+        long absoluteTtl = nowSeconds + effectiveTtl + TOKEN_STORE_TTL_GRACE_SECONDS;
         TokenWrapper cachedToken = new TokenWrapper(
                 user,
                 provider,

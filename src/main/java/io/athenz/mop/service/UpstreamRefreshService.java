@@ -96,9 +96,6 @@ public class UpstreamRefreshService {
     OktaTokenClient oktaTokenClient;
 
     @Inject
-    GoogleWorkspaceUpstreamRefreshClient googleWorkspaceUpstreamRefreshClient;
-
-    @Inject
     UpstreamProviderClassifier upstreamProviderClassifier;
 
     @Inject
@@ -508,17 +505,17 @@ public class UpstreamRefreshService {
         if (AudienceConstants.PROVIDER_OKTA.equals(provider)) {
             // Adapter so the Okta path can flow through the same code shape if a future caller
             // wants it. Today this is unused (the legacy single-arg path handles Okta directly).
+            // Kept inline because the lambda closes over oktaTokenClient — a service-level dep
+            // that we deliberately do not leak into UpstreamProviderClassifier.
             return (puid, rt) -> {
                 OktaTokens t = oktaTokenClient.refreshToken(rt);
                 return new UpstreamRefreshResponse(t.accessToken(), t.refreshToken(), t.idToken(),
                         t.expiresIn(), null);
             };
         }
-        if (upstreamProviderClassifier.isGoogleWorkspace(provider)) {
-            return googleWorkspaceUpstreamRefreshClient;
-        }
-        throw new UpstreamRefreshException(
-                "No UpstreamRefreshClient registered for provider=" + provider);
+        return upstreamProviderClassifier.resolveRefreshTokenClient(provider)
+                .orElseThrow(() -> new UpstreamRefreshException(
+                        "No UpstreamRefreshClient registered for provider=" + provider));
     }
 
     private static String providerOf(String providerUserId) {
