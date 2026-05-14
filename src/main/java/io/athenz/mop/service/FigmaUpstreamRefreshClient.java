@@ -63,10 +63,10 @@ public class FigmaUpstreamRefreshClient implements UpstreamRefreshClient {
     /** Documented Figma access-token lifetime (90 d); used only when the upstream omits {@code expires_in}. */
     static final long DEFAULT_EXPIRES_IN_SECONDS = 7_776_000L;
 
-    @ConfigProperty(name = "server.figma.client-id", defaultValue = "")
+    @ConfigProperty(name = "server.token-exchange.figma.client-id", defaultValue = "")
     String clientId;
 
-    @ConfigProperty(name = "server.figma.client-secret-key", defaultValue = "figma-client-secret")
+    @ConfigProperty(name = "server.token-exchange.figma.client-secret-key", defaultValue = "figma-client-secret")
     String clientSecretKey;
 
     @Inject
@@ -82,11 +82,11 @@ public class FigmaUpstreamRefreshClient implements UpstreamRefreshClient {
         }
         if (clientId == null || clientId.isBlank()) {
             throw new OktaTokenRefreshException(
-                    "Figma client_id not configured (quarkus.oidc.figma.client-id)");
+                    "Figma client_id not configured (server.token-exchange.figma.client-id)");
         }
         if (clientSecretKey == null || clientSecretKey.isBlank()) {
             throw new OktaTokenRefreshException(
-                    "Figma client secret key not configured (quarkus.oidc.figma.credentials.client-secret.provider.key)");
+                    "Figma client secret key not configured (server.token-exchange.figma.client-secret-key)");
         }
         Map<String, String> credentials = k8SSecretsProvider.getCredentials(null);
         String clientSecret = credentials != null ? credentials.get(clientSecretKey) : null;

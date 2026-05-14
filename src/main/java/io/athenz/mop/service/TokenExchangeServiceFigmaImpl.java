@@ -67,10 +67,10 @@ public class TokenExchangeServiceFigmaImpl implements TokenExchangeService {
     /** Figma documents 7,776,000 s (90 d) for access tokens; used only when the response omits {@code expires_in}. */
     static final long FIGMA_DEFAULT_TOKEN_TTL = 7_776_000L;
 
-    @ConfigProperty(name = "server.figma.client-id", defaultValue = "")
+    @ConfigProperty(name = "server.token-exchange.figma.client-id", defaultValue = "")
     String clientId;
 
-    @ConfigProperty(name = "server.figma.client-secret-key", defaultValue = "figma-client-secret")
+    @ConfigProperty(name = "server.token-exchange.figma.client-secret-key", defaultValue = "figma-client-secret")
     String clientSecretKey;
 
     @Inject
@@ -124,7 +124,7 @@ public class TokenExchangeServiceFigmaImpl implements TokenExchangeService {
         }
 
         if (clientSecretKey == null || clientSecretKey.isBlank()) {
-            log.warn("Figma refresh: client secret key not configured (quarkus.oidc.figma.credentials.client-secret.provider.key)");
+            log.warn("Figma refresh: client secret key not configured (server.token-exchange.figma.client-secret-key)");
             return null;
         }
         Map<String, String> credentials = k8SSecretsProvider.getCredentials(null);

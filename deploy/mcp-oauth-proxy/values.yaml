@@ -360,7 +360,6 @@ oidc:
     scopes:
       - mcp:connect
       - current_user:read
-    callbackRedirectUri: ""
   embrace:
     authServerUrl: "https://dash-api.embrace.io"
     authorizationUrl: "https://dash.embrace.io/oauth/authorize"
