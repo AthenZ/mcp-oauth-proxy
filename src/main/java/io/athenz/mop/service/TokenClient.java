@@ -32,7 +32,9 @@ public interface TokenClient {
      * @param request the token request to execute
      * @return the token response
      * @throws IOException if an I/O error occurs
-     * @throws ParseException if the response cannot be parsed
+     * @throws ParseException if the response cannot be parsed; implementations should throw
+     *     {@link TokenParseException} (a subclass) when an HTTPResponse is available so
+     *     callers can recover the raw status code and body for diagnostic logging.
      */
     TokenResponse execute(TokenRequest request) throws IOException, ParseException;
 }
