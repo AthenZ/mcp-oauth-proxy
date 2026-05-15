@@ -246,6 +246,36 @@ quarkus:
         strategy: keep-all-tokens
       token:
         issuer: any
+    figma:
+      auth-server-url: "https://www.figma.com"
+      discovery-enabled: false
+      authorization-path: "/oauth/mcp"
+      token-path: "https://api.figma.com/v1/oauth/token"
+      user-info-path: "https://api.figma.com/v1/me"
+      client-id: ${FIGMA_CLIENT_ID:}
+      credentials:
+        client-secret:
+          provider:
+            key: ${FIGMA_CLIENT_SECRET_KEY:figma-client-secret}
+          method: post
+      authentication:
+        scopes:
+          - mcp:connect
+          - current_user:read
+        redirect-path: /figma/authorize/callback
+        restore-path-after-redirect: true
+        add-openid-scope: false
+        id-token-required: false
+        user-info-required: true
+        verify-access-token: false
+        pkce-required: true
+      application-type: web-app
+      allow-user-info-cache: false
+      cache-user-info-in-idtoken: true
+      token-state-manager:
+        strategy: keep-all-tokens
+      token:
+        issuer: any
     embrace:
       discovery-enabled: false
       auth-server-url: ${EMBRACE_AUTH_SERVER_URL:https://dash-api.embrace.io}
@@ -402,6 +432,7 @@ server:
     expiry-seconds-by-provider:
       okta: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_OKTA:86400}
       google-workspace: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_GOOGLE_WORKSPACE:15552000}
+      figma: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_FIGMA:7776000}
     ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:3}
   # Dedicated index keyed by H(bearer) for /userinfo bearer resolution. Each minted bearer owns
   # its own row, so multi-window /userinfo no longer 401s on GSI clobbering. The row stores no
@@ -455,6 +486,9 @@ server:
     google-workspace:
       client-id: ${GOOGLE_WORKSPACE_CLIENT_ID}
       client-secret-key: ${GOOGLE_WORKSPACE_CLIENT_SECRET_KEY}
+    figma:
+      client-id: ${FIGMA_CLIENT_ID:}
+      client-secret-key: ${FIGMA_CLIENT_SECRET_KEY:figma-client-secret}
     splunk:
       admin-token-secret-key: splunk-api-stage
       mirror-user-prefix: mcp.

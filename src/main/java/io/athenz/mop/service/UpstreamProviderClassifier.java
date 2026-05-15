@@ -16,6 +16,8 @@
 package io.athenz.mop.service;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -33,11 +35,15 @@ import java.util.Set;
  *   <li>The 12 Google Workspace providers — promoted to L2 to fix the sibling-inheritance trap
  *       that bit us when a poisoned upstream RT in an "ACTIVE" sibling row poisoned every fresh
  *       login. With the canonical-row model there are no siblings, only the L2 row.</li>
+ *   <li>{@code figma} — promoted to L2 so the bare {@code (subject, figma)} row in
+ *       {@code mcp-oauth-proxy-tokens} honors the real 90-day Figma access-token lifetime
+ *       instead of the global ~8h {@code server.token-store.expiry} cap. Without promotion the
+ *       row would evict 8h after consent regardless of the real AT lifetime.</li>
  * </ul>
  *
- * <p>Native-IdP providers like Slack/GitHub/Atlassian/Embrace stay on the legacy per-client
- * refresh-tokens row model: they don't suffer from the same Google-style RT-rotation-on-every-refresh
- * pressure, so the simpler model is fine for them.
+ * <p>Other native-IdP providers like Slack/GitHub/Atlassian/Embrace stay on the legacy
+ * per-client refresh-tokens row model: their access-token lifetimes are short enough that the
+ * 8h bare-row TTL is not painful.
  */
 @ApplicationScoped
 public class UpstreamProviderClassifier {
@@ -65,12 +71,22 @@ public class UpstreamProviderClassifier {
 
     public static final long GOOGLE_WORKSPACE_EXPIRY_SECONDS_FLOOR = 15_552_000L; // 6 months in seconds (180 days)
 
+    /** Provider id for Figma (90-day access-token lifetime, L2 promoted). */
+    public static final String FIGMA_PROVIDER = "figma";
+
     private static final Set<String> PROMOTED_PROVIDERS;
     static {
         Set<String> all = new java.util.HashSet<>(GOOGLE_WORKSPACE_PROVIDERS);
         all.add(AudienceConstants.PROVIDER_OKTA);
+        all.add(FIGMA_PROVIDER);
         PROMOTED_PROVIDERS = Set.copyOf(all);
     }
+
+    @Inject
+    GoogleWorkspaceUpstreamRefreshClient googleWorkspaceUpstreamRefreshClient;
+
+    @Inject
+    FigmaUpstreamRefreshClient figmaUpstreamRefreshClient;
 
     /**
      * Returns true when the provider participates in the L2 canonical upstream-RT model.
@@ -89,13 +105,32 @@ public class UpstreamProviderClassifier {
 
     /**
      * True for any of the 12 google-workspace providers. Useful where the surrounding code
-     * already knows it's not Okta but still needs to disambiguate Google from native-IdP
-     * providers (e.g. when picking the right {@code UpstreamRefreshClient}).
+     * already knows it's not Okta but still needs to disambiguate Google from other promoted
+     * providers (e.g. Figma) when picking telemetry labels or downstream behavior.
      */
     public boolean isGoogleWorkspace(String provider) {
-        if (provider == null || provider.isEmpty() || AudienceConstants.PROVIDER_OKTA.equals(provider)) {
+        if (provider == null || provider.isEmpty()) {
             return false;
         }
-        return PROMOTED_PROVIDERS.contains(provider);
+        return GOOGLE_WORKSPACE_PROVIDERS.contains(provider);
+    }
+
+    /**
+     * Resolves the {@link UpstreamRefreshClient} for non-Okta promoted providers. Returns
+     * {@link Optional#empty()} for Okta (callers handle Okta via the legacy single-arg path) and
+     * for unknown providers. Centralising the dispatch here keeps {@code UpstreamRefreshService.clientFor}
+     * to a single delegating call and makes adding a new promoted provider a one-file change.
+     */
+    public Optional<UpstreamRefreshClient> resolveRefreshTokenClient(String provider) {
+        if (provider == null || provider.isEmpty() || AudienceConstants.PROVIDER_OKTA.equals(provider)) {
+            return Optional.empty();
+        }
+        if (isGoogleWorkspace(provider)) {
+            return Optional.of(googleWorkspaceUpstreamRefreshClient);
+        }
+        if (FIGMA_PROVIDER.equals(provider)) {
+            return Optional.of(figmaUpstreamRefreshClient);
+        }
+        return Optional.empty();
     }
 }

@@ -47,6 +47,24 @@ class K8SSecretsProviderTest {
     }
 
     @Test
+    void credentialsMapFromData_includesFigmaClientSecret() {
+        Map<String, byte[]> data = new HashMap<>();
+        data.put(K8SSecretsProvider.SECRET_DATA_KEY_FIGMA_CLIENT_SECRET,
+                "figma-secret".getBytes(StandardCharsets.UTF_8));
+
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(data);
+
+        assertEquals("figma-secret", m.get(K8SSecretsProvider.SECRET_DATA_KEY_FIGMA_CLIENT_SECRET));
+    }
+
+    @Test
+    void credentialsMapFromData_figmaClientSecretAbsent_resolvesToEmpty() {
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(new HashMap<>());
+
+        assertEquals("", m.get(K8SSecretsProvider.SECRET_DATA_KEY_FIGMA_CLIENT_SECRET));
+    }
+
+    @Test
     void credentialsMapFromData_includesGrafanaStageAndProd() {
         Map<String, byte[]> data = new HashMap<>();
         data.put(K8SSecretsProvider.SECRET_DATA_KEY_GRAFANA_API_STAGE,

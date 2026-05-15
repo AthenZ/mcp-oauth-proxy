@@ -46,6 +46,9 @@ data:
             slack:
               paths: "/slack/*"
               policy: authenticated
+            figma:
+              paths: "/figma/*"
+              policy: authenticated
             embrace:
               paths: "/embrace/*"
               policy: authenticated
@@ -173,6 +176,37 @@ data:
             extra-params:
               user_scope: {{ .Values.oidc.slack.userScopes | quote }}
               team: {{ .Values.oidc.slack.team | quote }}
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            issuer: any
+        figma:
+          auth-server-url: "https://www.figma.com"
+          discovery-enabled: false
+          authorization-path: "/oauth/mcp"
+          token-path: "https://api.figma.com/v1/oauth/token"
+          user-info-path: "https://api.figma.com/v1/me"
+          client-id: {{ .Values.oidc.figma.clientId | quote }}
+          credentials:
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.figma.clientSecretKey }}
+              method: post
+          authentication:
+            scopes:
+            {{- range .Values.oidc.figma.scopes }}
+              - {{ . | quote }}
+            {{- end }}
+            redirect-path: /figma/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: false
+            id-token-required: false
+            user-info-required: true
+            verify-access-token: false
+            pkce-required: true
           application-type: web-app
           allow-user-info-cache: false
           cache-user-info-in-idtoken: true
@@ -370,6 +404,9 @@ data:
         google-workspace:
           client-id: {{ .Values.oidc.googleWorkspace.clientId | quote }}
           client-secret-key: {{ .Values.oidc.googleWorkspace.clientSecretKey }}
+        figma:
+          client-id: {{ .Values.oidc.figma.clientId | quote }}
+          client-secret-key: {{ .Values.oidc.figma.clientSecretKey | quote }}
         athenz-token-exchange:
           audience: {{ .Values.application.tokenExchange.athenzTokenExchange.audience | default "sys.auth.gcp" | quote }}
         google-workforce:
@@ -465,6 +502,9 @@ data:
             - name: slack
               endpoint: {{ .Values.oidc.slack.endpoint | quote }}
               username-claim: {{ .Values.oidc.slack.claim | quote }}
+            - name: figma
+              endpoint: {{ .Values.oidc.figma.endpoint | quote }}
+              username-claim: {{ .Values.oidc.figma.claim | quote }}
       resources:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}

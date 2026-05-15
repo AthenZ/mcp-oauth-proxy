@@ -15,11 +15,16 @@
  */
 package io.athenz.mop.service;
 
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -29,14 +34,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class UpstreamProviderClassifierTest {
 
-    private final UpstreamProviderClassifier classifier = new UpstreamProviderClassifier();
+    private UpstreamProviderClassifier classifier;
+
+    @Mock
+    private GoogleWorkspaceUpstreamRefreshClient googleWorkspaceUpstreamRefreshClient;
+
+    @Mock
+    private FigmaUpstreamRefreshClient figmaUpstreamRefreshClient;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        classifier = new UpstreamProviderClassifier();
+        classifier.googleWorkspaceUpstreamRefreshClient = googleWorkspaceUpstreamRefreshClient;
+        classifier.figmaUpstreamRefreshClient = figmaUpstreamRefreshClient;
+    }
 
     @ParameterizedTest
     @ValueSource(strings = {
             "okta",
             "google-drive", "google-docs", "google-sheets", "google-slides",
             "google-gmail", "google-calendar", "google-tasks", "google-chat",
-            "google-forms", "google-keep", "google-meet", "google-cloud-platform"
+            "google-forms", "google-keep", "google-meet", "google-cloud-platform",
+            "figma"
     })
     void isUpstreamPromoted_returnsTrueForPromotedProviders(String provider) {
         assertTrue(classifier.isUpstreamPromoted(provider),
@@ -46,7 +66,8 @@ class UpstreamProviderClassifierTest {
     @ParameterizedTest
     @ValueSource(strings = {
             "slack", "github", "atlassian", "embrace", "splunk", "grafana",
-            "evaluate", "databricks-sql", "google", "google-unknown", "Google-Drive"
+            "evaluate", "databricks-sql", "google", "google-unknown", "Google-Drive",
+            "Figma"
     })
     void isUpstreamPromoted_returnsFalseForNonPromotedOrTypoProviders(String provider) {
         assertFalse(classifier.isUpstreamPromoted(provider),
@@ -76,10 +97,59 @@ class UpstreamProviderClassifierTest {
     }
 
     @Test
+    void isGoogleWorkspace_falseForFigma() {
+        assertFalse(classifier.isGoogleWorkspace("figma"),
+                "Figma is promoted but is NOT google-workspace; classifier must distinguish them");
+    }
+
+    @Test
     void isGoogleWorkspace_falseForNullEmptyAndNonGoogle() {
         assertFalse(classifier.isGoogleWorkspace(null));
         assertFalse(classifier.isGoogleWorkspace(""));
         assertFalse(classifier.isGoogleWorkspace("slack"));
         assertFalse(classifier.isGoogleWorkspace("github"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "google-drive", "google-docs", "google-sheets", "google-slides",
+            "google-gmail", "google-calendar", "google-tasks", "google-chat",
+            "google-forms", "google-keep", "google-meet", "google-cloud-platform"
+    })
+    void resolveRefreshTokenClient_returnsGoogleClientForGoogleWorkspaceProviders(String provider) {
+        Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient(provider);
+        assertTrue(resolved.isPresent(), "Google Workspace provider should resolve to a client: " + provider);
+        assertSame(googleWorkspaceUpstreamRefreshClient, resolved.get());
+    }
+
+    @Test
+    void resolveRefreshTokenClient_returnsFigmaClientForFigma() {
+        Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("figma");
+        assertTrue(resolved.isPresent(), "Figma should resolve to the Figma client");
+        assertSame(figmaUpstreamRefreshClient, resolved.get());
+    }
+
+    @Test
+    void resolveRefreshTokenClient_emptyForOkta() {
+        // Okta is intentionally NOT resolved here — UpstreamRefreshService.clientFor handles
+        // Okta with a service-local lambda over OktaTokenClient, which we deliberately do not
+        // leak into the classifier.
+        assertTrue(classifier.resolveRefreshTokenClient("okta").isEmpty());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "slack", "github", "atlassian", "embrace", "splunk", "grafana", "evaluate",
+            "databricks-sql", "unknown", "Figma", "Google-Drive"
+    })
+    void resolveRefreshTokenClient_emptyForNonPromotedOrTypoProviders(String provider) {
+        assertTrue(classifier.resolveRefreshTokenClient(provider).isEmpty(),
+                "Non-promoted (or typo) provider must NOT resolve to a client: " + provider);
+    }
+
+    @Test
+    void resolveRefreshTokenClient_emptyForNullOrEmpty() {
+        assertTrue(classifier.resolveRefreshTokenClient(null).isEmpty());
+        assertTrue(classifier.resolveRefreshTokenClient("").isEmpty());
     }
 }
