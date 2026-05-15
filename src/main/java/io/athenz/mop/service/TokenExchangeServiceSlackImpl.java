@@ -173,6 +173,11 @@ public class TokenExchangeServiceSlackImpl implements TokenExchangeService {
                 recordSlackRefresh(t0, oauthProvider, oauthClient, region, false);
                 return null;
             }
+        } catch (TokenParseException e) {
+            log.error("Slack refresh failed (could not parse upstream response); status={} body={}",
+                    e.getStatusCode(), e.getBody(), e);
+            recordSlackRefresh(t0, oauthProvider, oauthClient, region, false);
+            return null;
         } catch (Exception e) {
             log.error("Slack refresh failed (could not complete token request or parse upstream response)", e);
             recordSlackRefresh(t0, oauthProvider, oauthClient, region, false);

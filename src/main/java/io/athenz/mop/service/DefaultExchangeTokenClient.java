@@ -48,7 +48,6 @@ public class DefaultExchangeTokenClient implements TokenClient {
         HTTPRequest httpRequest = request.toHTTPRequest();
         httpRequest.setHeader("Accept", "application/json");
         HTTPResponse httpResponse = httpRequest.send();
-        TokenResponse tokenResponse = TokenResponse.parse(httpResponse);
         String p = UpstreamHttpCallLabels.oauthProvider();
         String ep = UpstreamHttpCallLabels.upstreamEndpoint();
         if (p != null && ep != null) {
@@ -56,6 +55,10 @@ public class DefaultExchangeTokenClient implements TokenClient {
             metrics.recordUpstreamRequest(p, ep, httpResponse.getStatusCode(),
                     metricsRegionProvider.primaryRegion(), seconds);
         }
-        return tokenResponse;
+        try {
+            return TokenResponse.parse(httpResponse);
+        } catch (ParseException e) {
+            throw new TokenParseException(e.getMessage(), httpResponse, e);
+        }
     }
 }
