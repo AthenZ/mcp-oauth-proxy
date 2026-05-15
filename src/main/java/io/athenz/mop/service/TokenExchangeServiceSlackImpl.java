@@ -22,6 +22,7 @@ import com.nimbusds.oauth2.sdk.TokenRequest;
 import com.nimbusds.oauth2.sdk.TokenResponse;
 import com.nimbusds.oauth2.sdk.auth.ClientSecretBasic;
 import com.nimbusds.oauth2.sdk.auth.Secret;
+import com.nimbusds.oauth2.sdk.http.HTTPResponse;
 import com.nimbusds.oauth2.sdk.id.ClientID;
 import com.nimbusds.oauth2.sdk.token.AccessToken;
 import com.nimbusds.oauth2.sdk.token.RefreshToken;
@@ -164,7 +165,11 @@ public class TokenExchangeServiceSlackImpl implements TokenExchangeService {
                 );
             } else {
                 TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
-                log.error("Slack refresh failed; upstream response: {}", UpstreamTokenRefreshErrors.formatTokenError(errorResponse));
+                HTTPResponse http = errorResponse.toHTTPResponse();
+                int status = http.getStatusCode();
+                String body = http.getBody();
+                log.error("Slack refresh failed; upstream response: {}; status={} body={}",
+                        UpstreamTokenRefreshErrors.formatTokenError(errorResponse), status, body);
                 recordSlackRefresh(t0, oauthProvider, oauthClient, region, false);
                 return null;
             }
