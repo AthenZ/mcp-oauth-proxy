@@ -42,12 +42,16 @@ class UpstreamProviderClassifierTest {
     @Mock
     private FigmaUpstreamRefreshClient figmaUpstreamRefreshClient;
 
+    @Mock
+    private DatadogUpstreamRefreshClient datadogUpstreamRefreshClient;
+
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
         classifier = new UpstreamProviderClassifier();
         classifier.googleWorkspaceUpstreamRefreshClient = googleWorkspaceUpstreamRefreshClient;
         classifier.figmaUpstreamRefreshClient = figmaUpstreamRefreshClient;
+        classifier.datadogUpstreamRefreshClient = datadogUpstreamRefreshClient;
     }
 
     @ParameterizedTest
@@ -56,7 +60,8 @@ class UpstreamProviderClassifierTest {
             "google-drive", "google-docs", "google-sheets", "google-slides",
             "google-gmail", "google-calendar", "google-tasks", "google-chat",
             "google-forms", "google-keep", "google-meet", "google-cloud-platform",
-            "figma"
+            "figma",
+            "datadog"
     })
     void isUpstreamPromoted_returnsTrueForPromotedProviders(String provider) {
         assertTrue(classifier.isUpstreamPromoted(provider),
@@ -67,7 +72,7 @@ class UpstreamProviderClassifierTest {
     @ValueSource(strings = {
             "slack", "github", "atlassian", "embrace", "splunk", "grafana",
             "evaluate", "databricks-sql", "google", "google-unknown", "Google-Drive",
-            "Figma"
+            "Figma", "Datadog", "datadoghq"
     })
     void isUpstreamPromoted_returnsFalseForNonPromotedOrTypoProviders(String provider) {
         assertFalse(classifier.isUpstreamPromoted(provider),
@@ -103,6 +108,12 @@ class UpstreamProviderClassifierTest {
     }
 
     @Test
+    void isGoogleWorkspace_falseForDatadog() {
+        assertFalse(classifier.isGoogleWorkspace("datadog"),
+                "Datadog is promoted but is NOT google-workspace; classifier must distinguish them");
+    }
+
+    @Test
     void isGoogleWorkspace_falseForNullEmptyAndNonGoogle() {
         assertFalse(classifier.isGoogleWorkspace(null));
         assertFalse(classifier.isGoogleWorkspace(""));
@@ -130,6 +141,13 @@ class UpstreamProviderClassifierTest {
     }
 
     @Test
+    void resolveRefreshTokenClient_returnsDatadogClientForDatadog() {
+        Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("datadog");
+        assertTrue(resolved.isPresent(), "Datadog should resolve to the Datadog client");
+        assertSame(datadogUpstreamRefreshClient, resolved.get());
+    }
+
+    @Test
     void resolveRefreshTokenClient_emptyForOkta() {
         // Okta is intentionally NOT resolved here — UpstreamRefreshService.clientFor handles
         // Okta with a service-local lambda over OktaTokenClient, which we deliberately do not
@@ -140,7 +158,7 @@ class UpstreamProviderClassifierTest {
     @ParameterizedTest
     @ValueSource(strings = {
             "slack", "github", "atlassian", "embrace", "splunk", "grafana", "evaluate",
-            "databricks-sql", "unknown", "Figma", "Google-Drive"
+            "databricks-sql", "unknown", "Figma", "Google-Drive", "Datadog", "datadoghq"
     })
     void resolveRefreshTokenClient_emptyForNonPromotedOrTypoProviders(String provider) {
         assertTrue(classifier.resolveRefreshTokenClient(provider).isEmpty(),

@@ -26,6 +26,9 @@ data:
             embrace-internal-userinfo:
               paths: "/internal/embrace/oauth-userinfo"
               policy: permit
+            datadog-internal-userinfo:
+              paths: "/internal/datadog/oauth-userinfo"
+              policy: permit
             authorize-error:
               paths: "/authorize/error"
               policy: permit
@@ -48,6 +51,9 @@ data:
               policy: authenticated
             figma:
               paths: "/figma/*"
+              policy: authenticated
+            datadog:
+              paths: "/datadog/*"
               policy: authenticated
             embrace:
               paths: "/embrace/*"
@@ -214,6 +220,36 @@ data:
             strategy: keep-all-tokens
           token:
             issuer: any
+        datadog:
+          auth-server-url: "https://mcp.datadoghq.com"
+          discovery-enabled: false
+          authorization-path: "/api/unstable/mcp-server/authorize"
+          token-path: "https://mcp.datadoghq.com/api/unstable/mcp-server/token"
+          {{- if .Values.oidc.datadog.userInfoPath }}
+          user-info-path: {{ .Values.oidc.datadog.userInfoPath | quote }}
+          {{- else }}
+          {{- $datadogUiBase := .Values.oidc.datadog.syntheticUserInfoBaseUrl | default (printf "https://%s" .Values.application.host) }}
+          user-info-path: {{ printf "%s/internal/datadog/oauth-userinfo" $datadogUiBase | quote }}
+          {{- end }}
+          client-id: {{ .Values.oidc.datadog.clientId | quote }}
+          authentication:
+            scopes: []
+            redirect-path: /datadog/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: false
+            id-token-required: false
+            user-info-required: true
+            verify-access-token: false
+            pkce-required: true
+            extra-params:
+              resource: {{ .Values.oidc.datadog.resource | default "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp" | quote }}
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            issuer: any
         embrace:
 {{- if (.Values.oidc.embrace.tlsInsecureClient | default false) }}
           tls:
@@ -371,6 +407,13 @@ data:
             l0-max-size: {{ .l0MaxSize | default 5000 }}
             l0-expire-after-write-seconds: {{ .l0ExpireAfterWriteSeconds | default 3600 }}
       {{- end }}
+      {{- with .Values.application.userinfoClaimsCache }}
+      userinfo:
+        claims-cache:
+          enabled: {{ .enabled | default false }}
+          max-size: {{ .maxSize | default 10000 }}
+          expire-after-write-seconds: {{ .expireAfterWriteSeconds | default 86400 }}
+      {{- end }}
       cross-region-fallback:
         enabled: {{ .Values.application.crossRegionFallback.enabled | default false }}
         {{- if .Values.application.crossRegionFallback.enabled }}
@@ -407,6 +450,8 @@ data:
         figma:
           client-id: {{ .Values.oidc.figma.clientId | quote }}
           client-secret-key: {{ .Values.oidc.figma.clientSecretKey | quote }}
+        datadog:
+          client-id: {{ .Values.oidc.datadog.clientId | quote }}
         athenz-token-exchange:
           audience: {{ .Values.application.tokenExchange.athenzTokenExchange.audience | default "sys.auth.gcp" | quote }}
         google-workforce:
@@ -505,6 +550,9 @@ data:
             - name: figma
               endpoint: {{ .Values.oidc.figma.endpoint | quote }}
               username-claim: {{ .Values.oidc.figma.claim | quote }}
+            - name: datadog
+              endpoint: {{ .Values.oidc.datadog.endpoint | quote }}
+              username-claim: {{ .Values.oidc.datadog.claim | quote }}
       resources:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}

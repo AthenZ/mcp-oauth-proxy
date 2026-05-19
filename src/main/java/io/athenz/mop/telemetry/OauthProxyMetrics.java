@@ -80,8 +80,37 @@ public class OauthProxyMetrics {
     public static final List<String> USERINFO_OKTA_CACHE_OUTCOMES = List.of(
             "fresh_hit", "expired_refreshed", "absent_refreshed", "stale_claims_served");
 
+    /**
+     * Outcomes emitted from {@code UserInfoResource.getUserInfo} when the per-pod userinfo
+     * claims cache ({@code UserInfoClaimsCache}) is consulted.
+     * <ul>
+     *   <li>{@code fresh_hit_no_okta_call} — cache hit; response built from the cached snapshot
+     *       and the existing Okta resolution flow was skipped entirely.</li>
+     *   <li>{@code miss_built_from_idtoken} — cache miss; existing flow ran, succeeded, and the
+     *       freshly-built stripped claim map was written into the cache (strict write-once).</li>
+     *   <li>{@code miss_okta_refresh_failed_no_cache} — cache miss; existing flow ran but
+     *       returned a 401 because no parseable id_token was available to build claims from.</li>
+     *   <li>{@code disabled} — every userinfo call when the feature flag is off, so a flag flip
+     *       is visible in dashboards. Emitted regardless of bearer-index outcome.</li>
+     * </ul>
+     */
+    public static final List<String> USERINFO_CLAIMS_CACHE_OUTCOMES = List.of(
+            "fresh_hit_no_okta_call",
+            "miss_built_from_idtoken",
+            "miss_okta_refresh_failed_no_cache",
+            "disabled");
+
     private static final List<String> OKTA_SESSION_CACHE_EVICTION_REASONS = List.of(
             "size", "expired_write", "explicit", "collected");
+
+    /**
+     * Eviction reasons emitted from the {@code UserInfoClaimsCache} Caffeine {@code RemovalListener}.
+     * Identical shape to {@link #OKTA_SESSION_CACHE_EVICTION_REASONS}; kept as a separate list so
+     * the counter can pre-seed only the reasons this cache actually emits (no {@code explicit}
+     * because strict write-once has no caller that invalidates).
+     */
+    private static final List<String> USERINFO_CLAIMS_CACHE_EVICTION_REASONS = List.of(
+            "size", "expired_write", "collected");
 
     private static final List<String> CROSS_REGION_FALLBACK_CALL_SITES = List.of(
             "authorize_user_token",
@@ -157,14 +186,19 @@ public class OauthProxyMetrics {
     private LongCounter upstreamOktaCacheTotal;
     private LongCounter upstreamPromotedCacheTotal;
     private LongCounter userinfoOktaCacheTotal;
+    private LongCounter userinfoClaimsCacheTotal;
+    private LongCounter userinfoClaimsCacheEvictionsTotal;
     private LongCounter oktaSessionCacheEvictionsTotal;
     private LongCounter bearerIndexLookupTotal;
     private LongCounter bearerIndexWriteTotal;
     private LongCounter tokenResourceValidationTotal;
     private final AtomicReference<LongSupplier> oktaSessionCacheSizeSupplier = new AtomicReference<>(() -> 0L);
+    private final AtomicReference<LongSupplier> userinfoClaimsCacheSizeSupplier = new AtomicReference<>(() -> 0L);
     /** Held to keep the asynchronous gauge alive (otherwise it can be GC'd by the SDK). */
     @SuppressWarnings("unused")
     private ObservableLongGauge oktaSessionCacheSizeGauge;
+    @SuppressWarnings("unused")
+    private ObservableLongGauge userinfoClaimsCacheSizeGauge;
 
     @PostConstruct
     void init() {
@@ -275,6 +309,18 @@ public class OauthProxyMetrics {
                 .setDescription("Caffeine RemovalListener events on the per-pod Okta upstream session cache. "
                         + "Labels: reason=size|expired_write|explicit|collected.")
                 .build();
+        userinfoClaimsCacheTotal = meter
+                .counterBuilder("mop_userinfo_claims_cache_total")
+                .setDescription("Outcome of the per-pod userinfo claims-cache consult inside "
+                        + "UserInfoResource.getUserInfo. Labels: outcome=fresh_hit_no_okta_call|"
+                        + "miss_built_from_idtoken|miss_okta_refresh_failed_no_cache|disabled.")
+                .build();
+        userinfoClaimsCacheEvictionsTotal = meter
+                .counterBuilder("mop_userinfo_claims_cache_evictions_total")
+                .setDescription("Caffeine RemovalListener events on the per-pod userinfo claims "
+                        + "cache. Labels: reason=size|expired_write|collected. No \"explicit\" "
+                        + "reason because strict write-once has no caller that invalidates.")
+                .build();
         bearerIndexLookupTotal = meter
                 .counterBuilder("mop_bearer_index_lookup_total")
                 .setDescription("Outcome of /userinfo bearer-index lookups against the "
@@ -303,6 +349,12 @@ public class OauthProxyMetrics {
                 .setDescription("Approximate per-pod entry count for the shared Okta upstream session cache (L0).")
                 .buildWithCallback(measurement ->
                         measurement.record(oktaSessionCacheSizeSupplier.get().getAsLong(), Attributes.empty()));
+        userinfoClaimsCacheSizeGauge = meter
+                .gaugeBuilder("mop_userinfo_claims_cache_size")
+                .ofLongs()
+                .setDescription("Approximate per-pod entry count for the userinfo claims cache.")
+                .buildWithCallback(measurement ->
+                        measurement.record(userinfoClaimsCacheSizeSupplier.get().getAsLong(), Attributes.empty()));
     }
 
     /**
@@ -420,6 +472,12 @@ public class OauthProxyMetrics {
         }
         for (String reason : OKTA_SESSION_CACHE_EVICTION_REASONS) {
             oktaSessionCacheEvictionsTotal.add(0, Attributes.builder().put(REASON, reason).build());
+        }
+        for (String outcome : USERINFO_CLAIMS_CACHE_OUTCOMES) {
+            userinfoClaimsCacheTotal.add(0, Attributes.builder().put(OUTCOME, outcome).build());
+        }
+        for (String reason : USERINFO_CLAIMS_CACHE_EVICTION_REASONS) {
+            userinfoClaimsCacheEvictionsTotal.add(0, Attributes.builder().put(REASON, reason).build());
         }
         for (String outcome : BEARER_INDEX_LOOKUP_OUTCOMES) {
             bearerIndexLookupTotal.add(0, Attributes.builder().put(OUTCOME, outcome).build());
@@ -836,6 +894,37 @@ public class OauthProxyMetrics {
     public void registerOktaSessionCacheSizeGauge(LongSupplier supplier) {
         if (supplier != null) {
             oktaSessionCacheSizeSupplier.set(supplier);
+        }
+    }
+
+    /**
+     * Records the outcome of the per-pod userinfo claims-cache consult inside
+     * {@code UserInfoResource.getUserInfo}.
+     *
+     * @param outcome one of {@code fresh_hit_no_okta_call}, {@code miss_built_from_idtoken},
+     *                {@code miss_okta_refresh_failed_no_cache}, {@code disabled}.
+     */
+    public void recordUserinfoClaimCacheOutcome(String outcome) {
+        userinfoClaimsCacheTotal.add(1, Attributes.builder().put(OUTCOME, nullToEmpty(outcome)).build());
+    }
+
+    /**
+     * Records a Caffeine eviction event from the per-pod userinfo claims cache.
+     *
+     * @param reason one of {@code size}, {@code expired_write}, {@code collected}.
+     */
+    public void recordUserinfoClaimsCacheEviction(String reason) {
+        userinfoClaimsCacheEvictionsTotal.add(1, Attributes.builder().put(REASON, nullToEmpty(reason)).build());
+    }
+
+    /**
+     * Wires the per-pod userinfo claims cache into the {@code mop_userinfo_claims_cache_size}
+     * observable gauge. Called once at cache initialization. Replacing the supplier is safe;
+     * the gauge always reads the latest registered supplier.
+     */
+    public void registerUserinfoClaimsCacheSizeGauge(LongSupplier supplier) {
+        if (supplier != null) {
+            userinfoClaimsCacheSizeSupplier.set(supplier);
         }
     }
 

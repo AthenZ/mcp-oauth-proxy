@@ -17,6 +17,9 @@ quarkus:
         embrace-internal-userinfo:
           paths: "/internal/embrace/oauth-userinfo"
           policy: permit
+        datadog-internal-userinfo:
+          paths: "/internal/datadog/oauth-userinfo"
+          policy: permit
         authorize-error:
           paths: "/authorize/error"
           policy: permit
@@ -276,6 +279,31 @@ quarkus:
         strategy: keep-all-tokens
       token:
         issuer: any
+    datadog:
+      auth-server-url: "https://mcp.datadoghq.com"
+      discovery-enabled: false
+      authorization-path: "/api/unstable/mcp-server/authorize"
+      token-path: "https://mcp.datadoghq.com/api/unstable/mcp-server/token"
+      user-info-path: ${MOP_DATADOG_SYNTHETIC_USERINFO_URL:https://127.0.0.1/internal/datadog/oauth-userinfo}
+      client-id: ${DATADOG_CLIENT_ID:}
+      authentication:
+        scopes: []
+        redirect-path: /datadog/authorize/callback
+        restore-path-after-redirect: true
+        add-openid-scope: false
+        id-token-required: false
+        user-info-required: true
+        verify-access-token: false
+        pkce-required: true
+        extra-params:
+          resource: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp"
+      application-type: web-app
+      allow-user-info-cache: false
+      cache-user-info-in-idtoken: true
+      token-state-manager:
+        strategy: keep-all-tokens
+      token:
+        issuer: any
     embrace:
       discovery-enabled: false
       auth-server-url: ${EMBRACE_AUTH_SERVER_URL:https://dash-api.embrace.io}
@@ -433,6 +461,7 @@ server:
       okta: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_OKTA:86400}
       google-workspace: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_GOOGLE_WORKSPACE:15552000}
       figma: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_FIGMA:7776000}
+      datadog: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_DATADOG:15552000}
     ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:3}
   # Dedicated index keyed by H(bearer) for /userinfo bearer resolution. Each minted bearer owns
   # its own row, so multi-window /userinfo no longer 401s on GSI clobbering. The row stores no
@@ -461,6 +490,23 @@ server:
         # Read-time freshness uses the entry's own min(idExp, accessExp) — there is intentionally
         # no expireAfterAccess. [600, 7200].
         l0-expire-after-write-seconds: ${MOP_OKTA_SESSION_CACHE_L0_EXPIRE_AFTER_WRITE_SECONDS:3600}
+  userinfo:
+    claims-cache:
+      # Per-pod strict-write-once cache of stripped /userinfo claim maps keyed by userId. When
+      # enabled, a /userinfo call whose bearer-index lookup succeeds and whose userId is in the
+      # cache returns 200 without touching tryRefreshOktaToken or any Okta upstream code. This
+      # stabilizes /userinfo when Okta upstream is unhealthy at the cost of up to ttl staleness
+      # for identity claims (sub/email/short_id are stable across an Okta session, so this is
+      # the explicitly chosen budget). Off by default; flip on after stage soak.
+      # See .cursor/plans/userinfo_claims_cache_24h_ff77cca0.plan.md and UserInfoClaimsCacheConfig.
+      enabled: ${MOP_USERINFO_CLAIMS_CACHE_ENABLED:false}
+      # Caffeine maximumSize. LRU eviction at the limit. [100, 100000].
+      max-size: ${MOP_USERINFO_CLAIMS_CACHE_MAX_SIZE:10000}
+      # Caffeine expireAfterWrite in seconds. Hard upper bound for cached claim staleness —
+      # written once on first miss and not refreshed until eviction. [3600, 172800] (1h-48h).
+      # Default 86400 = 24h. Mirrors the seconds-based l0-expire-after-write-seconds knob on
+      # the okta session-cache.
+      expire-after-write-seconds: ${MOP_USERINFO_CLAIMS_CACHE_EXPIRE_AFTER_WRITE_SECONDS:86400}
   cross-region-fallback:
     enabled: ${MOP_CROSS_REGION_FALLBACK_ENABLED:false}
     region: ${MOP_CROSS_REGION_FALLBACK_REGION:}
@@ -489,6 +535,8 @@ server:
     figma:
       client-id: ${FIGMA_CLIENT_ID:}
       client-secret-key: ${FIGMA_CLIENT_SECRET_KEY:figma-client-secret}
+    datadog:
+      client-id: ${DATADOG_CLIENT_ID:}
     splunk:
       admin-token-secret-key: splunk-api-stage
       mirror-user-prefix: mcp.

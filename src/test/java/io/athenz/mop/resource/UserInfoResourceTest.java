@@ -24,6 +24,7 @@ import com.nimbusds.jose.jwk.Curve;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import io.athenz.mop.config.OktaSessionCacheConfig;
+import io.athenz.mop.config.UserInfoClaimsCacheConfig;
 import io.athenz.mop.model.BearerIndexRecord;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
@@ -32,6 +33,7 @@ import io.athenz.mop.service.BearerIndexResolution;
 import io.athenz.mop.service.OktaTokens;
 import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
+import io.athenz.mop.service.UserInfoClaimsCache;
 import io.athenz.mop.service.UserTokenRegionResolver;
 import io.athenz.mop.service.UserTokenResolution;
 import io.athenz.mop.store.BearerIndexStore;
@@ -111,6 +113,12 @@ class UserInfoResourceTest {
     @Mock
     private OktaSessionCacheConfig oktaSessionCacheConfig;
 
+    @Mock
+    private UserInfoClaimsCacheConfig userInfoClaimsCacheConfig;
+
+    @Mock
+    private UserInfoClaimsCache userInfoClaimsCache;
+
     @InjectMocks
     private UserInfoResource userInfoResource;
 
@@ -120,8 +128,19 @@ class UserInfoResourceTest {
     @BeforeEach
     void setUp() throws Exception {
         lenient().when(metricsRegionProvider.primaryRegion()).thenReturn("us-east-1");
-        // Default: cache disabled — exercises today's behavior. Cache-aware tests opt-in.
+        // Default: caches disabled — exercises today's behavior. Cache-aware tests opt-in.
         lenient().when(oktaSessionCacheConfig.enabled()).thenReturn(false);
+        lenient().when(userInfoClaimsCacheConfig.enabled()).thenReturn(false);
+        // Pass-through stub: the claims cache bean's getOrCompute always invokes the loader
+        // and returns its result without any caching, matching production disabled-mode behavior.
+        // Tests that want hit/miss semantics override these stubs explicitly.
+        lenient().when(userInfoClaimsCache.getIfPresent(anyString())).thenReturn(java.util.Optional.empty());
+        lenient().when(userInfoClaimsCache.getOrCompute(anyString(), any()))
+                .thenAnswer(inv -> {
+                    java.util.function.Supplier<java.util.Map<String, Object>> loader = inv.getArgument(1);
+                    java.util.Map<String, Object> m = loader.get();
+                    return m != null ? m : java.util.Map.of();
+                });
         Field up = UserInfoResource.class.getDeclaredField("userPrefix");
         up.setAccessible(true);
         up.set(userInfoResource, USER_PREFIX);
@@ -461,5 +480,258 @@ class UserInfoResourceTest {
         org.junit.jupiter.api.Assertions.assertFalse(body.containsKey("mcp_client_id"),
                 "Bearer-index rows with empty clientId must omit mcp_client_id (no default, no placeholder)");
         assertEquals(PROVIDER, body.get("mcp_resource_idp"));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Claims-cache tests (UserInfoClaimsCache feature flag)
+    //
+    // Subject computed by UserInfoResource.stripUserPrefix(USER) where USER="user.test" and
+    // USER_PREFIX="user." → SUBJECT="test". Used as the cache key.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void userinfo_cacheHit_returns200_withoutCallingUpstreamRefreshService() {
+        // Cache hit: bearer-index gate passes, then claimsCache.getIfPresent returns a cached
+        // stripped snapshot. The whole Okta resolution flow (userTokenRegionResolver +
+        // tryRefreshOktaToken) must be bypassed entirely.
+        stubBearerIndex(USER, "Cursor", PROVIDER, false);
+        when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
+        Map<String, Object> cached = new java.util.LinkedHashMap<>();
+        cached.put("sub", USER);
+        cached.put("email", "yosrixp@example.com");
+        cached.put("short_id", "yosrixp");
+        when(userInfoClaimsCache.getIfPresent(SUBJECT))
+                .thenReturn(java.util.Optional.of(java.util.Collections.unmodifiableMap(cached)));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        verify(userTokenRegionResolver, never()).resolveByUserProvider(anyString(), anyString(), anyString());
+        verify(upstreamRefreshService, never()).refreshUpstream(anyString());
+        verify(tokenStore, never()).storeUserToken(anyString(), anyString(), any(TokenWrapper.class));
+        verify(oauthProxyMetrics).recordUserinfoClaimCacheOutcome("fresh_hit_no_okta_call");
+        Map<String, Object> body = (Map<String, Object>) response.getEntity();
+        assertEquals(USER, body.get("sub"));
+        assertEquals("yosrixp@example.com", body.get("email"));
+        assertEquals("yosrixp", body.get("short_id"));
+        assertEquals("Cursor", body.get("mcp_client_id"),
+                "Glue must come from the bearer-index row, not the cached snapshot");
+        assertEquals(PROVIDER, body.get("mcp_resource_idp"),
+                "Glue must come from the bearer-index row, not the cached snapshot");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void userinfo_cacheHit_glueUsesBearerProvider_notCachedProvider() {
+        // Same cached snapshot, two different bearer providers → response must reflect each
+        // bearer's provider, never some stale value baked into the cached map.
+        Map<String, Object> cached = new java.util.LinkedHashMap<>();
+        cached.put("sub", USER);
+        cached.put("email", "yosrixp@example.com");
+        when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
+        when(userInfoClaimsCache.getIfPresent(SUBJECT))
+                .thenReturn(java.util.Optional.of(java.util.Collections.unmodifiableMap(cached)));
+
+        stubBearerIndex(USER, "Cursor", "databricks-sql-dbc-abc.cloud.databricks.com", false);
+        Response first = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+        Map<String, Object> firstBody = (Map<String, Object>) first.getEntity();
+        assertEquals("databricks-sql-dbc-abc.cloud.databricks.com", firstBody.get("mcp_resource_idp"));
+
+        stubBearerIndex(USER, "Codex", "splunk-management.example.com", false);
+        Response second = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+        Map<String, Object> secondBody = (Map<String, Object>) second.getEntity();
+        assertEquals("splunk-management.example.com", secondBody.get("mcp_resource_idp"));
+        assertEquals("Codex", secondBody.get("mcp_client_id"));
+        verify(oauthProxyMetrics, times(2)).recordUserinfoClaimCacheOutcome("fresh_hit_no_okta_call");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void userinfo_cacheHit_glueUsesBearerClientId_acrossClients() {
+        // Same cached snapshot, two different MCP clients → each response carries the matching
+        // mcp_client_id from its own bearer-index row.
+        Map<String, Object> cached = new java.util.LinkedHashMap<>();
+        cached.put("sub", USER);
+        when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
+        when(userInfoClaimsCache.getIfPresent(SUBJECT))
+                .thenReturn(java.util.Optional.of(java.util.Collections.unmodifiableMap(cached)));
+
+        stubBearerIndex(USER, "Cursor", PROVIDER, false);
+        Map<String, Object> firstBody = (Map<String, Object>)
+                userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN).getEntity();
+        assertEquals("Cursor", firstBody.get("mcp_client_id"));
+
+        stubBearerIndex(USER, "Claude", PROVIDER, false);
+        Map<String, Object> secondBody = (Map<String, Object>)
+                userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN).getEntity();
+        assertEquals("Claude", secondBody.get("mcp_client_id"));
+    }
+
+    @Test
+    void userinfo_cacheMiss_populatesCacheOnSuccess_emitsMissBuiltFromIdToken() {
+        // Cache miss → existing flow runs → strict write-once via getOrCompute.
+        stubBearerIndex(USER, "", PROVIDER, false);
+        stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, false);
+        when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        // getOrCompute was invoked with the subject ("test") and a non-null loader.
+        verify(userInfoClaimsCache).getOrCompute(eq(SUBJECT), any());
+        verify(oauthProxyMetrics).recordUserinfoClaimCacheOutcome("miss_built_from_idtoken");
+        verify(oauthProxyMetrics, never()).recordUserinfoClaimCacheOutcome("fresh_hit_no_okta_call");
+    }
+
+    @Test
+    void userinfo_cacheMiss_idTokenStaleFallback_alsoPopulatesCache() throws Exception {
+        // Stale-claims fallback: id_token in L1 is expired, tryRefreshOktaToken fails, but the
+        // stale id_token's claims are still served — and must still be cached so future calls
+        // are hits within the 24h TTL.
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        String staleIdToken = createIdTokenWithExpEpoch(USER, System.currentTimeMillis() / 1000 - 60);
+        TokenWrapper staleRow = new TokenWrapper(USER, PROVIDER, staleIdToken, "old_at", "old_rt", ttl);
+        stubBearerIndex(USER, "", PROVIDER, false);
+        stubResolveByUserProvider(USER, PROVIDER, staleRow, false);
+        when(oktaSessionCacheConfig.enabled()).thenReturn(true);
+        when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
+        when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
+                .thenThrow(new UpstreamRefreshException("transient"));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        verify(userInfoClaimsCache).getOrCompute(eq(SUBJECT), any());
+        verify(oauthProxyMetrics).recordUserinfoClaimCacheOutcome("miss_built_from_idtoken");
+    }
+
+    @Test
+    void userinfo_cacheMiss_oktaRefreshFails_returns401_emitsMissOktaRefreshFailedNoCache() {
+        // Cache miss + no parseable id_token + upstream refresh fails → 401 with the
+        // miss_okta_refresh_failed_no_cache outcome. Cache must NOT be populated.
+        long ttl = System.currentTimeMillis() / 1000 + 3600;
+        TokenWrapper rowNoIdToken = new TokenWrapper(USER, PROVIDER, null, "old_at", null, ttl);
+        stubBearerIndex(USER, "", PROVIDER, false);
+        stubResolveByUserProvider(USER, PROVIDER, rowNoIdToken, false);
+        when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
+        when(upstreamRefreshService.refreshUpstream(PROVIDER_USER_ID))
+                .thenThrow(new UpstreamRefreshException("no upstream RT"));
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        verify(oauthProxyMetrics).recordUserinfoClaimCacheOutcome("miss_okta_refresh_failed_no_cache");
+        verify(userInfoClaimsCache, never()).getOrCompute(anyString(), any());
+    }
+
+    @Test
+    void userinfo_bearerIndexMiss_returns401_doesNotConsultCache() {
+        // Auth gate fires first: bearer-index miss → 401 with no cache consultation.
+        stubBearerIndexMiss();
+        // Cache flag stub is not consulted on this path (we 401 before reaching cache logic),
+        // so use lenient() to avoid Mockito's strict-mode UnnecessaryStubbingException.
+        lenient().when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        verify(userInfoClaimsCache, never()).getIfPresent(anyString());
+        verify(userInfoClaimsCache, never()).getOrCompute(anyString(), any());
+        verify(oauthProxyMetrics, never()).recordUserinfoClaimCacheOutcome(anyString());
+    }
+
+    @Test
+    void userinfo_bearerIndexExpired_returns401_doesNotConsultCache() {
+        // Auth gate fires first: bearer expired by bearer-index TTL → 401 with no cache consult.
+        stubBearerIndexExpired(USER, PROVIDER);
+        // Same reason as above: 401 happens before the cache flag is consulted.
+        lenient().when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.UNAUTHORIZED.getStatusCode(), response.getStatus());
+        verify(userInfoClaimsCache, never()).getIfPresent(anyString());
+        verify(userInfoClaimsCache, never()).getOrCompute(anyString(), any());
+    }
+
+    @Test
+    void userinfo_cacheDisabled_behavesIdenticallyToToday_emitsDisabledOutcome() {
+        // Flag off: the cache must not be consulted at all (getIfPresent never called); the
+        // existing flow runs unchanged and a "disabled" outcome is emitted once per request
+        // for dashboard visibility on flag flips.
+        stubBearerIndex(USER, "", PROVIDER, false);
+        stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, false);
+        when(userInfoClaimsCacheConfig.enabled()).thenReturn(false);
+
+        Response response = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        assertEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        verify(userInfoClaimsCache, never()).getIfPresent(anyString());
+        verify(oauthProxyMetrics).recordUserinfoClaimCacheOutcome("disabled");
+        verify(oauthProxyMetrics, never()).recordUserinfoClaimCacheOutcome("fresh_hit_no_okta_call");
+        verify(oauthProxyMetrics, never()).recordUserinfoClaimCacheOutcome("miss_built_from_idtoken");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void userinfo_strictWriteOnce_cacheReturnsFirstSnapshot_evenWhenLoaderWouldYieldDifferent() {
+        // Strict write-once: on the second call, the cache mock returns the first snapshot
+        // verbatim regardless of what the loader would have produced. This confirms the
+        // /userinfo response is built from the cached snapshot, not from a fresh id_token.
+        stubBearerIndex(USER, "", PROVIDER, false);
+        stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, false);
+        when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
+
+        // First call: cache miss → getOrCompute invokes loader → returns its result; we capture
+        // the first response shape and then make getIfPresent return the same payload on a
+        // subsequent /userinfo call to simulate the post-write-once path.
+        Map<String, Object> firstSnapshot = new java.util.LinkedHashMap<>();
+        firstSnapshot.put("sub", USER);
+        firstSnapshot.put("name", "Test User");
+        firstSnapshot.put("email", "first-and-only@example.com");
+        when(userInfoClaimsCache.getOrCompute(eq(SUBJECT), any()))
+                .thenReturn(java.util.Collections.unmodifiableMap(firstSnapshot));
+
+        Response first = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+        Map<String, Object> firstBody = (Map<String, Object>) first.getEntity();
+        assertEquals("first-and-only@example.com", firstBody.get("email"));
+
+        // Second call: cache hit returns the same snapshot. Even if Okta were to produce a
+        // different id_token now (we don't even consult Okta), the cached email is preserved.
+        when(userInfoClaimsCache.getIfPresent(SUBJECT))
+                .thenReturn(java.util.Optional.of(java.util.Collections.unmodifiableMap(firstSnapshot)));
+        Response second = userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+        Map<String, Object> secondBody = (Map<String, Object>) second.getEntity();
+        assertEquals("first-and-only@example.com", secondBody.get("email"),
+                "Strict write-once: cached snapshot is preserved across calls, not re-derived");
+        // Second call must not have hit upstream at all.
+        verify(userTokenRegionResolver, times(1)).resolveByUserProvider(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void userinfo_cacheEnabled_stripsMcpClientIdAndMcpResourceIdp_fromCachedSnapshot() {
+        // The cached snapshot must NEVER contain mcp_client_id or mcp_resource_idp — those are
+        // per-request glue added by withProviderGlue. Verify the loader passed to getOrCompute
+        // returns a stripped map.
+        stubBearerIndex(USER, "Cursor", PROVIDER, false);
+        stubResolveByUserProvider(USER, PROVIDER, oktaTokenWrapper, false);
+        when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
+        org.mockito.ArgumentCaptor<java.util.function.Supplier<Map<String, Object>>> loaderCap =
+                (org.mockito.ArgumentCaptor<java.util.function.Supplier<Map<String, Object>>>) (org.mockito.ArgumentCaptor)
+                        org.mockito.ArgumentCaptor.forClass(java.util.function.Supplier.class);
+
+        userInfoResource.getUserInfo("Bearer " + ACCESS_TOKEN);
+
+        verify(userInfoClaimsCache).getOrCompute(eq(SUBJECT), loaderCap.capture());
+        Map<String, Object> built = loaderCap.getValue().get();
+        org.junit.jupiter.api.Assertions.assertFalse(built.containsKey("mcp_client_id"),
+                "Cached snapshot must not contain per-request mcp_client_id glue");
+        org.junit.jupiter.api.Assertions.assertFalse(built.containsKey("mcp_resource_idp"),
+                "Cached snapshot must not contain per-request mcp_resource_idp glue");
+        org.junit.jupiter.api.Assertions.assertFalse(built.containsKey("exp"),
+                "Cached snapshot must strip JWT exp claim (mirrors existing buildUserInfo)");
+        assertEquals(USER, built.get("sub"));
     }
 }
