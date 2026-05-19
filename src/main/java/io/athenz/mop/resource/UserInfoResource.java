@@ -7,6 +7,7 @@
 package io.athenz.mop.resource;
 
 import io.athenz.mop.config.OktaSessionCacheConfig;
+import io.athenz.mop.config.UserInfoClaimsCacheConfig;
 import io.athenz.mop.model.BearerIndexRecord;
 import io.athenz.mop.model.TokenWrapper;
 import io.athenz.mop.service.AudienceConstants;
@@ -15,6 +16,7 @@ import io.athenz.mop.service.BearerIndexResolution;
 import io.athenz.mop.service.OktaTokens;
 import io.athenz.mop.service.UpstreamRefreshException;
 import io.athenz.mop.service.UpstreamRefreshService;
+import io.athenz.mop.service.UserInfoClaimsCache;
 import io.athenz.mop.service.UserTokenRegionResolver;
 import io.athenz.mop.store.BearerIndexStore;
 import io.athenz.mop.store.TokenStore;
@@ -36,6 +38,7 @@ import java.lang.invoke.MethodHandles;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,6 +74,12 @@ public class UserInfoResource {
 
     @Inject
     OktaSessionCacheConfig oktaSessionCacheConfig;
+
+    @Inject
+    UserInfoClaimsCacheConfig userInfoClaimsCacheConfig;
+
+    @Inject
+    UserInfoClaimsCache userInfoClaimsCache;
 
     @ConfigProperty(name = "server.athenz.user-prefix", defaultValue = "")
     String userPrefix;
@@ -139,6 +148,30 @@ public class UserInfoResource {
         log.info("Resolved bearer-index row for user: {}, provider: {}, clientId: {} (fromFallback={})",
                 user, bearerProvider, bearerClientId, fromFallback);
 
+        String subject = stripUserPrefix(user);
+
+        // Fast-path: per-pod claims cache hit. The bearer-index gate above already
+        // authoritatively answered "is this MoP bearer good?", so a cache hit can serve
+        // identity claims without consulting the Okta L1 row or attempting any upstream
+        // refresh. This is the Okta-load-shed path that stabilizes /userinfo when the user's
+        // Okta tokens have all expired and Okta is unreachable. When the feature flag is off,
+        // userInfoClaimsCache.getIfPresent always returns empty and we fall through to the
+        // existing flow unchanged.
+        if (userInfoClaimsCacheConfig.enabled()) {
+            Optional<Map<String, Object>> cachedClaims = userInfoClaimsCache.getIfPresent(subject);
+            if (cachedClaims.isPresent()) {
+                Map<String, Object> response = withProviderGlue(
+                        cachedClaims.get(), bearerProvider, bearerClientId);
+                oauthProxyMetrics.recordUserinfoClaimCacheOutcome("fresh_hit_no_okta_call");
+                log.info("Served /userinfo from claims cache for user={} provider={} clientId={} (no Okta call)",
+                        user, bearerProvider, bearerClientId);
+                return finishUserinfo(startNanos, providerLabel, true, 200, null, null,
+                        Response.ok(response).type(MediaType.APPLICATION_JSON).build());
+            }
+        } else {
+            oauthProxyMetrics.recordUserinfoClaimCacheOutcome("disabled");
+        }
+
         TokenWrapper oktaToken = userTokenRegionResolver
                 .resolveByUserProvider(user, AudienceConstants.PROVIDER_OKTA,
                         UserTokenRegionResolver.CALL_SITE_USERINFO_OKTA_LOOKUP)
@@ -178,6 +211,9 @@ public class UserInfoResource {
 
         if (idToken == null || idToken.isEmpty()) {
             log.error("Okta id_token still unavailable after refresh attempt for user: {}", user);
+            if (userInfoClaimsCacheConfig.enabled()) {
+                oauthProxyMetrics.recordUserinfoClaimCacheOutcome("miss_okta_refresh_failed_no_cache");
+            }
             return finishUserinfo(startNanos, providerLabel, false, 401, "server_error", "okta_upstream_refresh_failed",
                     Response.status(Response.Status.UNAUTHORIZED)
                             .entity(Map.of(
@@ -188,17 +224,37 @@ public class UserInfoResource {
                             .build());
         }
 
-        Map<String, Object> userInfo = buildUserInfo(idToken, bearerProvider);
-        // Surface mcp_client_id from the bearer-index row when present (omitted for legacy
-        // bare-row bearers minted before the index existed; those go through the natural
-        // 401-then-refresh drain at rollout time).
-        if (bearerClientId != null && !bearerClientId.isEmpty() && !userInfo.isEmpty()) {
-            userInfo.put("mcp_client_id", bearerClientId);
+        // Cache miss → existing Okta resolution succeeded → write-once into the cache.
+        // getOrCompute is atomic across concurrent callers for the same subject: the loader
+        // runs at most once and all concurrent threads serve the same snapshot. The cached
+        // value is an immutable, defensive-copied claim map with no per-request glue; that
+        // glue is applied below by withProviderGlue.
+        final String idTokenForLoader = idToken;
+        Map<String, Object> strippedClaims = userInfoClaimsCache.getOrCompute(
+                subject, () -> buildStrippedClaims(idTokenForLoader));
+        if (userInfoClaimsCacheConfig.enabled()) {
+            oauthProxyMetrics.recordUserinfoClaimCacheOutcome("miss_built_from_idtoken");
         }
+        Map<String, Object> userInfo = withProviderGlue(strippedClaims, bearerProvider, bearerClientId);
         log.info("Successfully returned userinfo for user={} provider={} clientId={} (claims not logged)",
                 user, bearerProvider, bearerClientId);
         return finishUserinfo(startNanos, providerLabel, true, 200, null, null,
                 Response.ok(userInfo).type(MediaType.APPLICATION_JSON).build());
+    }
+
+    /**
+     * Strips the configured {@code server.athenz.user-prefix} from a token-store key
+     * ({@code user.<sub>}) to recover the Okta subject. Used as the cache key for the userinfo
+     * claims cache so that all of a user's MCP-client bearers share a single cached snapshot.
+     */
+    String stripUserPrefix(String user) {
+        if (user == null) {
+            return "";
+        }
+        if (userPrefix != null && !userPrefix.isEmpty() && user.startsWith(userPrefix)) {
+            return user.substring(userPrefix.length());
+        }
+        return user;
     }
 
     private Response finishUserinfo(long startNanos, String oauthProvider, boolean success, int httpStatus,
@@ -218,9 +274,7 @@ public class UserInfoResource {
     private TokenWrapper tryRefreshOktaToken(String user) {
         long t0 = System.nanoTime();
         try {
-            String subject = (userPrefix != null && !userPrefix.isEmpty() && user.startsWith(userPrefix))
-                    ? user.substring(userPrefix.length())
-                    : user;
+            String subject = stripUserPrefix(user);
             String providerUserId = AudienceConstants.PROVIDER_OKTA + "#" + subject;
             OktaTokens oktaTokens = upstreamRefreshService.refreshUpstream(providerUserId);
             if (oktaTokens == null || oktaTokens.idToken() == null || oktaTokens.idToken().isEmpty()) {
@@ -299,40 +353,73 @@ public class UserInfoResource {
     }
 
     /**
-     * Builds a userinfo response with all claims from the id_token.
+     * Builds the cache-shaped, per-request-glue-free stripped claim map from an id_token. This
+     * is what gets stored in {@link UserInfoClaimsCache}; per-request fields ({@code mcp_resource_idp},
+     * {@code mcp_client_id}) are layered on by {@link #withProviderGlue(Map, String, String)}.
      *
-     * @param idToken The id_token JWT
-     * @return Map containing all claims from the id_token
+     * <p>Standard OIDC userinfo claims that survive the filter: {@code sub}, {@code name},
+     * {@code given_name}, {@code family_name}, {@code middle_name}, {@code nickname},
+     * {@code preferred_username}, {@code profile}, {@code picture}, {@code website},
+     * {@code email}, {@code email_verified}, {@code gender}, {@code birthdate},
+     * {@code zoneinfo}, {@code locale}, {@code phone_number}, {@code phone_number_verified},
+     * {@code address}, {@code updated_at}, plus any custom Yahoo claims (e.g. {@code short_id},
+     * {@code groups}).
+     *
+     * @param idToken the id_token JWT to extract claims from
+     * @return mutable map of stripped claims (caller is the cache and treats it as the loader
+     *         result; {@link UserInfoClaimsCache#getOrCompute} defensive-copies before storing)
      */
-    private Map<String, Object> buildUserInfo(String idToken, String provider) {
+    Map<String, Object> buildStrippedClaims(String idToken) {
         Map<String, Object> allClaims = JwtUtils.getAllClaimsFromToken(idToken);
         if (allClaims == null) {
             log.warn("Failed to extract claims from id_token");
             return new HashMap<>();
         }
 
-        Map<String, Object> userInfo = new HashMap<>();
+        Map<String, Object> stripped = new HashMap<>();
         for (Map.Entry<String, Object> entry : allClaims.entrySet()) {
             String claimName = entry.getKey();
-            // Exclude JWT metadata claims and specific internal claims that shouldn't be in userinfo response
-            // Standard OIDC userinfo should include: sub, name, given_name, family_name,
-            // middle_name, nickname, preferred_username, profile, picture, website,
-            // email, email_verified, gender, birthdate, zoneinfo, locale, phone_number,
-            // phone_number_verified, address, updated_at, and any custom claims
-            if (!claimName.equals("iat") && !claimName.equals("exp") &&
-                !claimName.equals("nbf") && !claimName.equals("jti") &&
-                !claimName.equals("iss") && !claimName.equals("aud") &&
-                !claimName.equals("azp") && !claimName.equals("nonce") &&
-                !claimName.equals("auth_time") && !claimName.equals("at_hash") &&
-                !claimName.equals("c_hash") && !claimName.equals("ver") &&
-                !claimName.equals("personId") && !claimName.equals("countryCode") &&
-                !claimName.equals("user_contingent_type") && !claimName.equals("amr")) {
-                userInfo.put(claimName, entry.getValue());
+            // Exclude JWT metadata claims and specific internal claims that shouldn't be in
+            // userinfo response. Per-request glue (mcp_resource_idp, mcp_client_id) is added
+            // separately by withProviderGlue.
+            if (!claimName.equals("iat") && !claimName.equals("exp")
+                    && !claimName.equals("nbf") && !claimName.equals("jti")
+                    && !claimName.equals("iss") && !claimName.equals("aud")
+                    && !claimName.equals("azp") && !claimName.equals("nonce")
+                    && !claimName.equals("auth_time") && !claimName.equals("at_hash")
+                    && !claimName.equals("c_hash") && !claimName.equals("ver")
+                    && !claimName.equals("personId") && !claimName.equals("countryCode")
+                    && !claimName.equals("user_contingent_type") && !claimName.equals("amr")) {
+                stripped.put(claimName, entry.getValue());
             }
         }
-        if (!userInfo.isEmpty()) {
-            userInfo.put("mcp_resource_idp", provider);
+        return stripped;
+    }
+
+    /**
+     * Layers per-request glue ({@code mcp_resource_idp}, optionally {@code mcp_client_id}) onto
+     * a stripped claim map and returns the response body. Defensive-copies its input so the
+     * cached map (which {@link UserInfoClaimsCache} stores as an unmodifiable view) is never
+     * mutated.
+     *
+     * <p>Mirrors the original {@code buildUserInfo} tail: {@code mcp_resource_idp} is added
+     * only when the underlying claim map is non-empty (preserves the "empty → empty" contract
+     * for unparseable id_tokens), and {@code mcp_client_id} is added only when the bearer-index
+     * row carries a non-empty clientId (omitted entirely for legacy bare-row bearers).
+     *
+     * @param strippedClaims claim map produced by {@link #buildStrippedClaims(String)}
+     * @param provider       value for the {@code mcp_resource_idp} claim
+     * @param clientId       value for the {@code mcp_client_id} claim; omitted when {@code null}/empty
+     * @return new mutable map containing claims + per-request glue
+     */
+    Map<String, Object> withProviderGlue(Map<String, Object> strippedClaims, String provider, String clientId) {
+        Map<String, Object> response = new HashMap<>(strippedClaims);
+        if (!response.isEmpty()) {
+            response.put("mcp_resource_idp", provider);
+            if (clientId != null && !clientId.isEmpty()) {
+                response.put("mcp_client_id", clientId);
+            }
         }
-        return userInfo;
+        return response;
     }
 }

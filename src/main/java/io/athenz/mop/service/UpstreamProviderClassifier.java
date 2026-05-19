@@ -39,6 +39,12 @@ import java.util.Set;
  *       {@code mcp-oauth-proxy-tokens} honors the real 90-day Figma access-token lifetime
  *       instead of the global ~8h {@code server.token-store.expiry} cap. Without promotion the
  *       row would evict 8h after consent regardless of the real AT lifetime.</li>
+ *   <li>{@code datadog} — promoted to L2 so the canonical upstream RT is stored once and
+ *       amortized across MCP-client windows. Datadog access tokens are 1h and the refresh
+ *       token does not rotate; the L2 row TTL is capped at 6 months (operator-tunable via
+ *       {@code server.upstream-token.expiry-seconds-by-provider.datadog}) to bound row sprawl.
+ *       Datadog is a public PKCE client (DCR returns no client_secret), and the
+ *       {@link DatadogUpstreamRefreshClient} reflects that — see the resolver below.</li>
  * </ul>
  *
  * <p>Other native-IdP providers like Slack/GitHub/Atlassian/Embrace stay on the legacy
@@ -74,11 +80,15 @@ public class UpstreamProviderClassifier {
     /** Provider id for Figma (90-day access-token lifetime, L2 promoted). */
     public static final String FIGMA_PROVIDER = "figma";
 
+    /** Provider id for Datadog (1h access-token lifetime, non-rotating RT, L2 promoted). */
+    public static final String DATADOG_PROVIDER = "datadog";
+
     private static final Set<String> PROMOTED_PROVIDERS;
     static {
         Set<String> all = new java.util.HashSet<>(GOOGLE_WORKSPACE_PROVIDERS);
         all.add(AudienceConstants.PROVIDER_OKTA);
         all.add(FIGMA_PROVIDER);
+        all.add(DATADOG_PROVIDER);
         PROMOTED_PROVIDERS = Set.copyOf(all);
     }
 
@@ -87,6 +97,9 @@ public class UpstreamProviderClassifier {
 
     @Inject
     FigmaUpstreamRefreshClient figmaUpstreamRefreshClient;
+
+    @Inject
+    DatadogUpstreamRefreshClient datadogUpstreamRefreshClient;
 
     /**
      * Returns true when the provider participates in the L2 canonical upstream-RT model.
@@ -130,6 +143,9 @@ public class UpstreamProviderClassifier {
         }
         if (FIGMA_PROVIDER.equals(provider)) {
             return Optional.of(figmaUpstreamRefreshClient);
+        }
+        if (DATADOG_PROVIDER.equals(provider)) {
+            return Optional.of(datadogUpstreamRefreshClient);
         }
         return Optional.empty();
     }

@@ -185,6 +185,7 @@ application:
       okta: "86400"                  # 24h — paranoids tier; Okta RT rotates every refresh
       google-workspace: "15552000"   # 6 months — applies to all Google Workspace MCPs
       figma: "7776000"               # 90 days — matches Figma's documented access-token lifetime
+      datadog: "15552000"            # 6 months — Datadog RT does not expire upstream; capped to bound L2 row TTL
     ttlBufferDays: 3
     # How long REVOKED L2 rows are retained before TTL eviction. Sized so an operator can
     # still inspect a recently-revoked row when triaging a refresh-token-revoked event.
@@ -212,6 +213,15 @@ application:
     minRemainingSeconds: 120
     l0MaxSize: 5000
     l0ExpireAfterWriteSeconds: 3600
+  # Per-pod strict-write-once cache of stripped /userinfo claim maps keyed by Athenz-stripped
+  # userId. When enabled and a bearer-index hit yields a userId already in the cache,
+  # /userinfo serves cached claims and skips the Okta resolution flow entirely (no
+  # tryRefreshOktaToken call). Stabilizes /userinfo against Okta upstream outages at the cost
+  # of up to ttl staleness. See UserInfoClaimsCacheConfig.
+  userinfoClaimsCache:
+    enabled: false
+    maxSize: 10000
+    expireAfterWriteSeconds: 86400
   crossRegionFallback:
     enabled: false
     region: ""
@@ -360,6 +370,25 @@ oidc:
     scopes:
       - mcp:connect
       - current_user:read
+  datadog:
+    # remote-servers.endpoints[name=datadog].endpoint — used by ConfigService when resolving the
+    # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
+    endpoint: "https://mcp.datadoghq.com/api/unstable/mcp-server"
+    # public PKCE client; DCR returns only client_id (no client_secret).
+    clientId:
+    # Datadog has no flat OIDC userinfo. The synthetic /internal/datadog/oauth-userinfo proxy
+    # flattens api.datadoghq.com/api/v2/current_user (data.attributes.email) to top-level claims;
+    # BaseResource.getUsername strips @domain for email claims.
+    claim: email
+    # RFC 8707 resource indicator required by Datadog on /authorize. Pinned to the MCP server URL.
+    resource: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp"
+    # When non-empty, used verbatim as quarkus.oidc.datadog.user-info-path. When empty,
+    # configmap.yaml defaults to https://<application.host>/internal/datadog/oauth-userinfo
+    # (mirrors embrace.userInfoPath).
+    userInfoPath: ""
+    # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty. Defaults to
+    # https://<application.host>.
+    syntheticUserInfoBaseUrl: ""
   embrace:
     authServerUrl: "https://dash-api.embrace.io"
     authorizationUrl: "https://dash.embrace.io/oauth/authorize"

@@ -47,7 +47,7 @@ public class JwtUtils {
             SignedJWT signedJWT = SignedJWT.parse(token);
             return signedJWT.getJWTClaimsSet().getClaim(claim);
         } catch (ParseException e) {
-            log.error("Failed to parse JWT token");
+            log.debug("getClaimFromToken: token is not a parseable JWT (claim={})", claim);
         }
         return null;
     }
@@ -70,7 +70,7 @@ public class JwtUtils {
             SignedJWT signedJWT = SignedJWT.parse(token);
             return signedJWT.getJWTClaimsSet().getClaims();
         } catch (ParseException e) {
-            log.error("Failed to parse JWT token", e);
+            log.debug("getAllClaimsFromToken: token is not a parseable JWT", e);
             return null;
         }
     }
