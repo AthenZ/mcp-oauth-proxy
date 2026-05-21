@@ -78,6 +78,16 @@ data:
           trust-all: true
           hostname-verification-algorithm: NONE
 {{- end }}
+{{- if (.Values.oidc.datadog.tlsInsecureClient | default false) }}
+        datadog-insecure-client:
+          trust-all: true
+          hostname-verification-algorithm: NONE
+{{- end }}
+{{- if (.Values.oidc.linear.tlsInsecureClient | default false) }}
+        linear-insecure-client:
+          trust-all: true
+          hostname-verification-algorithm: NONE
+{{- end }}
 
       log:
         console:
@@ -227,6 +237,10 @@ data:
           token:
             issuer: any
         datadog:
+{{- if (.Values.oidc.datadog.tlsInsecureClient | default false) }}
+          tls:
+            tls-configuration-name: datadog-insecure-client
+{{- end }}
           auth-server-url: "https://mcp.datadoghq.com"
           discovery-enabled: false
           authorization-path: "/api/unstable/mcp-server/authorize"
@@ -260,6 +274,10 @@ data:
           # Linear is a public PKCE client (no client_secret). Comma-separated scope is forced
           # via extra-params.scope; authentication.scopes stays empty so Quarkus emits no scope.
           # actor=user is required on /authorize.
+{{- if (.Values.oidc.linear.tlsInsecureClient | default false) }}
+          tls:
+            tls-configuration-name: linear-insecure-client
+{{- end }}
           auth-server-url: "https://linear.app"
           discovery-enabled: false
           authorization-path: "/oauth/authorize"

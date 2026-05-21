@@ -390,6 +390,13 @@ oidc:
     # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty. Defaults to
     # https://<application.host>.
     syntheticUserInfoBaseUrl: ""
+    # Set to true ONLY when userInfoPath points at the in-pod loopback
+    # (https://localhost:<ssl-port>/...). Egress policies in stage/prod block the pod from
+    # reaching its own public hostname, so synthetic UserInfo must round-trip via loopback,
+    # which uses a self-signed cert that the JVM trust store does not accept. When true, the
+    # configmap renders a `datadog-insecure-client` named TLS config (trust-all + skip
+    # hostname verification) and binds it to quarkus.oidc.datadog.tls.tls-configuration-name.
+    tlsInsecureClient: false
   linear:
     # remote-servers.endpoints[name=linear].endpoint — used by ConfigService when resolving the
     # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
@@ -412,6 +419,13 @@ oidc:
     userInfoPath: ""
     # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty.
     syntheticUserInfoBaseUrl: ""
+    # Set to true ONLY when userInfoPath points at the in-pod loopback
+    # (https://localhost:<ssl-port>/...). Egress policies in stage/prod block the pod from
+    # reaching its own public hostname, so synthetic UserInfo must round-trip via loopback,
+    # which uses a self-signed cert that the JVM trust store does not accept. When true, the
+    # configmap renders a `linear-insecure-client` named TLS config (trust-all + skip
+    # hostname verification) and binds it to quarkus.oidc.linear.tls.tls-configuration-name.
+    tlsInsecureClient: false
   embrace:
     authServerUrl: "https://dash-api.embrace.io"
     authorizationUrl: "https://dash.embrace.io/oauth/authorize"
