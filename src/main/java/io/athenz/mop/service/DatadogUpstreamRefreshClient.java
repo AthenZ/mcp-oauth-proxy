@@ -36,7 +36,7 @@ import org.slf4j.LoggerFactory;
 /**
  * {@link UpstreamRefreshClient} for Datadog (L2 promoted).
  *
- * <p>Calls {@code https://mcp.datadoghq.com/api/unstable/mcp-server/token} with
+ * <p>Calls {@code https://app.datadoghq.com/oauth2/v1/token} with
  * {@code grant_type=refresh_token} as a public PKCE client: the request body carries
  * {@code client_id} only and there is no {@code Authorization} header. Datadog DCR returns no
  * {@code client_secret} ({@code token_endpoint_auth_method=none}); injecting any client-secret
@@ -57,7 +57,7 @@ public class DatadogUpstreamRefreshClient implements UpstreamRefreshClient {
 
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     private static final String DATADOG_TOKEN_URI =
-            "https://mcp.datadoghq.com/api/unstable/mcp-server/token";
+            "https://app.datadoghq.com/oauth2/v1/token";
     /** Documented Datadog access-token lifetime (1 h); used only when the upstream omits {@code expires_in}. */
     static final long DEFAULT_EXPIRES_IN_SECONDS = 3_600L;
 

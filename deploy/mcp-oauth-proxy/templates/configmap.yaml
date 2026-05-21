@@ -241,10 +241,10 @@ data:
           tls:
             tls-configuration-name: datadog-insecure-client
 {{- end }}
-          auth-server-url: "https://mcp.datadoghq.com"
+          auth-server-url: "https://app.datadoghq.com"
           discovery-enabled: false
-          authorization-path: "/api/unstable/mcp-server/authorize"
-          token-path: "https://mcp.datadoghq.com/api/unstable/mcp-server/token"
+          authorization-path: "/oauth2/v1/authorize"
+          token-path: "https://app.datadoghq.com/oauth2/v1/token"
           {{- if .Values.oidc.datadog.userInfoPath }}
           user-info-path: {{ .Values.oidc.datadog.userInfoPath | quote }}
           {{- else }}
@@ -262,7 +262,7 @@ data:
             verify-access-token: false
             pkce-required: true
             extra-params:
-              resource: {{ .Values.oidc.datadog.resource | default "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp" | quote }}
+              resource: {{ .Values.oidc.datadog.resource | default "https://mcp.datadoghq.com/v1/mcp" | quote }}
           application-type: web-app
           allow-user-info-cache: false
           cache-user-info-in-idtoken: true

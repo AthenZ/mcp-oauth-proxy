@@ -283,10 +283,10 @@ quarkus:
       token:
         issuer: any
     datadog:
-      auth-server-url: "https://mcp.datadoghq.com"
+      auth-server-url: "https://app.datadoghq.com"
       discovery-enabled: false
-      authorization-path: "/api/unstable/mcp-server/authorize"
-      token-path: "https://mcp.datadoghq.com/api/unstable/mcp-server/token"
+      authorization-path: "/oauth2/v1/authorize"
+      token-path: "https://app.datadoghq.com/oauth2/v1/token"
       user-info-path: ${MOP_DATADOG_SYNTHETIC_USERINFO_URL:https://127.0.0.1/internal/datadog/oauth-userinfo}
       client-id: ${DATADOG_CLIENT_ID:}
       authentication:
@@ -299,7 +299,7 @@ quarkus:
         verify-access-token: false
         pkce-required: true
         extra-params:
-          resource: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp"
+          resource: "https://mcp.datadoghq.com/v1/mcp"
       application-type: web-app
       allow-user-info-cache: false
       cache-user-info-in-idtoken: true

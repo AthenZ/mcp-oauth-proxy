@@ -374,7 +374,7 @@ oidc:
   datadog:
     # remote-servers.endpoints[name=datadog].endpoint — used by ConfigService when resolving the
     # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
-    endpoint: "https://mcp.datadoghq.com/api/unstable/mcp-server"
+    endpoint: "https://mcp.datadoghq.com/v1/mcp"
     # public PKCE client; DCR returns only client_id (no client_secret).
     clientId:
     # Datadog has no flat OIDC userinfo. The synthetic /internal/datadog/oauth-userinfo proxy
@@ -382,7 +382,7 @@ oidc:
     # BaseResource.getUsername strips @domain for email claims.
     claim: email
     # RFC 8707 resource indicator required by Datadog on /authorize. Pinned to the MCP server URL.
-    resource: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp"
+    resource: "https://mcp.datadoghq.com/v1/mcp"
     # When non-empty, used verbatim as quarkus.oidc.datadog.user-info-path. When empty,
     # configmap.yaml defaults to https://<application.host>/internal/datadog/oauth-userinfo
     # (mirrors embrace.userInfoPath).

@@ -61,7 +61,7 @@ public class TokenExchangeServiceDatadogImpl implements TokenExchangeService {
 
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     private static final URI DATADOG_TOKEN_ENDPOINT =
-            URI.create("https://mcp.datadoghq.com/api/unstable/mcp-server/token");
+            URI.create("https://app.datadoghq.com/oauth2/v1/token");
     /** Datadog documents 3,600 s (1 h) for access tokens; used only when the response omits {@code expires_in}. */
     static final long DATADOG_DEFAULT_TOKEN_TTL = 3_600L;
 
