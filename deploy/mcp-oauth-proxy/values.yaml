@@ -186,6 +186,7 @@ application:
       google-workspace: "15552000"   # 6 months — applies to all Google Workspace MCPs
       figma: "7776000"               # 90 days — matches Figma's documented access-token lifetime
       datadog: "15552000"            # 6 months — Datadog RT does not expire upstream; capped to bound L2 row TTL
+      linear: "15552000"             # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
     ttlBufferDays: 3
     # How long REVOKED L2 rows are retained before TTL eviction. Sized so an operator can
     # still inspect a recently-revoked row when triaging a refresh-token-revoked event.
@@ -373,7 +374,7 @@ oidc:
   datadog:
     # remote-servers.endpoints[name=datadog].endpoint — used by ConfigService when resolving the
     # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
-    endpoint: "https://mcp.datadoghq.com/api/unstable/mcp-server"
+    endpoint: "https://mcp.datadoghq.com/v1/mcp"
     # public PKCE client; DCR returns only client_id (no client_secret).
     clientId:
     # Datadog has no flat OIDC userinfo. The synthetic /internal/datadog/oauth-userinfo proxy
@@ -381,7 +382,7 @@ oidc:
     # BaseResource.getUsername strips @domain for email claims.
     claim: email
     # RFC 8707 resource indicator required by Datadog on /authorize. Pinned to the MCP server URL.
-    resource: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp"
+    resource: "https://mcp.datadoghq.com/v1/mcp"
     # When non-empty, used verbatim as quarkus.oidc.datadog.user-info-path. When empty,
     # configmap.yaml defaults to https://<application.host>/internal/datadog/oauth-userinfo
     # (mirrors embrace.userInfoPath).
@@ -389,6 +390,42 @@ oidc:
     # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty. Defaults to
     # https://<application.host>.
     syntheticUserInfoBaseUrl: ""
+    # Set to true ONLY when userInfoPath points at the in-pod loopback
+    # (https://localhost:<ssl-port>/...). Egress policies in stage/prod block the pod from
+    # reaching its own public hostname, so synthetic UserInfo must round-trip via loopback,
+    # which uses a self-signed cert that the JVM trust store does not accept. When true, the
+    # configmap renders a `datadog-insecure-client` named TLS config (trust-all + skip
+    # hostname verification) and binds it to quarkus.oidc.datadog.tls.tls-configuration-name.
+    tlsInsecureClient: false
+  linear:
+    # remote-servers.endpoints[name=linear].endpoint — used by ConfigService when resolving the
+    # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
+    endpoint: "https://api.linear.app"
+    # Public PKCE client; same client_id is used in local, stage, and prod per Linear OAuth setup.
+    clientId:
+    # Linear has no flat OIDC userinfo. The synthetic /internal/linear/oauth-userinfo proxy POSTs
+    # `query { viewer { id name email } }` to https://api.linear.app/graphql and flattens to
+    # top-level email/id/name/sub claims; BaseResource.getUsername strips @domain for email.
+    claim: email
+    # Reserved for future confidential client. Today Linear is public PKCE and the refresh
+    # path ignores this value on the wire; the placeholder secret key is set so SmallRye can
+    # resolve a non-empty String at startup.
+    clientSecretKey: "linear-client-secret"
+    # Linear-required scope string. Comma-separated (Linear's format) — passed verbatim via
+    # extra-params.scope in configmap.yaml. Override here to add or remove scopes.
+    scope: "comments:create,issues:create,read,timeSchedule:write,write"
+    # When non-empty, used verbatim as quarkus.oidc.linear.user-info-path. When empty, configmap.yaml
+    # defaults to https://<application.host>/internal/linear/oauth-userinfo (mirrors datadog).
+    userInfoPath: ""
+    # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty.
+    syntheticUserInfoBaseUrl: ""
+    # Set to true ONLY when userInfoPath points at the in-pod loopback
+    # (https://localhost:<ssl-port>/...). Egress policies in stage/prod block the pod from
+    # reaching its own public hostname, so synthetic UserInfo must round-trip via loopback,
+    # which uses a self-signed cert that the JVM trust store does not accept. When true, the
+    # configmap renders a `linear-insecure-client` named TLS config (trust-all + skip
+    # hostname verification) and binds it to quarkus.oidc.linear.tls.tls-configuration-name.
+    tlsInsecureClient: false
   embrace:
     authServerUrl: "https://dash-api.embrace.io"
     authorizationUrl: "https://dash.embrace.io/oauth/authorize"

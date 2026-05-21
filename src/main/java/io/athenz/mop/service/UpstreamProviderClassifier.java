@@ -45,6 +45,14 @@ import java.util.Set;
  *       {@code server.upstream-token.expiry-seconds-by-provider.datadog}) to bound row sprawl.
  *       Datadog is a public PKCE client (DCR returns no client_secret), and the
  *       {@link DatadogUpstreamRefreshClient} reflects that — see the resolver below.</li>
+ *   <li>{@code linear} — promoted to L2 for the same amortization reasons. Linear access
+ *       tokens are ~24h ({@code expires_in=86399}) and the refresh token <strong>rotates</strong>
+ *       on every refresh, with a documented 30-min replay-grace window for retry safety. L2 row
+ *       TTL is capped at 6 months (operator-tunable via
+ *       {@code server.upstream-token.expiry-seconds-by-provider.linear}) since Linear's RT
+ *       lifetime is otherwise unbounded. Linear is a public PKCE client today; see
+ *       {@link LinearUpstreamRefreshClient} for the public-client wiring and the
+ *       {@code TODO(linear-confidential)} hook for a future client_secret rollout.</li>
  * </ul>
  *
  * <p>Other native-IdP providers like Slack/GitHub/Atlassian/Embrace stay on the legacy
@@ -83,12 +91,16 @@ public class UpstreamProviderClassifier {
     /** Provider id for Datadog (1h access-token lifetime, non-rotating RT, L2 promoted). */
     public static final String DATADOG_PROVIDER = "datadog";
 
+    /** Provider id for Linear (~24h access-token lifetime, rotating RT with 30-min replay grace, L2 promoted). */
+    public static final String LINEAR_PROVIDER = "linear";
+
     private static final Set<String> PROMOTED_PROVIDERS;
     static {
         Set<String> all = new java.util.HashSet<>(GOOGLE_WORKSPACE_PROVIDERS);
         all.add(AudienceConstants.PROVIDER_OKTA);
         all.add(FIGMA_PROVIDER);
         all.add(DATADOG_PROVIDER);
+        all.add(LINEAR_PROVIDER);
         PROMOTED_PROVIDERS = Set.copyOf(all);
     }
 
@@ -100,6 +112,9 @@ public class UpstreamProviderClassifier {
 
     @Inject
     DatadogUpstreamRefreshClient datadogUpstreamRefreshClient;
+
+    @Inject
+    LinearUpstreamRefreshClient linearUpstreamRefreshClient;
 
     /**
      * Returns true when the provider participates in the L2 canonical upstream-RT model.
@@ -146,6 +161,9 @@ public class UpstreamProviderClassifier {
         }
         if (DATADOG_PROVIDER.equals(provider)) {
             return Optional.of(datadogUpstreamRefreshClient);
+        }
+        if (LINEAR_PROVIDER.equals(provider)) {
+            return Optional.of(linearUpstreamRefreshClient);
         }
         return Optional.empty();
     }

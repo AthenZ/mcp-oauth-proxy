@@ -20,6 +20,9 @@ quarkus:
         datadog-internal-userinfo:
           paths: "/internal/datadog/oauth-userinfo"
           policy: permit
+        linear-internal-userinfo:
+          paths: "/internal/linear/oauth-userinfo"
+          policy: permit
         authorize-error:
           paths: "/authorize/error"
           policy: permit
@@ -280,10 +283,10 @@ quarkus:
       token:
         issuer: any
     datadog:
-      auth-server-url: "https://mcp.datadoghq.com"
+      auth-server-url: "https://app.datadoghq.com"
       discovery-enabled: false
-      authorization-path: "/api/unstable/mcp-server/authorize"
-      token-path: "https://mcp.datadoghq.com/api/unstable/mcp-server/token"
+      authorization-path: "/oauth2/v1/authorize"
+      token-path: "https://app.datadoghq.com/oauth2/v1/token"
       user-info-path: ${MOP_DATADOG_SYNTHETIC_USERINFO_URL:https://127.0.0.1/internal/datadog/oauth-userinfo}
       client-id: ${DATADOG_CLIENT_ID:}
       authentication:
@@ -296,7 +299,39 @@ quarkus:
         verify-access-token: false
         pkce-required: true
         extra-params:
-          resource: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp"
+          resource: "https://mcp.datadoghq.com/v1/mcp"
+      application-type: web-app
+      allow-user-info-cache: false
+      cache-user-info-in-idtoken: true
+      token-state-manager:
+        strategy: keep-all-tokens
+      token:
+        issuer: any
+    linear:
+      # Linear is a public PKCE client (DCR returns no client_secret) — no `credentials:` block.
+      # Linear requires comma-separated scopes which Quarkus' `authentication.scopes:` list cannot
+      # produce (it space-joins). We force the literal scope string via `extra-params.scope` and
+      # leave `authentication.scopes: []` + `add-openid-scope: false` so Quarkus emits no scope of
+      # its own. `actor=user` is also required on /authorize (we deliberately do NOT set
+      # prompt=consent — let Linear handle consent prompting natively).
+      auth-server-url: "https://linear.app"
+      discovery-enabled: false
+      authorization-path: "/oauth/authorize"
+      token-path: "https://api.linear.app/oauth/token"
+      user-info-path: ${MOP_LINEAR_SYNTHETIC_USERINFO_URL:https://127.0.0.1/internal/linear/oauth-userinfo}
+      client-id: ${LINEAR_CLIENT_ID:}
+      authentication:
+        scopes: []
+        redirect-path: /linear/authorize/callback
+        restore-path-after-redirect: true
+        add-openid-scope: false
+        id-token-required: false
+        user-info-required: true
+        verify-access-token: false
+        pkce-required: true
+        extra-params:
+          actor: "user"
+          scope: "comments:create,issues:create,read,timeSchedule:write,write"
       application-type: web-app
       allow-user-info-cache: false
       cache-user-info-in-idtoken: true
@@ -462,6 +497,7 @@ server:
       google-workspace: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_GOOGLE_WORKSPACE:15552000}
       figma: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_FIGMA:7776000}
       datadog: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_DATADOG:15552000}
+      linear: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_LINEAR:15552000}     # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
     ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:3}
   # Dedicated index keyed by H(bearer) for /userinfo bearer resolution. Each minted bearer owns
   # its own row, so multi-window /userinfo no longer 401s on GSI clobbering. The row stores no
@@ -537,6 +573,9 @@ server:
       client-secret-key: ${FIGMA_CLIENT_SECRET_KEY:figma-client-secret}
     datadog:
       client-id: ${DATADOG_CLIENT_ID:}
+    linear:
+      client-id: ${LINEAR_CLIENT_ID:}
+      client-secret-key: ${LINEAR_CLIENT_SECRET_KEY:linear-client-secret}
     splunk:
       admin-token-secret-key: splunk-api-stage
       mirror-user-prefix: mcp.

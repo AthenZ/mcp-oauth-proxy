@@ -269,6 +269,41 @@ class UpstreamTokenConfigTest {
     }
 
     @Test
+    void linear_exactMatchOverride_returnsConfiguredLifetime() {
+        // Linear is L2 promoted but NOT in GOOGLE_WORKSPACE_PROVIDERS, so the floor does not
+        // apply. The exact-match key must yield the configured cap (6 months by default).
+        long sixMonths = GOOGLE_180D;
+        Map<String, Long> map = new HashMap<>();
+        map.put("linear", sixMonths);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(sixMonths, cfg.expirySecondsForProvider("linear"));
+        assertEquals(sixMonths, cfg.expirySecondsForProvider("linear#user-uuid"));
+    }
+
+    @Test
+    void linear_unconfigured_fallsBackToDefault() {
+        // Without an exact-match key Linear falls through to the global default (30 d). Production
+        // sets linear=15552000 (6 months) explicitly via chart values.yaml + env overrides; if
+        // that override is dropped this test demonstrates the fallback. Linear's RT lifetime is
+        // unbounded upstream so the only effect is unnecessary re-consents — no data loss.
+        UpstreamTokenConfig cfg = configWith(new HashMap<>());
+
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("linear#user-uuid"));
+    }
+
+    @Test
+    void linear_groupKeyDoesNotApplyToLinear() {
+        // The google-workspace group key is scoped to Workspace providers only. Linear must NOT
+        // accidentally inherit a Google-tier expiry just because the group key is set.
+        Map<String, Long> map = new HashMap<>();
+        map.put(UpstreamTokenConfig.GOOGLE_WORKSPACE_GROUP_KEY, GOOGLE_180D);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("linear#u"));
+    }
+
+    @Test
     void zeroOrNegativeMapValue_ignoredInFavorOfDefault() {
         // Zero/negative is treated as "unset" — falls back to the default. This catches a
         // malformed values.yaml gracefully rather than writing a row with 0s TTL.

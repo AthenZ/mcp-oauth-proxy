@@ -34,35 +34,55 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * {@link UpstreamRefreshClient} for Datadog (L2 promoted).
+ * {@link UpstreamRefreshClient} for Linear (L2 promoted).
  *
- * <p>Calls {@code https://app.datadoghq.com/oauth2/v1/token} with
- * {@code grant_type=refresh_token} as a public PKCE client: the request body carries
- * {@code client_id} only and there is no {@code Authorization} header. Datadog DCR returns no
- * {@code client_secret} ({@code token_endpoint_auth_method=none}); injecting any client-secret
- * machinery here would break the upstream call.
+ * <p>Calls {@code https://api.linear.app/oauth/token} with {@code grant_type=refresh_token} as a
+ * public PKCE client today: the request body carries {@code client_id} only and there is no
+ * {@code Authorization} header. Linear DCR currently registers public clients
+ * ({@code token_endpoint_auth_method=none}); injecting any client-secret machinery here would
+ * break the upstream call.
  *
- * <p>Datadog access tokens last 1 hour ({@code expires_in=3600}); when the upstream omits
- * {@code expires_in} we fall back to that documented constant. Refresh tokens do <strong>not</strong>
- * rotate; the client carries forward the prior RT verbatim when the response omits a new one
- * (defensive — same pattern Figma / Slack use).
+ * <p>Linear access tokens last ~24 hours ({@code expires_in=86399}). When the upstream omits
+ * {@code expires_in} we fall back to that documented constant.
  *
- * <p>Error contract follows {@link UpstreamRefreshClient}: {@code invalid_grant} →
- * {@link OktaTokenRevokedException}; everything else → {@link OktaTokenRefreshException}. Reusing
+ * <p>Linear <strong>rotates</strong> the refresh token on every successful refresh and offers a
+ * documented 30-minute replay-grace window: if MoP loses the response (network failure between
+ * Linear and MoP) and replays the original {@code refresh_token} request within 30 min, Linear
+ * returns the same new RT so the client converges. The replay grace is server-side at Linear and
+ * transparent to MoP — we always persist the response RT verbatim. Defensive carry-forward of
+ * the prior RT is kept as a safety net only for the (anomalous) case where the response is HTTP
+ * 200 but contains no new refresh_token.
+ *
+ * <p>Error contract follows {@link UpstreamRefreshClient}: {@code invalid_grant} -&gt;
+ * {@link OktaTokenRevokedException}; everything else -&gt; {@link OktaTokenRefreshException}. Reusing
  * the Okta exception types keeps {@link UpstreamRefreshService}'s revoke-on-invalid-grant logic
  * provider-agnostic.
+ *
+ * <p>TODO(linear-confidential): if Linear later issues a {@code client_secret}, populate
+ * {@code server.token-exchange.linear.client-secret-key} and switch to
+ * {@code ClientSecretBasic} via {@link io.athenz.mop.secret.K8SSecretsProvider} (mirror Figma's
+ * pattern). The branch is intentionally inert today so a future regression that wires up a
+ * secret without test coverage breaks loudly (see the public-client header assertions in
+ * {@code LinearUpstreamRefreshClientTest}).
  */
 @ApplicationScoped
-public class DatadogUpstreamRefreshClient implements UpstreamRefreshClient {
+public class LinearUpstreamRefreshClient implements UpstreamRefreshClient {
 
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
-    private static final String DATADOG_TOKEN_URI =
-            "https://app.datadoghq.com/oauth2/v1/token";
-    /** Documented Datadog access-token lifetime (1 h); used only when the upstream omits {@code expires_in}. */
-    static final long DEFAULT_EXPIRES_IN_SECONDS = 3_600L;
+    private static final String LINEAR_TOKEN_URI = "https://api.linear.app/oauth/token";
+    /** Documented Linear access-token lifetime ({@code expires_in=86399} ~24 h). */
+    static final long DEFAULT_EXPIRES_IN_SECONDS = 86_399L;
 
-    @ConfigProperty(name = "server.token-exchange.datadog.client-id", defaultValue = "")
+    @ConfigProperty(name = "server.token-exchange.linear.client-id", defaultValue = "")
     String clientId;
+
+    /**
+     * Reserved for future confidential-client rollout. Empty today (public PKCE). When populated,
+     * this client should switch to {@code ClientSecretBasic} via {@code K8SSecretsProvider}; the
+     * actual wiring is gated behind {@code TODO(linear-confidential)} above.
+     */
+    @ConfigProperty(name = "server.token-exchange.linear.client-secret-key", defaultValue = "")
+    String clientSecretKey;
 
     @Inject
     TokenClient tokenClient;
@@ -70,19 +90,19 @@ public class DatadogUpstreamRefreshClient implements UpstreamRefreshClient {
     @Override
     public UpstreamRefreshResponse refresh(String providerUserId, String upstreamRefreshToken) {
         if (upstreamRefreshToken == null || upstreamRefreshToken.isBlank()) {
-            throw new OktaTokenRefreshException("Datadog upstream refresh token is empty");
+            throw new OktaTokenRefreshException("Linear upstream refresh token is empty");
         }
         if (clientId == null || clientId.isBlank()) {
             throw new OktaTokenRefreshException(
-                    "Datadog client_id not configured (server.token-exchange.datadog.client-id)");
+                    "Linear client_id not configured (server.token-exchange.linear.client-id)");
         }
         String trimmedRt = upstreamRefreshToken.trim();
         try {
-            URI tokenEndpoint = URI.create(DATADOG_TOKEN_URI);
+            URI tokenEndpoint = URI.create(LINEAR_TOKEN_URI);
             AuthorizationGrant refreshGrant = new RefreshTokenGrant(new RefreshToken(trimmedRt));
             // Public PKCE client: TokenRequest(URI, ClientID, AuthorizationGrant, Scope) puts
             // client_id in the form body and sends NO Authorization header. Do NOT introduce
-            // ClientSecretBasic / ClientSecretPost — Datadog DCR does not return a client_secret
+            // ClientSecretBasic / ClientSecretPost — Linear DCR does not return a client_secret
             // and any auth mechanism that requires one would silently break refresh.
             TokenRequest tokenRequest = new TokenRequest(
                     tokenEndpoint,
@@ -91,7 +111,7 @@ public class DatadogUpstreamRefreshClient implements UpstreamRefreshClient {
                     /* scope */ null);
             TokenResponse tokenResponse;
             try (var ignored = UpstreamHttpCallLabels.withLabels(
-                    OauthProviderLabel.DATADOG, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
+                    OauthProviderLabel.LINEAR, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
                 tokenResponse = tokenClient.execute(tokenRequest);
             }
             if (tokenResponse.indicatesSuccess()) {
@@ -100,8 +120,9 @@ public class DatadogUpstreamRefreshClient implements UpstreamRefreshClient {
                 RefreshToken newRefreshToken = success.getTokens().getRefreshToken();
                 Long lifetime = success.getTokens().getAccessToken().getLifetime();
                 long expiresIn = lifetime != null && lifetime > 0L ? lifetime : DEFAULT_EXPIRES_IN_SECONDS;
-                // Datadog does not rotate the RT — carry forward the prior RT when the response
-                // omits a new one so the L2 row's encrypted_upstream_refresh_token is not nulled.
+                // Linear rotates the RT each refresh; persist the response RT verbatim. Carry
+                // forward the prior RT only if the response (anomalously) omits one so the L2
+                // row's encrypted_upstream_refresh_token is not nulled out.
                 String rotatedRt = newRefreshToken != null ? newRefreshToken.getValue() : trimmedRt;
                 Object scopeObj = success.getCustomParameters() != null
                         ? success.getCustomParameters().get("scope") : null;
@@ -111,22 +132,22 @@ public class DatadogUpstreamRefreshClient implements UpstreamRefreshClient {
             }
             TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
             String body = UpstreamTokenRefreshErrors.formatTokenError(errorResponse);
-            log.error("Datadog refresh failed for provider_user_id={} upstream response: {}",
+            log.error("Linear refresh failed for provider_user_id={} upstream response: {}",
                     providerUserId, body);
             String code = errorResponse.getErrorObject() != null
                     ? errorResponse.getErrorObject().getCode() : "unknown";
             String desc = errorResponse.getErrorObject() != null
                     ? errorResponse.getErrorObject().getDescription() : "unknown";
             if ("invalid_grant".equals(code)) {
-                throw new OktaTokenRevokedException("Datadog refresh token invalid or revoked: " + desc);
+                throw new OktaTokenRevokedException("Linear refresh token invalid or revoked: " + desc);
             }
-            throw new OktaTokenRefreshException("Datadog token refresh failed: " + code + " - " + desc);
+            throw new OktaTokenRefreshException("Linear token refresh failed: " + code + " - " + desc);
         } catch (OktaTokenRevokedException | OktaTokenRefreshException e) {
             throw e;
         } catch (Exception e) {
-            log.error("Datadog refresh failed for provider_user_id={} (could not complete token request or parse upstream response)",
+            log.error("Linear refresh failed for provider_user_id={} (could not complete token request or parse upstream response)",
                     providerUserId, e);
-            throw new OktaTokenRefreshException("Datadog token refresh failed: " + e.getMessage(), e);
+            throw new OktaTokenRefreshException("Linear token refresh failed: " + e.getMessage(), e);
         }
     }
 }

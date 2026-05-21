@@ -29,6 +29,9 @@ data:
             datadog-internal-userinfo:
               paths: "/internal/datadog/oauth-userinfo"
               policy: permit
+            linear-internal-userinfo:
+              paths: "/internal/linear/oauth-userinfo"
+              policy: permit
             authorize-error:
               paths: "/authorize/error"
               policy: permit
@@ -55,6 +58,9 @@ data:
             datadog:
               paths: "/datadog/*"
               policy: authenticated
+            linear:
+              paths: "/linear/*"
+              policy: authenticated
             embrace:
               paths: "/embrace/*"
               policy: authenticated
@@ -69,6 +75,16 @@ data:
         reload-period: {{ .Values.application.tls.reloadPeriod | quote }}
 {{- if (.Values.oidc.embrace.tlsInsecureClient | default false) }}
         embrace-insecure-client:
+          trust-all: true
+          hostname-verification-algorithm: NONE
+{{- end }}
+{{- if (.Values.oidc.datadog.tlsInsecureClient | default false) }}
+        datadog-insecure-client:
+          trust-all: true
+          hostname-verification-algorithm: NONE
+{{- end }}
+{{- if (.Values.oidc.linear.tlsInsecureClient | default false) }}
+        linear-insecure-client:
           trust-all: true
           hostname-verification-algorithm: NONE
 {{- end }}
@@ -221,10 +237,14 @@ data:
           token:
             issuer: any
         datadog:
-          auth-server-url: "https://mcp.datadoghq.com"
+{{- if (.Values.oidc.datadog.tlsInsecureClient | default false) }}
+          tls:
+            tls-configuration-name: datadog-insecure-client
+{{- end }}
+          auth-server-url: "https://app.datadoghq.com"
           discovery-enabled: false
-          authorization-path: "/api/unstable/mcp-server/authorize"
-          token-path: "https://mcp.datadoghq.com/api/unstable/mcp-server/token"
+          authorization-path: "/oauth2/v1/authorize"
+          token-path: "https://app.datadoghq.com/oauth2/v1/token"
           {{- if .Values.oidc.datadog.userInfoPath }}
           user-info-path: {{ .Values.oidc.datadog.userInfoPath | quote }}
           {{- else }}
@@ -242,7 +262,45 @@ data:
             verify-access-token: false
             pkce-required: true
             extra-params:
-              resource: {{ .Values.oidc.datadog.resource | default "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp" | quote }}
+              resource: {{ .Values.oidc.datadog.resource | default "https://mcp.datadoghq.com/v1/mcp" | quote }}
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            issuer: any
+        linear:
+          # Linear is a public PKCE client (no client_secret). Comma-separated scope is forced
+          # via extra-params.scope; authentication.scopes stays empty so Quarkus emits no scope.
+          # actor=user is required on /authorize.
+{{- if (.Values.oidc.linear.tlsInsecureClient | default false) }}
+          tls:
+            tls-configuration-name: linear-insecure-client
+{{- end }}
+          auth-server-url: "https://linear.app"
+          discovery-enabled: false
+          authorization-path: "/oauth/authorize"
+          token-path: "https://api.linear.app/oauth/token"
+          {{- if .Values.oidc.linear.userInfoPath }}
+          user-info-path: {{ .Values.oidc.linear.userInfoPath | quote }}
+          {{- else }}
+          {{- $linearUiBase := .Values.oidc.linear.syntheticUserInfoBaseUrl | default (printf "https://%s" .Values.application.host) }}
+          user-info-path: {{ printf "%s/internal/linear/oauth-userinfo" $linearUiBase | quote }}
+          {{- end }}
+          client-id: {{ .Values.oidc.linear.clientId | quote }}
+          authentication:
+            scopes: []
+            redirect-path: /linear/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: false
+            id-token-required: false
+            user-info-required: true
+            verify-access-token: false
+            pkce-required: true
+            extra-params:
+              actor: "user"
+              scope: {{ .Values.oidc.linear.scope | default "comments:create,issues:create,read,timeSchedule:write,write" | quote }}
           application-type: web-app
           allow-user-info-cache: false
           cache-user-info-in-idtoken: true
@@ -452,6 +510,9 @@ data:
           client-secret-key: {{ .Values.oidc.figma.clientSecretKey | quote }}
         datadog:
           client-id: {{ .Values.oidc.datadog.clientId | quote }}
+        linear:
+          client-id: {{ .Values.oidc.linear.clientId | quote }}
+          client-secret-key: {{ .Values.oidc.linear.clientSecretKey | default "linear-client-secret" | quote }}
         athenz-token-exchange:
           audience: {{ .Values.application.tokenExchange.athenzTokenExchange.audience | default "sys.auth.gcp" | quote }}
         google-workforce:
@@ -553,6 +614,9 @@ data:
             - name: datadog
               endpoint: {{ .Values.oidc.datadog.endpoint | quote }}
               username-claim: {{ .Values.oidc.datadog.claim | quote }}
+            - name: linear
+              endpoint: {{ .Values.oidc.linear.endpoint | quote }}
+              username-claim: {{ .Values.oidc.linear.claim | quote }}
       resources:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}

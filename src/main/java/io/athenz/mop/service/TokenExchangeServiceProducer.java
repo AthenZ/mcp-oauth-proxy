@@ -81,6 +81,9 @@ public class TokenExchangeServiceProducer {
     TokenExchangeServiceDatadogImpl tokenExchangeServiceDatadogImpl;
 
     @Inject
+    TokenExchangeServiceLinearImpl tokenExchangeServiceLinearImpl;
+
+    @Inject
     TokenExchangeServiceEvaluateImpl tokenExchangeServiceEvaluateImpl;
 
     private final Map<String, TokenExchangeService> googleWorkspaceServices = new HashMap<>();
@@ -129,6 +132,7 @@ public class TokenExchangeServiceProducer {
             case "slack" -> tokenExchangeServiceSlackImpl;
             case "figma" -> tokenExchangeServiceFigmaImpl;
             case "datadog" -> tokenExchangeServiceDatadogImpl;
+            case "linear" -> tokenExchangeServiceLinearImpl;
             case "evaluate" -> tokenExchangeServiceEvaluateImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
         };

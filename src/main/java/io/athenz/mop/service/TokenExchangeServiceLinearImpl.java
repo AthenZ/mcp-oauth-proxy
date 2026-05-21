@@ -45,27 +45,30 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Datadog OAuth integration. Datadog access tokens last 1 hour and the {@code POST} body is
- * {@code application/x-www-form-urlencoded}. Datadog DCR returns no client_secret and registers
- * as a public PKCE client ({@code token_endpoint_auth_method=none}), so the refresh request
- * carries {@code client_id} in the body but has no {@code Authorization} header.
+ * Linear OAuth integration. Linear access tokens last ~24 hours ({@code expires_in=86399}) and
+ * the {@code POST} body is {@code application/x-www-form-urlencoded}. Linear is a public PKCE
+ * client today (no client_secret), so the refresh request carries {@code client_id} in the body
+ * but has no {@code Authorization} header.
  *
- * <p>Note: with Datadog promoted to the L2 model in
+ * <p>Note: with Linear promoted to the L2 model in
  * {@link UpstreamProviderClassifier#isUpstreamPromoted(String)}, the canonical refresh path is
- * {@code UpstreamRefreshService.refreshUpstream("datadog", ...)} →
- * {@link DatadogUpstreamRefreshClient}. {@link #refreshWithUpstreamToken(String)} below remains
+ * {@code UpstreamRefreshService.refreshUpstream("linear", ...)} -&gt;
+ * {@link LinearUpstreamRefreshClient}. {@link #refreshWithUpstreamToken(String)} below remains
  * for the legacy/native fallback path used by {@code AuthorizerService.refreshUpstreamAndGetToken}.
+ *
+ * <p>Linear rotates the refresh token on each refresh; we persist the response RT verbatim and
+ * defensively carry forward the prior RT only when the response unexpectedly omits a new one
+ * (so an upstream hiccup does not null out the L2 row's encrypted_upstream_refresh_token).
  */
 @ApplicationScoped
-public class TokenExchangeServiceDatadogImpl implements TokenExchangeService {
+public class TokenExchangeServiceLinearImpl implements TokenExchangeService {
 
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
-    private static final URI DATADOG_TOKEN_ENDPOINT =
-            URI.create("https://app.datadoghq.com/oauth2/v1/token");
-    /** Datadog documents 3,600 s (1 h) for access tokens; used only when the response omits {@code expires_in}. */
-    static final long DATADOG_DEFAULT_TOKEN_TTL = 3_600L;
+    private static final URI LINEAR_TOKEN_ENDPOINT = URI.create("https://api.linear.app/oauth/token");
+    /** Linear's documented access-token lifetime ({@code expires_in=86399} ~24h). Used only when the response omits {@code expires_in}. */
+    static final long LINEAR_DEFAULT_TOKEN_TTL = 86_399L;
 
-    @ConfigProperty(name = "server.token-exchange.datadog.client-id", defaultValue = "")
+    @ConfigProperty(name = "server.token-exchange.linear.client-id", defaultValue = "")
     String clientId;
 
     @Inject
@@ -111,12 +114,12 @@ public class TokenExchangeServiceDatadogImpl implements TokenExchangeService {
         }
 
         if (clientId == null || clientId.isBlank()) {
-            log.warn("Datadog refresh: client_id not configured");
+            log.warn("Linear refresh: client_id not configured");
             return null;
         }
 
         long t0 = System.nanoTime();
-        String oauthProvider = OauthProviderLabel.DATADOG;
+        String oauthProvider = OauthProviderLabel.LINEAR;
         String oauthClient = telemetryRequestContext.oauthClient();
         String region = metricsRegionProvider.primaryRegion();
         try {
@@ -124,13 +127,13 @@ public class TokenExchangeServiceDatadogImpl implements TokenExchangeService {
 
             // Public PKCE client: no ClientAuthentication. The TokenRequest(URI, ClientID,
             // AuthorizationGrant, Scope) overload puts client_id in the form body and sends no
-            // Authorization header — exactly what Datadog's token_endpoint_auth_method=none flow
-            // requires. Do NOT switch to ClientSecretBasic / ClientSecretPost here: Datadog DCR
-            // does not return a client_secret, so any auth mechanism that requires one would
-            // start sending bogus / blank credentials and break the upstream call.
+            // Authorization header — exactly what Linear's token_endpoint_auth_method=none flow
+            // requires today. TODO(linear-confidential): if Linear later issues a client_secret,
+            // switch to ClientSecretBasic via K8SSecretsProvider (mirror Figma) and add a
+            // `credentials:` block under quarkus.oidc.linear.
             RefreshTokenGrant grant = new RefreshTokenGrant(new RefreshToken(refreshTokenValue));
             TokenRequest tokenRequest = new TokenRequest(
-                    DATADOG_TOKEN_ENDPOINT,
+                    LINEAR_TOKEN_ENDPOINT,
                     new ClientID(clientId.trim()),
                     grant,
                     /* scope */ null
@@ -138,7 +141,7 @@ public class TokenExchangeServiceDatadogImpl implements TokenExchangeService {
 
             TokenResponse tokenResponse;
             try (var ignored = UpstreamHttpCallLabels.withLabels(
-                    OauthProviderLabel.DATADOG, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
+                    OauthProviderLabel.LINEAR, UpstreamHttpCallLabels.ENDPOINT_OAUTH_TOKEN)) {
                 tokenResponse = tokenClient.execute(tokenRequest);
             }
 
@@ -147,34 +150,35 @@ public class TokenExchangeServiceDatadogImpl implements TokenExchangeService {
                 AccessToken accessToken = successResponse.getTokens().getAccessToken();
                 RefreshToken newRefreshToken = successResponse.getTokens().getRefreshToken();
                 Long lifetime = accessToken.getLifetime();
-                long ttl = (lifetime != null && lifetime > 0) ? lifetime : DATADOG_DEFAULT_TOKEN_TTL;
-                recordDatadogRefresh(t0, oauthProvider, oauthClient, region, true);
+                long ttl = (lifetime != null && lifetime > 0) ? lifetime : LINEAR_DEFAULT_TOKEN_TTL;
+                recordLinearRefresh(t0, oauthProvider, oauthClient, region, true);
                 return new TokenWrapper(
                         null,
                         null,
                         null,
                         accessToken.getValue(),
-                        // Datadog's RT does not rotate; defensively carry forward the old RT when
-                        // the response omits a new one so the L2 row does not get nulled out.
+                        // Linear rotates the RT each refresh — persist the response RT verbatim
+                        // and only fall back to the prior RT when the response unexpectedly omits
+                        // one (defensive; should not happen in steady state).
                         newRefreshToken != null ? newRefreshToken.getValue() : refreshTokenValue,
                         ttl
                 );
             } else {
                 TokenErrorResponse errorResponse = tokenResponse.toErrorResponse();
-                log.error("Datadog refresh failed; upstream response: {}",
+                log.error("Linear refresh failed; upstream response: {}",
                         UpstreamTokenRefreshErrors.formatTokenError(errorResponse));
-                recordDatadogRefresh(t0, oauthProvider, oauthClient, region, false);
+                recordLinearRefresh(t0, oauthProvider, oauthClient, region, false);
                 return null;
             }
         } catch (Exception e) {
-            log.error("Datadog refresh failed (could not complete token request or parse upstream response)", e);
-            recordDatadogRefresh(t0, oauthProvider, oauthClient, region, false);
+            log.error("Linear refresh failed (could not complete token request or parse upstream response)", e);
+            recordLinearRefresh(t0, oauthProvider, oauthClient, region, false);
             return null;
         }
     }
 
-    private void recordDatadogRefresh(long startNanos, String oauthProvider, String oauthClient,
-                                      String region, boolean success) {
+    private void recordLinearRefresh(long startNanos, String oauthProvider, String oauthClient,
+                                     String region, boolean success) {
         double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
         oauthProxyMetrics.recordExchangeStep(ExchangeStep.UPSTREAM_REFRESH, oauthProvider, success,
                 success ? null : "unauthorized", oauthClient, region, seconds);
