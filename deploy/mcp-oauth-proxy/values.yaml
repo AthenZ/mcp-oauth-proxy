@@ -186,6 +186,7 @@ application:
       google-workspace: "15552000"   # 6 months — applies to all Google Workspace MCPs
       figma: "7776000"               # 90 days — matches Figma's documented access-token lifetime
       datadog: "15552000"            # 6 months — Datadog RT does not expire upstream; capped to bound L2 row TTL
+      linear: "15552000"             # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
     ttlBufferDays: 3
     # How long REVOKED L2 rows are retained before TTL eviction. Sized so an operator can
     # still inspect a recently-revoked row when triaging a refresh-token-revoked event.
@@ -388,6 +389,28 @@ oidc:
     userInfoPath: ""
     # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty. Defaults to
     # https://<application.host>.
+    syntheticUserInfoBaseUrl: ""
+  linear:
+    # remote-servers.endpoints[name=linear].endpoint — used by ConfigService when resolving the
+    # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
+    endpoint: "https://api.linear.app"
+    # Public PKCE client; same client_id is used in local, stage, and prod per Linear OAuth setup.
+    clientId:
+    # Linear has no flat OIDC userinfo. The synthetic /internal/linear/oauth-userinfo proxy POSTs
+    # `query { viewer { id name email } }` to https://api.linear.app/graphql and flattens to
+    # top-level email/id/name/sub claims; BaseResource.getUsername strips @domain for email.
+    claim: email
+    # Reserved for future confidential client. Today Linear is public PKCE and the refresh
+    # path ignores this value on the wire; the placeholder secret key is set so SmallRye can
+    # resolve a non-empty String at startup.
+    clientSecretKey: "linear-client-secret"
+    # Linear-required scope string. Comma-separated (Linear's format) — passed verbatim via
+    # extra-params.scope in configmap.yaml. Override here to add or remove scopes.
+    scope: "comments:create,issues:create,read,timeSchedule:write,write"
+    # When non-empty, used verbatim as quarkus.oidc.linear.user-info-path. When empty, configmap.yaml
+    # defaults to https://<application.host>/internal/linear/oauth-userinfo (mirrors datadog).
+    userInfoPath: ""
+    # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty.
     syntheticUserInfoBaseUrl: ""
   embrace:
     authServerUrl: "https://dash-api.embrace.io"
