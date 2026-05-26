@@ -53,6 +53,13 @@ import java.util.Set;
  *       lifetime is otherwise unbounded. Linear is a public PKCE client today; see
  *       {@link LinearUpstreamRefreshClient} for the public-client wiring and the
  *       {@code TODO(linear-confidential)} hook for a future client_secret rollout.</li>
+ *   <li>{@code oracle-epm} — promoted to L2 for cross-client AT coalescing. Oracle IDCS
+ *       access tokens are 1h ({@code expires_in=3600}) and the refresh token <strong>rotates</strong>
+ *       on every refresh. L2 row TTL is capped at 30 days (operator-tunable via
+ *       {@code server.upstream-token.expiry-seconds-by-provider.oracle-epm}); matches the
+ *       global default since Oracle's RT TTL is operator-tunable upstream. Oracle is a
+ *       confidential client (client_secret_post); see {@link OracleEpmUpstreamRefreshClient}
+ *       for the wiring.</li>
  * </ul>
  *
  * <p>Other native-IdP providers like Slack/GitHub/Atlassian/Embrace stay on the legacy
@@ -94,6 +101,9 @@ public class UpstreamProviderClassifier {
     /** Provider id for Linear (~24h access-token lifetime, rotating RT with 30-min replay grace, L2 promoted). */
     public static final String LINEAR_PROVIDER = "linear";
 
+    /** Provider id for Oracle EPM (1h access-token lifetime, rotating RT, L2 promoted). */
+    public static final String ORACLE_EPM_PROVIDER = "oracle-epm";
+
     private static final Set<String> PROMOTED_PROVIDERS;
     static {
         Set<String> all = new java.util.HashSet<>(GOOGLE_WORKSPACE_PROVIDERS);
@@ -101,6 +111,7 @@ public class UpstreamProviderClassifier {
         all.add(FIGMA_PROVIDER);
         all.add(DATADOG_PROVIDER);
         all.add(LINEAR_PROVIDER);
+        all.add(ORACLE_EPM_PROVIDER);
         PROMOTED_PROVIDERS = Set.copyOf(all);
     }
 
@@ -115,6 +126,9 @@ public class UpstreamProviderClassifier {
 
     @Inject
     LinearUpstreamRefreshClient linearUpstreamRefreshClient;
+
+    @Inject
+    OracleEpmUpstreamRefreshClient oracleEpmUpstreamRefreshClient;
 
     /**
      * Returns true when the provider participates in the L2 canonical upstream-RT model.
@@ -164,6 +178,9 @@ public class UpstreamProviderClassifier {
         }
         if (LINEAR_PROVIDER.equals(provider)) {
             return Optional.of(linearUpstreamRefreshClient);
+        }
+        if (ORACLE_EPM_PROVIDER.equals(provider)) {
+            return Optional.of(oracleEpmUpstreamRefreshClient);
         }
         return Optional.empty();
     }

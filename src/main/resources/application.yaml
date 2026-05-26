@@ -23,6 +23,9 @@ quarkus:
         linear-internal-userinfo:
           paths: "/internal/linear/oauth-userinfo"
           policy: permit
+        oracle-epm-internal-userinfo:
+          paths: "/internal/oracle-epm/oauth-userinfo"
+          policy: permit
         authorize-error:
           paths: "/authorize/error"
           policy: permit
@@ -290,7 +293,9 @@ quarkus:
       user-info-path: ${MOP_DATADOG_SYNTHETIC_USERINFO_URL:https://127.0.0.1/internal/datadog/oauth-userinfo}
       client-id: ${DATADOG_CLIENT_ID:}
       authentication:
-        scopes: []
+        scopes:
+          - mcp_read
+          - mcp_write
         redirect-path: /datadog/authorize/callback
         restore-path-after-redirect: true
         add-openid-scope: false
@@ -338,6 +343,57 @@ quarkus:
       token-state-manager:
         strategy: keep-all-tokens
       token:
+        issuer: any
+    oracle-epm:
+      # Oracle EPM (Oracle IDCS) is a confidential OIDC client. The token endpoint accepts
+      # client_secret in the form body (client_secret_post). The K8s secret store provides the
+      # secret value via `oracle-epm-client-secret` (operator-tunable via ORACLE_CLIENT_SECRET_KEY).
+      # Note: openid is REQUIRED for Oracle to return id_token + a working /userinfo response.
+      auth-server-url: "https://idcs-c0b7a2ce098d48a0a78b94a30f9e42a1.identity.oraclecloud.com"
+      discovery-enabled: false
+      authorization-path: "/oauth2/v1/authorize"
+      token-path: "/oauth2/v1/token"
+      # Oracle IDCS canonical JWKS endpoint for RS256 id_token signature verification. NOTE:
+      # by default this path is gated by an admin bearer token; the operator must enable
+      # "Access Signing Certificate" in the Oracle IDCS Console (Settings > Default Settings)
+      # to make it public. The example tenant in this config already has it on. Without
+      # jwks-path Quarkus falls back to /introspect which Oracle does NOT authorize for this
+      # client (operator confirmed: "this client is not authorized to use it"), and the OIDC
+      # callback fails with "Token issued to client X cannot be introspected because the
+      # introspection endpoint address is unknown".
+      jwks-path: "/admin/v1/SigningCert/jwk"
+      user-info-path: ${MOP_ORACLE_EPM_SYNTHETIC_USERINFO_URL:https://127.0.0.1/internal/oracle-epm/oauth-userinfo}
+      client-id: ${ORACLE_EPM_CLIENT_ID:}
+      credentials:
+        client-secret:
+          provider:
+            key: ${ORACLE_CLIENT_SECRET_KEY:oracle-epm-client-secret}
+          method: post
+      authentication:
+        scopes:
+          - openid
+          - urn:opc:resource:consumer::all
+          - offline_access
+        redirect-path: /oracle-epm/authorize/callback
+        restore-path-after-redirect: true
+        # `openid` is already in the explicit scopes list above; do not let Quarkus add a
+        # second one (some OIDC stacks dedupe but Oracle is strict about scope shape).
+        add-openid-scope: false
+        # id-token-required: true because Oracle returns an id_token whenever openid is in
+        # scope and Quarkus will attempt to verify it. With jwks-path set above, signature
+        # verification works without falling back to /introspect.
+        id-token-required: true
+        user-info-required: true
+        verify-access-token: false
+        pkce-required: true
+      application-type: web-app
+      allow-user-info-cache: false
+      cache-user-info-in-idtoken: true
+      token-state-manager:
+        strategy: keep-all-tokens
+      token:
+        # discovery is disabled, so Quarkus does not auto-fetch the IDCS issuer URL. Skip iss
+        # validation on token claims; signature is verified via jwks-path above.
         issuer: any
     embrace:
       discovery-enabled: false
@@ -498,6 +554,7 @@ server:
       figma: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_FIGMA:7776000}
       datadog: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_DATADOG:15552000}
       linear: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_LINEAR:15552000}     # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
+      oracle-epm: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_ORACLE_EPM:2592000}  # 30 days — matches the global default; Oracle IDCS RT TTL is operator-tunable
     ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:3}
   # Dedicated index keyed by H(bearer) for /userinfo bearer resolution. Each minted bearer owns
   # its own row, so multi-window /userinfo no longer 401s on GSI clobbering. The row stores no
@@ -576,6 +633,12 @@ server:
     linear:
       client-id: ${LINEAR_CLIENT_ID:}
       client-secret-key: ${LINEAR_CLIENT_SECRET_KEY:linear-client-secret}
+    oracle-epm:
+      client-id: ${ORACLE_EPM_CLIENT_ID:}
+      # K8s secret key holding the Oracle IDCS confidential client_secret. Same key is read by
+      # OracleEpmUpstreamRefreshClient (canonical L2 path) and TokenExchangeServiceOracleEpmImpl
+      # (legacy passthrough path) so they always agree on which secret to use.
+      client-secret-key: ${ORACLE_CLIENT_SECRET_KEY:oracle-epm-client-secret}
     splunk:
       admin-token-secret-key: splunk-api-stage
       mirror-user-prefix: mcp.

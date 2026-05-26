@@ -68,6 +68,9 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceLinearImpl tokenExchangeServiceLinearImpl;
 
     @Mock
+    private TokenExchangeServiceOracleEpmImpl tokenExchangeServiceOracleEpmImpl;
+
+    @Mock
     private TokenExchangeServiceEvaluateImpl tokenExchangeServiceEvaluateImpl;
 
     @Mock
@@ -236,6 +239,13 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("linear");
         assertNotNull(result);
         assertSame(tokenExchangeServiceLinearImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_OracleEpm() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("oracle-epm");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceOracleEpmImpl, result);
     }
 
     @Test

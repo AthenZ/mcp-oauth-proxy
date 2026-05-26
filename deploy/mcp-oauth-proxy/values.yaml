@@ -187,6 +187,7 @@ application:
       figma: "7776000"               # 90 days — matches Figma's documented access-token lifetime
       datadog: "15552000"            # 6 months — Datadog RT does not expire upstream; capped to bound L2 row TTL
       linear: "15552000"             # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
+      oracle-epm: "2592000"          # 30 days — matches global default; Oracle IDCS RT TTL is operator-tunable
     ttlBufferDays: 3
     # How long REVOKED L2 rows are retained before TTL eviction. Sized so an operator can
     # still inspect a recently-revoked row when triaging a refresh-token-revoked event.
@@ -378,7 +379,7 @@ oidc:
     # public PKCE client; DCR returns only client_id (no client_secret).
     clientId:
     # Datadog has no flat OIDC userinfo. The synthetic /internal/datadog/oauth-userinfo proxy
-    # flattens api.datadoghq.com/api/v2/current_user (data.attributes.email) to top-level claims;
+    # flattens app.datadoghq.com/api/v2/current_user (data.attributes.email) to top-level claims;
     # BaseResource.getUsername strips @domain for email claims.
     claim: email
     # RFC 8707 resource indicator required by Datadog on /authorize. Pinned to the MCP server URL.
@@ -397,6 +398,13 @@ oidc:
     # configmap renders a `datadog-insecure-client` named TLS config (trust-all + skip
     # hostname verification) and binds it to quarkus.oidc.datadog.tls.tls-configuration-name.
     tlsInsecureClient: false
+    # Datadog MCP requires mcp_read + mcp_write to grant the issued AT access to the MCP
+    # resource and to app.datadoghq.com/api/v2/current_user (proxied by the synthetic userinfo
+    # endpoint). Override per env if Datadog later adds finer-grained scopes; defaults below
+    # match the Datadog MCP "Read+Write" preset.
+    scopes:
+      - mcp_read
+      - mcp_write
   linear:
     # remote-servers.endpoints[name=linear].endpoint — used by ConfigService when resolving the
     # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
@@ -425,6 +433,51 @@ oidc:
     # which uses a self-signed cert that the JVM trust store does not accept. When true, the
     # configmap renders a `linear-insecure-client` named TLS config (trust-all + skip
     # hostname verification) and binds it to quarkus.oidc.linear.tls.tls-configuration-name.
+    tlsInsecureClient: false
+  # Oracle IDCS confidential OIDC client used by the Oracle EPM MCP. Quarkus tenant key is
+  # `oracle-epm` (with a hyphen); the chart values key is `oracleEpm` (camelCase) so dot-notation
+  # works in the Helm template. The configmap renders the literal hyphenated tenant name.
+  oracleEpm:
+    # remote-servers.endpoints[name=oracle-epm].endpoint — used by ConfigService when resolving
+    # the OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
+    endpoint: "https://idcs-c0b7a2ce098d48a0a78b94a30f9e42a1.identity.oraclecloud.com"
+    # Confidential client; client-id and client-secret are required. Same client_id is used in
+    # local, stage, and prod per Oracle EPM OAuth setup.
+    clientId:
+    # Oracle's flat OIDC userinfo returns sub and preferred_username (both email-shaped) but
+    # not a top-level `email` claim. The synthetic /internal/oracle-epm/oauth-userinfo proxy
+    # projects `email` from preferred_username/sub so BaseResource.getUsername (which only
+    # strips `@domain` when the claim NAME contains "email") yields the short id (e.g.
+    # "yosrixp" for "yosrixp@yahooinc.com"). Matches every other email-shaped provider.
+    claim: email
+    # K8s secret key holding the Oracle IDCS client_secret. Same key is read by the canonical
+    # L2 path (OracleEpmUpstreamRefreshClient) and the legacy passthrough
+    # (TokenExchangeServiceOracleEpmImpl) so they always agree. Operator-tunable.
+    clientSecretKey: "oracle-epm-client-secret"
+    # Authorization scopes. `openid` is REQUIRED for Oracle to return id_token + a working
+    # /userinfo response. `offline_access` is required for refresh tokens.
+    scopes:
+      - openid
+      - urn:opc:resource:consumer::all
+      - offline_access
+    # Override Quarkus auth-server-url. Defaults to the IDCS host above.
+    authServerUrl: ""
+    # Override Quarkus jwks-path (relative to authServerUrl). Defaults to Oracle IDCS canonical
+    # JWKS endpoint. The operator must enable "Access Signing Certificate" in the Oracle IDCS
+    # Console (Settings > Default Settings) for this path to be reachable without an admin
+    # bearer; without it, Quarkus falls back to /introspect which Oracle does not authorize.
+    jwksPath: "/admin/v1/SigningCert/jwk"
+    # When non-empty, used verbatim as quarkus.oidc.oracle-epm.user-info-path. When empty,
+    # configmap.yaml defaults to https://<application.host>/internal/oracle-epm/oauth-userinfo.
+    userInfoPath: ""
+    # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty.
+    syntheticUserInfoBaseUrl: ""
+    # Set to true ONLY when userInfoPath points at the in-pod loopback
+    # (https://localhost:<ssl-port>/...). Egress policies in stage/prod block the pod from
+    # reaching its own public hostname, so synthetic UserInfo must round-trip via loopback,
+    # which uses a self-signed cert that the JVM trust store does not accept. When true, the
+    # configmap renders an `oracle-epm-insecure-client` named TLS config (trust-all + skip
+    # hostname verification) and binds it to quarkus.oidc.oracle-epm.tls.tls-configuration-name.
     tlsInsecureClient: false
   embrace:
     authServerUrl: "https://dash-api.embrace.io"

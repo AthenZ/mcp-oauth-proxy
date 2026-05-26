@@ -31,26 +31,26 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link DatadogUserInfoResource}. The resource proxies
- * {@code https://app.datadoghq.com/api/v2/current_user} and re-projects the JSON-API-shaped
- * payload to flat top-level claims so Quarkus' {@code UserInfo.get("email")} can find them.
+ * Unit tests for {@link OracleEpmUserInfoResource}. The resource passes through Oracle's flat
+ * OIDC userinfo response (sub / preferred_username / name / given_name / family_name) verbatim
+ * and additionally projects an {@code email} claim from {@code preferred_username} (or
+ * {@code sub}) so {@code BaseResource.getUsername} (which only strips {@code @domain} when the
+ * claim NAME contains "email") can yield the short id.
  */
 // Mocking HttpClient.send(HttpRequest, BodyHandler<T>) inherently produces unchecked warnings on
 // the BodyHandler type parameter. Localized to the test surface; production code is fully typed.
 @SuppressWarnings("unchecked")
 @ExtendWith(MockitoExtension.class)
-class DatadogUserInfoResourceTest {
+class OracleEpmUserInfoResourceTest {
 
     @Mock
     OauthProxyMetrics oauthProxyMetrics;
@@ -61,15 +61,15 @@ class DatadogUserInfoResourceTest {
     @Mock
     HttpClient httpClient;
 
-    private DatadogUserInfoResource resource;
+    private OracleEpmUserInfoResource resource;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        resource = new DatadogUserInfoResource();
+        resource = new OracleEpmUserInfoResource();
         resource.oauthProxyMetrics = oauthProxyMetrics;
         resource.telemetryRequestContext = telemetryRequestContext;
-        resource.currentUserUrl = "https://app.datadoghq.com/api/v2/current_user";
+        resource.userinfoUrl = "https://idcs-test.identity.oraclecloud.com/oauth2/v1/userinfo";
         resource.setHttpClient(httpClient);
     }
 
@@ -92,54 +92,80 @@ class DatadogUserInfoResourceTest {
     }
 
     @Test
-    void get_happyPath_flattensDataAttributesToTopLevel() throws Exception {
+    void get_happyPath_passesThroughAndProjectsEmail() throws Exception {
         HttpResponse<String> upstream = (HttpResponse<String>) org.mockito.Mockito.mock(HttpResponse.class);
         String body = "{\n" +
-                "  \"data\": {\n" +
-                "    \"type\": \"users\",\n" +
-                "    \"id\": \"e92be4dd-2ca3-40d5-8a2a-73191475fabd\",\n" +
-                "    \"attributes\": {\n" +
-                "      \"email\": \"yosrixp@yahooinc.com\",\n" +
-                "      \"handle\": \"yosrixp@yahooinc.com\",\n" +
-                "      \"uuid\":  \"e92be4dd-2ca3-40d5-8a2a-73191475fabd\"\n" +
-                "    }\n" +
-                "  }\n" +
+                "  \"sub\": \"yosrixp@yahooinc.com\",\n" +
+                "  \"preferred_username\": \"yosrixp@yahooinc.com\",\n" +
+                "  \"name\": \"Yosri Amarneh\",\n" +
+                "  \"given_name\": \"Yosri\",\n" +
+                "  \"family_name\": \"Amarneh\"\n" +
                 "}";
         when(upstream.statusCode()).thenReturn(200);
         when(upstream.body()).thenReturn(body);
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(upstream);
 
-        Response r = resource.get("Bearer ddoat_test");
+        Response r = resource.get("Bearer oepm_test");
         assertEquals(200, r.getStatus());
         Map<String, Object> entity = (Map<String, Object>) r.getEntity();
         assertNotNull(entity);
-        // Flat top-level claims that Quarkus UserInfo can navigate. BaseResource.getUsername
-        // strips @domain when the claim name contains "email", so the stored lookupKey will be
-        // "yosrixp" — the short id we want.
+        // Oracle's flat claims pass through verbatim.
+        assertEquals("yosrixp@yahooinc.com", entity.get("sub"));
+        assertEquals("yosrixp@yahooinc.com", entity.get("preferred_username"));
+        assertEquals("Yosri Amarneh", entity.get("name"));
+        // Projected `email` matches preferred_username so BaseResource.getUsername strips the
+        // @domain suffix when claim=email is bound on the OIDC tenant.
         assertEquals("yosrixp@yahooinc.com", entity.get("email"));
-        assertEquals("e92be4dd-2ca3-40d5-8a2a-73191475fabd", entity.get("id"));
-        assertEquals("yosrixp@yahooinc.com", entity.get("handle"));
-        assertEquals("e92be4dd-2ca3-40d5-8a2a-73191475fabd", entity.get("sub"));
+    }
+
+    @Test
+    void get_emailProjection_fallsBackToSubWhenPreferredUsernameMissing() throws Exception {
+        HttpResponse<String> upstream = (HttpResponse<String>) org.mockito.Mockito.mock(HttpResponse.class);
+        when(upstream.statusCode()).thenReturn(200);
+        when(upstream.body()).thenReturn("{\"sub\":\"alice@yahooinc.com\",\"name\":\"Alice\"}");
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(upstream);
+
+        Response r = resource.get("Bearer oepm_x");
+        Map<String, Object> entity = (Map<String, Object>) r.getEntity();
+        assertEquals("alice@yahooinc.com", entity.get("email"),
+                "when preferred_username is missing, the proxy must fall back to sub for the email projection");
+    }
+
+    @Test
+    void get_emailProjection_doesNotOverwriteUpstreamEmail() throws Exception {
+        // If Oracle ever starts returning a top-level email claim, the proxy must NOT clobber it.
+        HttpResponse<String> upstream = (HttpResponse<String>) org.mockito.Mockito.mock(HttpResponse.class);
+        when(upstream.statusCode()).thenReturn(200);
+        when(upstream.body()).thenReturn(
+                "{\"sub\":\"x@y.com\",\"preferred_username\":\"x@y.com\",\"email\":\"explicit@y.com\"}");
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(upstream);
+
+        Response r = resource.get("Bearer oepm_x");
+        Map<String, Object> entity = (Map<String, Object>) r.getEntity();
+        assertEquals("explicit@y.com", entity.get("email"),
+                "upstream email claim must take precedence over the synthetic projection");
     }
 
     @Test
     void get_forwardsBearerHeaderToUpstream() throws Exception {
         HttpResponse<String> upstream = (HttpResponse<String>) org.mockito.Mockito.mock(HttpResponse.class);
         when(upstream.statusCode()).thenReturn(200);
-        when(upstream.body()).thenReturn("{\"data\":{\"id\":\"x\",\"attributes\":{\"email\":\"a@b.com\"}}}");
+        when(upstream.body()).thenReturn("{\"sub\":\"a@b.com\"}");
         ArgumentCaptor<HttpRequest> captor = ArgumentCaptor.forClass(HttpRequest.class);
         when(httpClient.send(captor.capture(), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(upstream);
 
-        Response r = resource.get("Bearer ddoat_specific_token");
+        Response r = resource.get("Bearer oepm_specific_token");
         assertEquals(200, r.getStatus());
         HttpRequest sent = captor.getValue();
-        assertEquals(URI.create("https://app.datadoghq.com/api/v2/current_user"), sent.uri());
-        assertEquals("GET", sent.method());
-        // Authorization header is forwarded verbatim with the Bearer prefix re-applied.
-        assertTrue(sent.headers().firstValue("Authorization").orElse("").contains("ddoat_specific_token"),
-                "Authorization header must be forwarded to upstream Datadog identity API");
+        assertEquals(URI.create("https://idcs-test.identity.oraclecloud.com/oauth2/v1/userinfo"), sent.uri());
+        assertEquals("GET", sent.method(),
+                "Oracle IDCS userinfo is a GET (not GraphQL POST)");
+        assertTrue(sent.headers().firstValue("Authorization").orElse("").contains("oepm_specific_token"),
+                "Authorization header must be forwarded to upstream Oracle IDCS userinfo");
         assertTrue(sent.headers().firstValue("Accept").orElse("").contains("application/json"),
                 "Accept header must indicate JSON");
     }
@@ -151,7 +177,7 @@ class DatadogUserInfoResourceTest {
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(upstream);
 
-        Response r = resource.get("Bearer ddoat_bad");
+        Response r = resource.get("Bearer oepm_bad");
         assertEquals(401, r.getStatus());
     }
 
@@ -163,7 +189,7 @@ class DatadogUserInfoResourceTest {
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(upstream);
 
-        Response r = resource.get("Bearer ddoat_x");
+        Response r = resource.get("Bearer oepm_x");
         assertEquals(502, r.getStatus());
     }
 
@@ -172,7 +198,7 @@ class DatadogUserInfoResourceTest {
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenThrow(new IOException("network down"));
 
-        Response r = resource.get("Bearer ddoat_x");
+        Response r = resource.get("Bearer oepm_x");
         assertEquals(502, r.getStatus());
     }
 
@@ -184,41 +210,33 @@ class DatadogUserInfoResourceTest {
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(upstream);
 
-        Response r = resource.get("Bearer ddoat_x");
+        Response r = resource.get("Bearer oepm_x");
         assertEquals(502, r.getStatus());
     }
 
     @Test
-    void get_missingIdentityClaims_returns502() throws Exception {
-        // current_user shape with no email/uuid/handle/id — nothing to project to top level.
+    void get_nonObjectJson_returns502() throws Exception {
         HttpResponse<String> upstream = (HttpResponse<String>) org.mockito.Mockito.mock(HttpResponse.class);
         when(upstream.statusCode()).thenReturn(200);
-        when(upstream.body()).thenReturn("{\"data\":{\"type\":\"users\"}}");
+        when(upstream.body()).thenReturn("[\"not\",\"an\",\"object\"]");
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(upstream);
 
-        Response r = resource.get("Bearer ddoat_x");
+        Response r = resource.get("Bearer oepm_x");
         assertEquals(502, r.getStatus());
     }
 
     @Test
-    void get_uuidFallbackToId_whenUuidMissing() throws Exception {
-        // If attributes.uuid is missing but data.id is present, the resource projects "sub" from
-        // data.id so Quarkus has a stable subject to bind onto.
+    void get_missingSubClaim_returns502() throws Exception {
+        // Oracle's userinfo always returns sub. If it's missing the downstream identity binding
+        // would silently break, so we fail with 502 to make the misconfiguration loud.
         HttpResponse<String> upstream = (HttpResponse<String>) org.mockito.Mockito.mock(HttpResponse.class);
         when(upstream.statusCode()).thenReturn(200);
-        when(upstream.body()).thenReturn(
-                "{\"data\":{\"id\":\"abc-123\",\"attributes\":{\"email\":\"a@b.com\"}}}");
+        when(upstream.body()).thenReturn("{\"name\":\"No Sub\"}");
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(upstream);
 
-        Response r = resource.get("Bearer ddoat_x");
-        assertEquals(200, r.getStatus());
-        Map<String, Object> entity = (Map<String, Object>) r.getEntity();
-        assertEquals("abc-123", entity.get("id"));
-        assertEquals("abc-123", entity.get("sub"));
-        assertNull(entity.get("handle"), "handle should not be present when missing in upstream");
-        // Verify we used a stable insertion order so the response is deterministic.
-        assertTrue(entity instanceof LinkedHashMap);
+        Response r = resource.get("Bearer oepm_x");
+        assertEquals(502, r.getStatus());
     }
 }
