@@ -98,9 +98,9 @@ class LinearUserInfoResourceTest {
         String body = "{\n" +
                 "  \"data\": {\n" +
                 "    \"viewer\": {\n" +
-                "      \"id\": \"e92be4dd-2ca3-40d5-8a2a-73191475fabd\",\n" +
+                "      \"id\": \"00000000-0000-0000-0000-000000000001\",\n" +
                 "      \"name\": \"Yosri\",\n" +
-                "      \"email\": \"yosrixp@yahooinc.com\"\n" +
+                "      \"email\": \"testuser@example.com\"\n" +
                 "    }\n" +
                 "  }\n" +
                 "}";
@@ -115,11 +115,11 @@ class LinearUserInfoResourceTest {
         assertNotNull(entity);
         // Flat top-level claims that Quarkus UserInfo can navigate. BaseResource.getUsername
         // strips @domain when the claim name contains "email", so the stored lookupKey will be
-        // "yosrixp" — the short id we want.
-        assertEquals("yosrixp@yahooinc.com", entity.get("email"));
-        assertEquals("e92be4dd-2ca3-40d5-8a2a-73191475fabd", entity.get("id"));
+        // "testuser" — the short id we want.
+        assertEquals("testuser@example.com", entity.get("email"));
+        assertEquals("00000000-0000-0000-0000-000000000001", entity.get("id"));
         assertEquals("Yosri", entity.get("name"));
-        assertEquals("e92be4dd-2ca3-40d5-8a2a-73191475fabd", entity.get("sub"));
+        assertEquals("00000000-0000-0000-0000-000000000001", entity.get("sub"));
     }
 
     @Test

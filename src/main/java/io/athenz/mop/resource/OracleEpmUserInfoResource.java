@@ -50,7 +50,7 @@ import org.slf4j.LoggerFactory;
  * OIDC-shaped userinfo response:
  *
  * <pre>
- * { "sub": "yosrixp@yahooinc.com", "preferred_username": "yosrixp@yahooinc.com",
+ * { "sub": "testuser@example.com", "preferred_username": "testuser@example.com",
  *   "name": "Yosri Amarneh", "given_name": "Yosri", "family_name": "Amarneh", ... }
  * </pre>
  *
@@ -193,7 +193,7 @@ public class OracleEpmUserInfoResource {
         // Project a top-level `email` claim from preferred_username / sub if Oracle did not
         // include one. We bind the OIDC tenant to claim=email (BaseResource.getUsername strips
         // `@domain` only when the claim name contains "email"), so this projection ensures the
-        // stored lookupKey is the short id (e.g. "yosrixp" for "yosrixp@yahooinc.com") matching
+        // stored lookupKey is the short id (e.g. "testuser" for "testuser@example.com") matching
         // every other provider that uses email-shaped claims.
         if (body.get("email") == null || body.get("email").toString().isEmpty()) {
             Object preferredUsername = body.get("preferred_username");

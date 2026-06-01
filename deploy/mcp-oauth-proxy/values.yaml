@@ -187,6 +187,7 @@ application:
       figma: "7776000"               # 90 days — matches Figma's documented access-token lifetime
       datadog: "15552000"            # 6 months — Datadog RT does not expire upstream; capped to bound L2 row TTL
       linear: "15552000"             # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
+      wisdomai: "15552000"           # 6 months — Descope RT JWT rexp is ~10y; capped to bound L2 row TTL
       oracle-epm: "2592000"          # 30 days — matches global default; Oracle IDCS RT TTL is operator-tunable
     ttlBufferDays: 3
     # How long REVOKED L2 rows are retained before TTL eviction. Sized so an operator can
@@ -379,7 +380,7 @@ oidc:
     # public PKCE client; DCR returns only client_id (no client_secret).
     clientId:
     # Datadog has no flat OIDC userinfo. The synthetic /internal/datadog/oauth-userinfo proxy
-    # flattens app.datadoghq.com/api/v2/current_user (data.attributes.email) to top-level claims;
+    # flattens <site>.datadoghq.com/api/v2/current_user (data.attributes.email) to top-level claims;
     # BaseResource.getUsername strips @domain for email claims.
     claim: email
     # RFC 8707 resource indicator required by Datadog on /authorize. Pinned to the MCP server URL.
@@ -398,13 +399,11 @@ oidc:
     # configmap renders a `datadog-insecure-client` named TLS config (trust-all + skip
     # hostname verification) and binds it to quarkus.oidc.datadog.tls.tls-configuration-name.
     tlsInsecureClient: false
-    # Datadog MCP requires mcp_read + mcp_write to grant the issued AT access to the MCP
-    # resource and to app.datadoghq.com/api/v2/current_user (proxied by the synthetic userinfo
-    # endpoint). Override per env if Datadog later adds finer-grained scopes; defaults below
-    # match the Datadog MCP "Read+Write" preset.
-    scopes:
-      - mcp_read
-      - mcp_write
+    # Datadog's MCP integration requires zero scopes by default — the issued AT carries an
+    # implicit MCP grant tied to the customer site. Adding scopes here causes Datadog to either
+    # reject the /authorize call or mint a token that fails downstream identity calls. Override
+    # per env only if Datadog later begins gating MCP behind explicit scopes.
+    scopes: []
   linear:
     # remote-servers.endpoints[name=linear].endpoint — used by ConfigService when resolving the
     # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
@@ -434,6 +433,56 @@ oidc:
     # configmap renders a `linear-insecure-client` named TLS config (trust-all + skip
     # hostname verification) and binds it to quarkus.oidc.linear.tls.tls-configuration-name.
     tlsInsecureClient: false
+  # WisdomAI (Descope-backed) public PKCE OIDC client. Quarkus tenant key is `wisdomai`
+  # (one word, no hyphen) to match the MCP resource URI path segment `/v1/wisdomai/mcp`. The
+  # chart values key is `wisdomAi` (camelCase) so dot-notation works in the Helm template; the
+  # configmap renders the literal `wisdomai` tenant name.
+  wisdomAi:
+    # remote-servers.endpoints[name=wisdomai].endpoint — used by ConfigService when resolving the
+    # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
+    endpoint: "https://wisdom.ouryahoo.com"
+    # Override for quarkus.oidc.wisdomai.auth-server-url (defaults to endpoint).
+    authServerUrl: "https://wisdom.ouryahoo.com"
+    # WisdomAI is Descope-backed; the token endpoint lives on api.descope.com.
+    tokenEndpoint: "https://api.descope.com/oauth2/v1/apps/token"
+    # Descope JWKS for id_token RS256 signature verification. The project id segment in the
+    # URL below is embedded in the id_token's `iss` claim
+    # (https://api.descope.com/v1/apps/<projectId>). Override per env if Descope rotates the
+    # project or assigns a different one for stage/prod.
+    jwksUrl: "https://api.descope.com/P2VaDxtG3m9fFZbTdxhVdK4FNhaF/.well-known/jwks.json"
+    # WisdomAI GraphQL endpoint hit by the synthetic /internal/wisdomai/oauth-userinfo proxy.
+    graphqlUrl: "https://wisdom.ouryahoo.com/graphql"
+    # Different client_ids per env — leave empty in defaults; set in each env overlay.
+    clientId:
+    # WisdomAI has no flat OIDC userinfo. The synthetic /internal/wisdomai/oauth-userinfo proxy
+    # POSTs `query CurrentUser { currentUser { id name email } }` to wisdom.ouryahoo.com/graphql
+    # and flattens to top-level email/id/name/sub claims; BaseResource.getUsername strips @domain
+    # for email so the stored lookupKey is the short id (testuser for testuser@example.com).
+    claim: email
+    # Reserved for future confidential-client rollout (Descope E011002 fix). Today WisdomAI is
+    # public PKCE and the refresh path ignores this value on the wire; the placeholder secret key
+    # is set so SmallRye can resolve a non-empty String at startup.
+    clientSecretKey: "wisdomai-client-secret"
+    # Quarkus client-secret transport method on the initial code exchange (used by the OIDC
+    # tenant during login). The L2 refresh client tries `client_secret_post` first and falls
+    # back once to `client_secret_basic` on invalid_client regardless of this value.
+    clientSecretMethod: "post"
+    # OIDC scopes added on /authorize. WisdomAI honors `openid profile`; add-openid-scope: true
+    # in configmap.yaml ensures openid is always present even if this list is overridden.
+    scopes:
+      - profile
+    # When non-empty, used verbatim as quarkus.oidc.wisdomai.user-info-path. When empty, configmap
+    # defaults to https://<application.host>/internal/wisdomai/oauth-userinfo (mirrors linear).
+    userInfoPath: ""
+    # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty.
+    syntheticUserInfoBaseUrl: ""
+    # Set to true ONLY when userInfoPath points at the in-pod loopback
+    # (https://localhost:<ssl-port>/...). Egress policies in stage/prod block the pod from
+    # reaching its own public hostname, so synthetic UserInfo must round-trip via loopback,
+    # which uses a self-signed cert that the JVM trust store does not accept. When true, the
+    # configmap renders a `wisdomai-insecure-client` named TLS config (trust-all + skip hostname
+    # verification) and binds it to quarkus.oidc.wisdomai.tls.tls-configuration-name.
+    tlsInsecureClient: false
   # Oracle IDCS confidential OIDC client used by the Oracle EPM MCP. Quarkus tenant key is
   # `oracle-epm` (with a hyphen); the chart values key is `oracleEpm` (camelCase) so dot-notation
   # works in the Helm template. The configmap renders the literal hyphenated tenant name.
@@ -448,7 +497,7 @@ oidc:
     # not a top-level `email` claim. The synthetic /internal/oracle-epm/oauth-userinfo proxy
     # projects `email` from preferred_username/sub so BaseResource.getUsername (which only
     # strips `@domain` when the claim NAME contains "email") yields the short id (e.g.
-    # "yosrixp" for "yosrixp@yahooinc.com"). Matches every other email-shaped provider.
+    # "testuser" for "testuser@example.com"). Matches every other email-shaped provider.
     claim: email
     # K8s secret key holding the Oracle IDCS client_secret. Same key is read by the canonical
     # L2 path (OracleEpmUpstreamRefreshClient) and the legacy passthrough

@@ -312,7 +312,7 @@ class UpstreamTokenConfigTest {
         UpstreamTokenConfig cfg = configWith(map);
 
         assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("oracle-epm"));
-        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("oracle-epm#yosrixp@yahooinc.com"));
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("oracle-epm#testuser@example.com"));
     }
 
     @Test
@@ -335,6 +335,42 @@ class UpstreamTokenConfigTest {
         UpstreamTokenConfig cfg = configWith(map);
 
         assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("oracle-epm#u"));
+    }
+
+    @Test
+    void wisdomAi_exactMatchOverride_returnsConfiguredLifetime() {
+        // WisdomAI is L2 promoted but NOT in GOOGLE_WORKSPACE_PROVIDERS, so the floor does not
+        // apply. The exact-match key must yield the configured cap (6 months by default).
+        long sixMonths = GOOGLE_180D;
+        Map<String, Long> map = new HashMap<>();
+        map.put("wisdomai", sixMonths);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(sixMonths, cfg.expirySecondsForProvider("wisdomai"));
+        assertEquals(sixMonths, cfg.expirySecondsForProvider("wisdomai#alice@example.com"));
+    }
+
+    @Test
+    void wisdomAi_unconfigured_fallsBackToDefault() {
+        // Without an exact-match key WisdomAI falls through to the global default (30 d).
+        // Production sets wisdomai=15552000 (6 months) explicitly via chart values.yaml + env
+        // overrides; if the override is dropped this test demonstrates the fallback. The Descope
+        // RT JWT carries rexp ~10y so the only effect of the shorter cap is bounded row sprawl,
+        // not data loss.
+        UpstreamTokenConfig cfg = configWith(new HashMap<>());
+
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("wisdomai#user-id"));
+    }
+
+    @Test
+    void wisdomAi_groupKeyDoesNotApplyToWisdomAi() {
+        // The google-workspace group key is scoped to Workspace providers only. WisdomAI must NOT
+        // accidentally inherit a Google-tier expiry just because the group key is set.
+        Map<String, Long> map = new HashMap<>();
+        map.put(UpstreamTokenConfig.GOOGLE_WORKSPACE_GROUP_KEY, GOOGLE_180D);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("wisdomai#u"));
     }
 
     @Test

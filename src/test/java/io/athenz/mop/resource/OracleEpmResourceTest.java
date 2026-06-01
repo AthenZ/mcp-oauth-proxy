@@ -56,7 +56,7 @@ import static org.mockito.Mockito.when;
  *   <li>Username claim is {@code email}, projected by the synthetic userinfo proxy from Oracle's
  *       {@code preferred_username}/{@code sub}. {@code BaseResource.getUsername} strips
  *       {@code @domain} when the claim NAME contains "email", so the lookupKey is the short id
- *       (e.g. {@code yosrixp} for {@code yosrixp@yahooinc.com}).</li>
+ *       (e.g. {@code testuser} for {@code testuser@example.com}).</li>
  *   <li>The 7-arg {@code AuthorizerService.storeTokens} overload is used (no per-resource AT
  *       lifetime override): Oracle ATs are 1 hour, well under the global ~8h
  *       {@code server.token-store.expiry}, so the bare L1 row TTL is fine.</li>
@@ -73,8 +73,8 @@ class OracleEpmResourceTest {
     private static final String AUTH_CODE_STATE = "auth-code-state";
     private static final String ACCESS_TOKEN = "oepm_at_access_token";
     private static final String REFRESH_TOKEN = "oepm_rt_refresh_token";
-    private static final String EMAIL = "yosrixp@yahooinc.com";
-    private static final String LOOKUP_KEY = "yosrixp"; // email claim is auto-stripped of @domain
+    private static final String EMAIL = "testuser@example.com";
+    private static final String LOOKUP_KEY = "testuser"; // email claim is auto-stripped of @domain
     private static final String CLIENT_ID = "mcp-client-1";
     private static final String RESOURCE = "https://local.sample-mcp.experiments.athenz.ouryahoo.com:8443/v1/oracle-epm/mcp";
 

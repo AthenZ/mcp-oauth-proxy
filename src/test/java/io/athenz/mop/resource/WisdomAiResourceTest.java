@@ -49,33 +49,36 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link DatadogResource}. Modeled on {@link SlackResourceTest}; pins the
- * Datadog-specific contract:
+ * Unit tests for {@link WisdomAiResource}. Modeled on {@link LinearResourceTest}; pins the
+ * WisdomAI-specific contract:
  *
  * <ul>
  *   <li>Username claim is {@code email}, and {@code BaseResource.getUsername} strips the
  *       {@code @domain} suffix so the stored {@code lookupKey} is the short id (e.g.
- *       {@code testuser} for {@code testuser@example.com}).</li>
- *   <li>The 7-arg {@code AuthorizerService.storeTokens} overload is used (no per-resource AT
- *       lifetime override): Datadog ATs are 1 hour, well under the global ~8h
- *       {@code server.token-store.expiry}, so the bare L1 row TTL is fine.</li>
+ *       {@code alice} for {@code alice@example.com}).</li>
+ *   <li>The 8-arg {@code AuthorizerService.storeTokens} overload is used with
+ *       {@link WisdomAiResource#WISDOMAI_ACCESS_TOKEN_LIFETIME_SECONDS} (7 days) so the bare L1
+ *       row outlives the global ~8h {@code server.token-store.expiry} cap. Without this the row
+ *       would evict 8h after consent and force re-consent while the upstream WisdomAI AT is
+ *       still valid for the full week.</li>
  *   <li>Borrow-RT path exercises {@code refreshTokenService.getUpstreamRefreshToken(lookupKey,
- *       "datadog")} when the OIDC session has no fresh RT.</li>
+ *       "wisdomai")} when the OIDC session has no fresh RT.</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
-class DatadogResourceTest {
+class WisdomAiResourceTest {
 
-    private static final String STATE = "test-state-123";
-    private static final String SUBJECT = "datadog-subject-uuid";
+    private static final String STATE = "test-state-wisdomai";
+    private static final String SUBJECT = "wisdomai-subject-id";
     private static final String REDIRECT_URI = "https://client.example.com/callback";
     private static final String AUTH_CODE_STATE = "auth-code-state";
-    private static final String ACCESS_TOKEN = "ddoat_access_token";
-    private static final String REFRESH_TOKEN = "ddoar_refresh_token";
-    private static final String EMAIL = "testuser@example.com";
-    private static final String LOOKUP_KEY = "testuser"; // email claim is auto-stripped of @domain
+    private static final String ACCESS_TOKEN = "wai_oat_access_token";
+    private static final String REFRESH_TOKEN = "wai_oar_refresh_token";
+    private static final String EMAIL = "alice@example.com";
+    private static final String LOOKUP_KEY = "alice";
     private static final String CLIENT_ID = "mcp-client-1";
-    private static final String RESOURCE = "https://local.sample-mcp.experiments.athenz.ouryahoo.com:8443/v1/datadog/mcp";
+    private static final String RESOURCE = "https://local.sample-mcp.experiments.athenz.ouryahoo.com:8443/v1/wisdomai/mcp";
+    private static final long EXPECTED_LIFETIME = 604_800L;
 
     @Mock
     private AuthorizerService authorizerService;
@@ -99,13 +102,13 @@ class DatadogResourceTest {
     private RefreshTokenService refreshTokenService;
 
     @InjectMocks
-    private DatadogResource datadogResource;
+    private WisdomAiResource wisdomAiResource;
 
     private AuthorizationCode authorizationCode;
 
     @BeforeEach
     void setUp() {
-        datadogResource.providerDefault = "okta";
+        wisdomAiResource.providerDefault = "okta";
         authorizationCode = new AuthorizationCode(
                 "code-1",
                 CLIENT_ID,
@@ -121,7 +124,7 @@ class DatadogResourceTest {
 
     @Test
     void authorize_nullState_returnsBadRequest() {
-        Response response = datadogResource.authorize(null);
+        Response response = wisdomAiResource.authorize(null);
 
         assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), response.getStatus());
         @SuppressWarnings("unchecked")
@@ -132,7 +135,7 @@ class DatadogResourceTest {
 
     @Test
     void authorize_emptyState_returnsBadRequest() {
-        Response response = datadogResource.authorize("");
+        Response response = wisdomAiResource.authorize("");
 
         assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), response.getStatus());
         @SuppressWarnings("unchecked")
@@ -146,7 +149,7 @@ class DatadogResourceTest {
         when(authCodeRegionResolver.resolve(STATE, "okta"))
                 .thenReturn(new AuthCodeResolution(null, false));
 
-        Response response = datadogResource.authorize(STATE);
+        Response response = wisdomAiResource.authorize(STATE);
 
         assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), response.getStatus());
         @SuppressWarnings("unchecked")
@@ -156,90 +159,86 @@ class DatadogResourceTest {
     }
 
     @Test
-    void authorize_withNewRefreshToken_storesAndRedirects() {
+    void authorize_withNewRefreshToken_storesAndRedirectsWith7dLifetime() {
         when(userInfo.get("email")).thenReturn(EMAIL);
         when(authCodeRegionResolver.resolve(STATE, "okta"))
                 .thenReturn(new AuthCodeResolution(authorizationCode, false));
-        when(configService.getRemoteServerUsernameClaim("datadog")).thenReturn("email");
+        when(configService.getRemoteServerUsernameClaim("wisdomai")).thenReturn("email");
         when(accessTokenCredential.getToken()).thenReturn(ACCESS_TOKEN);
         RefreshToken refreshToken = new RefreshToken(REFRESH_TOKEN);
         when(accessTokenCredential.getRefreshToken()).thenReturn(refreshToken);
         when(oidcSession.logout()).thenReturn(Uni.createFrom().voidItem());
 
-        Response response = datadogResource.authorize(STATE);
+        Response response = wisdomAiResource.authorize(STATE);
 
         assertEquals(Response.Status.SEE_OTHER.getStatusCode(), response.getStatus());
-        // Pins the 7-arg storeTokens overload: idToken == accessToken, no per-resource lifetime
-        // override (Datadog AT is 1h, well within the global server.token-store.expiry).
+        // Pins the 8-arg storeTokens overload: idToken == accessToken, AT lifetime = 604800s
+        // (WisdomAI's documented expires_in). The bare L1 row TTL must outlive the global ~8h
+        // server.token-store.expiry, otherwise the row evicts before the upstream AT actually
+        // expires after 7 days.
         verify(authorizerService).storeTokens(
                 eq(LOOKUP_KEY), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN),
-                eq(REFRESH_TOKEN), eq("datadog"), eq(CLIENT_ID));
+                eq(REFRESH_TOKEN), eq("wisdomai"), eq(CLIENT_ID), eq(EXPECTED_LIFETIME));
         verify(oidcSession).logout();
     }
 
     @Test
     void authorize_emailClaim_isStrippedToShortId() {
-        // The whole point of using username-claim=email is that BaseResource.getUsername
-        // auto-strips @domain so the L1/L2 row keys match the Okta short-id convention.
-        when(userInfo.get("email")).thenReturn("alice@yahooinc.com");
+        when(userInfo.get("email")).thenReturn("alice@example.com");
         when(authCodeRegionResolver.resolve(STATE, "okta"))
                 .thenReturn(new AuthCodeResolution(authorizationCode, false));
-        when(configService.getRemoteServerUsernameClaim("datadog")).thenReturn("email");
+        when(configService.getRemoteServerUsernameClaim("wisdomai")).thenReturn("email");
         when(accessTokenCredential.getToken()).thenReturn(ACCESS_TOKEN);
         when(accessTokenCredential.getRefreshToken()).thenReturn(new RefreshToken(REFRESH_TOKEN));
         when(oidcSession.logout()).thenReturn(Uni.createFrom().voidItem());
 
-        datadogResource.authorize(STATE);
+        wisdomAiResource.authorize(STATE);
 
         verify(authorizerService).storeTokens(
                 eq("alice"), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN),
-                eq(REFRESH_TOKEN), eq("datadog"), eq(CLIENT_ID));
+                eq(REFRESH_TOKEN), eq("wisdomai"), eq(CLIENT_ID), eq(EXPECTED_LIFETIME));
     }
 
     @Test
     void authorize_noNewRefreshToken_borrowsCanonicalUpstream() {
         // Second/third MCP-client window relogin: no fresh RT in the OIDC session, but the L2
-        // row already has a canonical upstream RT. Datadog's RT does not rotate, so re-using
-        // the borrowed value is the common case for repeat consents.
+        // row already has a canonical upstream RT. Borrow it so the next AT exchange has the
+        // freshest known good value.
         when(userInfo.get("email")).thenReturn(EMAIL);
         when(authCodeRegionResolver.resolve(STATE, "okta"))
                 .thenReturn(new AuthCodeResolution(authorizationCode, false));
-        when(configService.getRemoteServerUsernameClaim("datadog")).thenReturn("email");
+        when(configService.getRemoteServerUsernameClaim("wisdomai")).thenReturn("email");
         when(accessTokenCredential.getToken()).thenReturn(ACCESS_TOKEN);
         when(accessTokenCredential.getRefreshToken()).thenReturn(null);
-        when(refreshTokenService.getUpstreamRefreshToken(LOOKUP_KEY, "datadog"))
+        when(refreshTokenService.getUpstreamRefreshToken(LOOKUP_KEY, "wisdomai"))
                 .thenReturn("existing-canonical-rt");
         when(oidcSession.logout()).thenReturn(Uni.createFrom().voidItem());
 
-        Response response = datadogResource.authorize(STATE);
+        Response response = wisdomAiResource.authorize(STATE);
 
         assertEquals(Response.Status.SEE_OTHER.getStatusCode(), response.getStatus());
         verify(authorizerService).storeTokens(
                 eq(LOOKUP_KEY), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN),
-                eq("existing-canonical-rt"), eq("datadog"), eq(CLIENT_ID));
+                eq("existing-canonical-rt"), eq("wisdomai"), eq(CLIENT_ID), eq(EXPECTED_LIFETIME));
     }
 
     @Test
     void authorize_noRefreshTokenAnywhere_storesNullRtAndRedirects() {
-        // Unlike Slack/Embrace, Datadog's resource tolerates missing RT (the 8-arg storeTokens
-        // null-RT path lets the L2 seed/migration logic decide what to do). The first-consent
-        // case where Datadog returns a fresh RT will populate the row; on a follow-up where the
-        // session has no RT and the L2 row is missing, we still redirect rather than 500.
         when(userInfo.get("email")).thenReturn(EMAIL);
         when(authCodeRegionResolver.resolve(STATE, "okta"))
                 .thenReturn(new AuthCodeResolution(authorizationCode, false));
-        when(configService.getRemoteServerUsernameClaim("datadog")).thenReturn("email");
+        when(configService.getRemoteServerUsernameClaim("wisdomai")).thenReturn("email");
         when(accessTokenCredential.getToken()).thenReturn(ACCESS_TOKEN);
         when(accessTokenCredential.getRefreshToken()).thenReturn(null);
-        when(refreshTokenService.getUpstreamRefreshToken(LOOKUP_KEY, "datadog")).thenReturn(null);
+        when(refreshTokenService.getUpstreamRefreshToken(LOOKUP_KEY, "wisdomai")).thenReturn(null);
         when(oidcSession.logout()).thenReturn(Uni.createFrom().voidItem());
 
-        Response response = datadogResource.authorize(STATE);
+        Response response = wisdomAiResource.authorize(STATE);
 
         assertEquals(Response.Status.SEE_OTHER.getStatusCode(), response.getStatus());
         verify(authorizerService).storeTokens(
                 eq(LOOKUP_KEY), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN),
-                eq((String) null), eq("datadog"), eq(CLIENT_ID));
+                eq((String) null), eq("wisdomai"), eq(CLIENT_ID), eq(EXPECTED_LIFETIME));
     }
 
     @Test
@@ -247,18 +246,18 @@ class DatadogResourceTest {
         when(userInfo.get("email")).thenReturn(EMAIL);
         when(authCodeRegionResolver.resolve(STATE, "okta"))
                 .thenReturn(new AuthCodeResolution(authorizationCode, false));
-        when(configService.getRemoteServerUsernameClaim("datadog")).thenReturn("email");
+        when(configService.getRemoteServerUsernameClaim("wisdomai")).thenReturn("email");
         when(accessTokenCredential.getToken()).thenReturn(ACCESS_TOKEN);
         RefreshToken refreshToken = new RefreshToken("brand-new-refresh");
         when(accessTokenCredential.getRefreshToken()).thenReturn(refreshToken);
         when(oidcSession.logout()).thenReturn(Uni.createFrom().voidItem());
 
-        Response response = datadogResource.authorize(STATE);
+        Response response = wisdomAiResource.authorize(STATE);
 
         assertEquals(Response.Status.SEE_OTHER.getStatusCode(), response.getStatus());
         verify(authorizerService).storeTokens(
                 eq(LOOKUP_KEY), eq(SUBJECT), eq(ACCESS_TOKEN), eq(ACCESS_TOKEN),
-                eq("brand-new-refresh"), eq("datadog"), eq(CLIENT_ID));
+                eq("brand-new-refresh"), eq("wisdomai"), eq(CLIENT_ID), eq(EXPECTED_LIFETIME));
         verify(refreshTokenService, never()).getUpstreamRefreshToken(anyString(), any());
     }
 
@@ -267,12 +266,12 @@ class DatadogResourceTest {
         when(userInfo.get("email")).thenReturn(EMAIL);
         when(authCodeRegionResolver.resolve(STATE, "okta"))
                 .thenReturn(new AuthCodeResolution(authorizationCode, false));
-        when(configService.getRemoteServerUsernameClaim("datadog")).thenReturn("email");
+        when(configService.getRemoteServerUsernameClaim("wisdomai")).thenReturn("email");
         when(accessTokenCredential.getToken()).thenReturn(ACCESS_TOKEN);
         when(accessTokenCredential.getRefreshToken()).thenReturn(new RefreshToken(REFRESH_TOKEN));
         when(oidcSession.logout()).thenReturn(Uni.createFrom().voidItem());
 
-        datadogResource.authorize(STATE);
+        wisdomAiResource.authorize(STATE);
 
         verify(oidcSession).logout();
     }
@@ -282,12 +281,12 @@ class DatadogResourceTest {
         when(userInfo.get("email")).thenReturn(EMAIL);
         when(authCodeRegionResolver.resolve(STATE, "okta"))
                 .thenReturn(new AuthCodeResolution(authorizationCode, false));
-        when(configService.getRemoteServerUsernameClaim("datadog")).thenReturn("email");
+        when(configService.getRemoteServerUsernameClaim("wisdomai")).thenReturn("email");
         when(accessTokenCredential.getToken()).thenReturn(ACCESS_TOKEN);
         when(accessTokenCredential.getRefreshToken()).thenReturn(new RefreshToken(REFRESH_TOKEN));
         when(oidcSession.logout()).thenReturn(Uni.createFrom().voidItem());
 
-        Response response = datadogResource.authorize(STATE);
+        Response response = wisdomAiResource.authorize(STATE);
 
         assertEquals(Response.Status.SEE_OTHER.getStatusCode(), response.getStatus());
         assertNotNull(response.getLocation());

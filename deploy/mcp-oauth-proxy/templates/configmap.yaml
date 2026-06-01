@@ -32,6 +32,9 @@ data:
             linear-internal-userinfo:
               paths: "/internal/linear/oauth-userinfo"
               policy: permit
+            wisdomai-internal-userinfo:
+              paths: "/internal/wisdomai/oauth-userinfo"
+              policy: permit
             oracle-epm-internal-userinfo:
               paths: "/internal/oracle-epm/oauth-userinfo"
               policy: permit
@@ -64,6 +67,9 @@ data:
             linear:
               paths: "/linear/*"
               policy: authenticated
+            wisdomai:
+              paths: "/wisdomai/*"
+              policy: authenticated
             oracle-epm:
               paths: "/oracle-epm/*"
               policy: authenticated
@@ -91,6 +97,14 @@ data:
 {{- end }}
 {{- if (.Values.oidc.linear.tlsInsecureClient | default false) }}
         linear-insecure-client:
+          trust-all: true
+          hostname-verification-algorithm: NONE
+{{- end }}
+{{- if (.Values.oidc.wisdomAi.tlsInsecureClient | default false) }}
+        # WisdomAI tenant only: required when synthetic UserInfo is served from
+        # https://localhost:<ssl-port>/internal/wisdomai/oauth-userinfo (in-pod loopback).
+        # Trusts the local self-signed cert and skips hostname verification. Mirrors Linear.
+        wisdomai-insecure-client:
           trust-all: true
           hostname-verification-algorithm: NONE
 {{- end }}
@@ -267,9 +281,18 @@ data:
           {{- end }}
           client-id: {{ .Values.oidc.datadog.clientId | quote }}
           authentication:
+            # Datadog's MCP integration requires zero scopes by default; the issued AT carries
+            # an implicit MCP grant tied to the customer site. The `default (list)` keeps the
+            # empty-by-default contract while still letting an env override request scopes
+            # explicitly via `oidc.datadog.scopes`.
+            {{- $datadogScopes := .Values.oidc.datadog.scopes | default (list) }}
+            {{- if gt (len $datadogScopes) 0 }}
             scopes:
-            {{- range (.Values.oidc.datadog.scopes | default (list "mcp_read" "mcp_write")) }}
+            {{- range $datadogScopes }}
               - {{ . | quote }}
+            {{- end }}
+            {{- else }}
+            scopes: []
             {{- end }}
             redirect-path: /datadog/authorize/callback
             restore-path-after-redirect: true
@@ -318,6 +341,64 @@ data:
             extra-params:
               actor: "user"
               scope: {{ .Values.oidc.linear.scope | default "comments:create,issues:create,read,timeSchedule:write,write" | quote }}
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            issuer: any
+        wisdomai:
+          # WisdomAI (Descope-backed) is a public PKCE client today (DCR returns no client_secret).
+          # Authorize lives at wisdom.ouryahoo.com; token endpoint is on api.descope.com (split
+          # hosts → token-path is an absolute URL). Userinfo is sourced from a synthetic GraphQL
+          # proxy that runs `query CurrentUser { currentUser { id name email } }`.
+{{- if (.Values.oidc.wisdomAi.tlsInsecureClient | default false) }}
+          tls:
+            tls-configuration-name: wisdomai-insecure-client
+{{- end }}
+          auth-server-url: {{ .Values.oidc.wisdomAi.authServerUrl | default "https://wisdom.ouryahoo.com" | quote }}
+          discovery-enabled: false
+          authorization-path: "/authorize"
+          token-path: {{ .Values.oidc.wisdomAi.tokenEndpoint | default "https://api.descope.com/oauth2/v1/apps/token" | quote }}
+          # Descope JWKS for id_token RS256 signature verification. Project id is embedded in
+          # the id_token's `iss` (https://api.descope.com/v1/apps/<projectId>). Without this
+          # Quarkus falls back to /introspect which Descope does not expose, yielding 401 on
+          # the callback ("token can not be introspected because the introspection endpoint
+          # address is unknown"). Operator-tunable per env via .Values.oidc.wisdomAi.jwksUrl.
+          jwks-path: {{ .Values.oidc.wisdomAi.jwksUrl | quote }}
+          {{- if .Values.oidc.wisdomAi.userInfoPath }}
+          user-info-path: {{ .Values.oidc.wisdomAi.userInfoPath | quote }}
+          {{- else }}
+          {{- $wisdomAiUiBase := .Values.oidc.wisdomAi.syntheticUserInfoBaseUrl | default (printf "https://%s" .Values.application.host) }}
+          user-info-path: {{ printf "%s/internal/wisdomai/oauth-userinfo" $wisdomAiUiBase | quote }}
+          {{- end }}
+          client-id: {{ .Values.oidc.wisdomAi.clientId | quote }}
+          credentials:
+            # Descope confidential client. Although DCR registers as public, Descope's token
+            # endpoint requires a client_secret on both code exchange and refresh (errorCode
+            # E011002 "missing secret"). The K8s secret store provides the secret value via the
+            # configured `clientSecretKey`. Default method is post, overridable via
+            # .Values.oidc.wisdomAi.clientSecretMethod (post | basic) in case Descope changes it.
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.wisdomAi.clientSecretKey | default "wisdomai-client-secret" | quote }}
+              method: {{ .Values.oidc.wisdomAi.clientSecretMethod | default "post" | quote }}
+          authentication:
+            # Descope returns an id_token unconditionally; jwks-path above lets Quarkus verify
+            # it. Identity itself comes from the synthetic userinfo GraphQL proxy (id_token
+            # unused for username), but accepting it keeps Quarkus' OIDC flow happy.
+            scopes:
+              {{- range ($.Values.oidc.wisdomAi.scopes | default (list "profile")) }}
+              - {{ . | quote }}
+              {{- end }}
+            redirect-path: /wisdomai/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: true
+            id-token-required: false
+            user-info-required: true
+            verify-access-token: false
+            pkce-required: true
           application-type: web-app
           allow-user-info-cache: false
           cache-user-info-in-idtoken: true
@@ -587,6 +668,12 @@ data:
         linear:
           client-id: {{ .Values.oidc.linear.clientId | quote }}
           client-secret-key: {{ .Values.oidc.linear.clientSecretKey | default "linear-client-secret" | quote }}
+        wisdomai:
+          client-id: {{ .Values.oidc.wisdomAi.clientId | quote }}
+          # Reserved for future confidential-client rollout (Descope E011002 fix). The WisdomAI
+          # refresh path ignores this value today (public PKCE on the wire); set so SmallRye can
+          # resolve a non-empty String at startup.
+          client-secret-key: {{ .Values.oidc.wisdomAi.clientSecretKey | default "wisdomai-client-secret" | quote }}
         oracle-epm:
           client-id: {{ .Values.oidc.oracleEpm.clientId | quote }}
           # K8s secret key holding the Oracle IDCS confidential client_secret. Same key read by
@@ -697,6 +784,9 @@ data:
             - name: linear
               endpoint: {{ .Values.oidc.linear.endpoint | quote }}
               username-claim: {{ .Values.oidc.linear.claim | quote }}
+            - name: wisdomai
+              endpoint: {{ .Values.oidc.wisdomAi.endpoint | quote }}
+              username-claim: {{ .Values.oidc.wisdomAi.claim | quote }}
             - name: oracle-epm
               endpoint: {{ .Values.oidc.oracleEpm.endpoint | quote }}
               username-claim: {{ .Values.oidc.oracleEpm.claim | quote }}

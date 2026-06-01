@@ -23,6 +23,9 @@ quarkus:
         linear-internal-userinfo:
           paths: "/internal/linear/oauth-userinfo"
           policy: permit
+        wisdomai-internal-userinfo:
+          paths: "/internal/wisdomai/oauth-userinfo"
+          policy: permit
         oracle-epm-internal-userinfo:
           paths: "/internal/oracle-epm/oauth-userinfo"
           policy: permit
@@ -293,9 +296,10 @@ quarkus:
       user-info-path: ${MOP_DATADOG_SYNTHETIC_USERINFO_URL:https://127.0.0.1/internal/datadog/oauth-userinfo}
       client-id: ${DATADOG_CLIENT_ID:}
       authentication:
-        scopes:
-          - mcp_read
-          - mcp_write
+        # Datadog's MCP integration requires zero scopes — the issued AT carries an implicit
+        # MCP grant tied to the customer site. Adding scopes here causes Datadog to either
+        # reject the /authorize call or mint a token that fails downstream identity calls.
+        scopes: []
         redirect-path: /datadog/authorize/callback
         restore-path-after-redirect: true
         add-openid-scope: false
@@ -337,6 +341,50 @@ quarkus:
         extra-params:
           actor: "user"
           scope: "comments:create,issues:create,read,timeSchedule:write,write"
+      application-type: web-app
+      allow-user-info-cache: false
+      cache-user-info-in-idtoken: true
+      token-state-manager:
+        strategy: keep-all-tokens
+      token:
+        issuer: any
+    wisdomai:
+      # WisdomAI (Descope-backed) confidential client. Although DCR registers as public, Descope's
+      # token endpoint requires a client_secret for both the initial code exchange and refresh
+      # (errorCode E011002 "missing secret"). The K8s secret store provides the secret value via
+      # `wisdomai-client-secret` (operator-tunable via WISDOMAI_CLIENT_SECRET_KEY).
+      # Authorize lives at wisdom.ouryahoo.com but the token endpoint is on api.descope.com, so
+      # token-path is an absolute URL. Userinfo is sourced from a synthetic GraphQL proxy
+      # (WisdomAiUserInfoResource) that runs the `currentUser` query and flattens id/name/email
+      # to top-level claims — same pattern as Linear/Datadog.
+      # Descope returns an id_token unconditionally; jwks-path lets Quarkus verify the RS256
+      # signature without falling back to /introspect (which Descope doesn't expose for this
+      # client, surfacing as "introspection endpoint address is unknown" -> 401 on the callback).
+      auth-server-url: "https://wisdom.ouryahoo.com"
+      discovery-enabled: false
+      authorization-path: "/authorize"
+      token-path: "https://api.descope.com/oauth2/v1/apps/token"
+      jwks-path: ${MOP_WISDOMAI_JWKS_URL:https://api.descope.com/P2VaDxtG3m9fFZbTdxhVdK4FNhaF/.well-known/jwks.json}
+      user-info-path: ${MOP_WISDOMAI_SYNTHETIC_USERINFO_URL:https://127.0.0.1/internal/wisdomai/oauth-userinfo}
+      client-id: ${WISDOMAI_CLIENT_ID:}
+      credentials:
+        client-secret:
+          provider:
+            key: ${WISDOMAI_CLIENT_SECRET_KEY:wisdomai-client-secret}
+          method: post
+      authentication:
+        scopes:
+          - profile
+        redirect-path: /wisdomai/authorize/callback
+        restore-path-after-redirect: true
+        add-openid-scope: true
+        # Descope returns an id_token unconditionally; jwks-path above lets Quarkus verify the
+        # RS256 signature. We do not require it for identity (synthetic userinfo provides the
+        # claims) but accepting it keeps Quarkus' OIDC flow happy.
+        id-token-required: false
+        user-info-required: true
+        verify-access-token: false
+        pkce-required: true
       application-type: web-app
       allow-user-info-cache: false
       cache-user-info-in-idtoken: true
@@ -554,6 +602,7 @@ server:
       figma: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_FIGMA:7776000}
       datadog: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_DATADOG:15552000}
       linear: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_LINEAR:15552000}     # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
+      wisdomai: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_WISDOMAI:15552000} # 6 months — Descope RT JWT rexp is ~10y; capped to bound L2 row TTL
       oracle-epm: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_ORACLE_EPM:2592000}  # 30 days — matches the global default; Oracle IDCS RT TTL is operator-tunable
     ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:3}
   # Dedicated index keyed by H(bearer) for /userinfo bearer resolution. Each minted bearer owns
@@ -633,6 +682,12 @@ server:
     linear:
       client-id: ${LINEAR_CLIENT_ID:}
       client-secret-key: ${LINEAR_CLIENT_SECRET_KEY:linear-client-secret}
+    wisdomai:
+      client-id: ${WISDOMAI_CLIENT_ID:}
+      # Reserved for future confidential-client rollout (Descope E011002 fix). The WisdomAI
+      # refresh path ignores this value today (public PKCE on the wire); set so SmallRye can
+      # resolve a non-empty String at startup.
+      client-secret-key: ${WISDOMAI_CLIENT_SECRET_KEY:wisdomai-client-secret}
     oracle-epm:
       client-id: ${ORACLE_EPM_CLIENT_ID:}
       # K8s secret key holding the Oracle IDCS confidential client_secret. Same key is read by

@@ -68,6 +68,9 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceLinearImpl tokenExchangeServiceLinearImpl;
 
     @Mock
+    private TokenExchangeServiceWisdomAiImpl tokenExchangeServiceWisdomAiImpl;
+
+    @Mock
     private TokenExchangeServiceOracleEpmImpl tokenExchangeServiceOracleEpmImpl;
 
     @Mock
@@ -239,6 +242,13 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("linear");
         assertNotNull(result);
         assertSame(tokenExchangeServiceLinearImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_WisdomAi() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("wisdomai");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceWisdomAiImpl, result);
     }
 
     @Test

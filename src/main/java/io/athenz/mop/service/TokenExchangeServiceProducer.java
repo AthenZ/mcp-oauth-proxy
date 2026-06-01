@@ -84,6 +84,9 @@ public class TokenExchangeServiceProducer {
     TokenExchangeServiceLinearImpl tokenExchangeServiceLinearImpl;
 
     @Inject
+    TokenExchangeServiceWisdomAiImpl tokenExchangeServiceWisdomAiImpl;
+
+    @Inject
     TokenExchangeServiceOracleEpmImpl tokenExchangeServiceOracleEpmImpl;
 
     @Inject
@@ -136,6 +139,7 @@ public class TokenExchangeServiceProducer {
             case "figma" -> tokenExchangeServiceFigmaImpl;
             case "datadog" -> tokenExchangeServiceDatadogImpl;
             case "linear" -> tokenExchangeServiceLinearImpl;
+            case "wisdomai" -> tokenExchangeServiceWisdomAiImpl;
             case "oracle-epm" -> tokenExchangeServiceOracleEpmImpl;
             case "evaluate" -> tokenExchangeServiceEvaluateImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
