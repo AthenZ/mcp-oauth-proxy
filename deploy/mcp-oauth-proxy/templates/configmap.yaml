@@ -32,6 +32,12 @@ data:
             linear-internal-userinfo:
               paths: "/internal/linear/oauth-userinfo"
               policy: permit
+            wisdomai-internal-userinfo:
+              paths: "/internal/wisdomai/oauth-userinfo"
+              policy: permit
+            oracle-epm-internal-userinfo:
+              paths: "/internal/oracle-epm/oauth-userinfo"
+              policy: permit
             authorize-error:
               paths: "/authorize/error"
               policy: permit
@@ -61,6 +67,12 @@ data:
             linear:
               paths: "/linear/*"
               policy: authenticated
+            wisdomai:
+              paths: "/wisdomai/*"
+              policy: authenticated
+            oracle-epm:
+              paths: "/oracle-epm/*"
+              policy: authenticated
             embrace:
               paths: "/embrace/*"
               policy: authenticated
@@ -85,6 +97,22 @@ data:
 {{- end }}
 {{- if (.Values.oidc.linear.tlsInsecureClient | default false) }}
         linear-insecure-client:
+          trust-all: true
+          hostname-verification-algorithm: NONE
+{{- end }}
+{{- if (.Values.oidc.wisdomAi.tlsInsecureClient | default false) }}
+        # WisdomAI tenant only: required when synthetic UserInfo is served from
+        # https://localhost:<ssl-port>/internal/wisdomai/oauth-userinfo (in-pod loopback).
+        # Trusts the local self-signed cert and skips hostname verification. Mirrors Linear.
+        wisdomai-insecure-client:
+          trust-all: true
+          hostname-verification-algorithm: NONE
+{{- end }}
+{{- if (.Values.oidc.oracleEpm.tlsInsecureClient | default false) }}
+        # Oracle EPM tenant only: required when synthetic UserInfo is served from
+        # https://localhost:<ssl-port>/internal/oracle-epm/oauth-userinfo (in-pod loopback).
+        # Trusts the local self-signed cert and skips hostname verification. Mirrors Embrace.
+        oracle-epm-insecure-client:
           trust-all: true
           hostname-verification-algorithm: NONE
 {{- end }}
@@ -253,7 +281,19 @@ data:
           {{- end }}
           client-id: {{ .Values.oidc.datadog.clientId | quote }}
           authentication:
+            # Datadog's MCP integration requires zero scopes by default; the issued AT carries
+            # an implicit MCP grant tied to the customer site. The `default (list)` keeps the
+            # empty-by-default contract while still letting an env override request scopes
+            # explicitly via `oidc.datadog.scopes`.
+            {{- $datadogScopes := .Values.oidc.datadog.scopes | default (list) }}
+            {{- if gt (len $datadogScopes) 0 }}
+            scopes:
+            {{- range $datadogScopes }}
+              - {{ . | quote }}
+            {{- end }}
+            {{- else }}
             scopes: []
+            {{- end }}
             redirect-path: /datadog/authorize/callback
             restore-path-after-redirect: true
             add-openid-scope: false
@@ -307,6 +347,121 @@ data:
           token-state-manager:
             strategy: keep-all-tokens
           token:
+            issuer: any
+        wisdomai:
+          # WisdomAI (Descope-backed) is a public PKCE client today (DCR returns no client_secret).
+          # Authorize lives at wisdom.ouryahoo.com; token endpoint is on api.descope.com (split
+          # hosts → token-path is an absolute URL). Userinfo is sourced from a synthetic GraphQL
+          # proxy that runs `query CurrentUser { currentUser { id name email } }`.
+{{- if (.Values.oidc.wisdomAi.tlsInsecureClient | default false) }}
+          tls:
+            tls-configuration-name: wisdomai-insecure-client
+{{- end }}
+          auth-server-url: {{ .Values.oidc.wisdomAi.authServerUrl | default "https://wisdom.ouryahoo.com" | quote }}
+          discovery-enabled: false
+          authorization-path: "/authorize"
+          token-path: {{ .Values.oidc.wisdomAi.tokenEndpoint | default "https://api.descope.com/oauth2/v1/apps/token" | quote }}
+          # Descope JWKS for id_token RS256 signature verification. Project id is embedded in
+          # the id_token's `iss` (https://api.descope.com/v1/apps/<projectId>). Without this
+          # Quarkus falls back to /introspect which Descope does not expose, yielding 401 on
+          # the callback ("token can not be introspected because the introspection endpoint
+          # address is unknown"). Operator-tunable per env via .Values.oidc.wisdomAi.jwksUrl.
+          jwks-path: {{ .Values.oidc.wisdomAi.jwksUrl | quote }}
+          {{- if .Values.oidc.wisdomAi.userInfoPath }}
+          user-info-path: {{ .Values.oidc.wisdomAi.userInfoPath | quote }}
+          {{- else }}
+          {{- $wisdomAiUiBase := .Values.oidc.wisdomAi.syntheticUserInfoBaseUrl | default (printf "https://%s" .Values.application.host) }}
+          user-info-path: {{ printf "%s/internal/wisdomai/oauth-userinfo" $wisdomAiUiBase | quote }}
+          {{- end }}
+          client-id: {{ .Values.oidc.wisdomAi.clientId | quote }}
+          credentials:
+            # Descope confidential client. Although DCR registers as public, Descope's token
+            # endpoint requires a client_secret on both code exchange and refresh (errorCode
+            # E011002 "missing secret"). The K8s secret store provides the secret value via the
+            # configured `clientSecretKey`. Default method is post, overridable via
+            # .Values.oidc.wisdomAi.clientSecretMethod (post | basic) in case Descope changes it.
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.wisdomAi.clientSecretKey | default "wisdomai-client-secret" | quote }}
+              method: {{ .Values.oidc.wisdomAi.clientSecretMethod | default "post" | quote }}
+          authentication:
+            # Descope returns an id_token unconditionally; jwks-path above lets Quarkus verify
+            # it. Identity itself comes from the synthetic userinfo GraphQL proxy (id_token
+            # unused for username), but accepting it keeps Quarkus' OIDC flow happy.
+            scopes:
+              {{- range ($.Values.oidc.wisdomAi.scopes | default (list "profile")) }}
+              - {{ . | quote }}
+              {{- end }}
+            redirect-path: /wisdomai/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: true
+            id-token-required: false
+            user-info-required: true
+            verify-access-token: false
+            pkce-required: true
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            issuer: any
+        oracle-epm:
+          # Oracle IDCS confidential client (client_secret_post). openid is REQUIRED for the
+          # id_token + working /userinfo response. The K8s secret store provides the
+          # client_secret via `oracle-epm-client-secret` (operator-tunable via clientSecretKey).
+{{- if (.Values.oidc.oracleEpm.tlsInsecureClient | default false) }}
+          tls:
+            # Required when synthetic UserInfo runs over in-pod https://localhost:<ssl-port>/...
+            # The pod's egress policy blocks it from reaching its own public hostname; loopback
+            # uses the local self-signed cert which the JVM trust store does not accept.
+            tls-configuration-name: oracle-epm-insecure-client
+{{- end }}
+          auth-server-url: {{ .Values.oidc.oracleEpm.authServerUrl | default "https://idcs-c0b7a2ce098d48a0a78b94a30f9e42a1.identity.oraclecloud.com" | quote }}
+          discovery-enabled: false
+          authorization-path: "/oauth2/v1/authorize"
+          token-path: "/oauth2/v1/token"
+          # Oracle IDCS canonical JWKS endpoint for RS256 id_token signature verification. The
+          # operator must enable "Access Signing Certificate" in the Oracle IDCS Console
+          # (Settings > Default Settings) for this path to be public. Without jwks-path Quarkus
+          # falls back to /introspect which Oracle does NOT authorize for this client.
+          jwks-path: {{ .Values.oidc.oracleEpm.jwksPath | default "/admin/v1/SigningCert/jwk" | quote }}
+          {{- if .Values.oidc.oracleEpm.userInfoPath }}
+          user-info-path: {{ .Values.oidc.oracleEpm.userInfoPath | quote }}
+          {{- else }}
+          {{- $oracleEpmUiBase := .Values.oidc.oracleEpm.syntheticUserInfoBaseUrl | default (printf "https://%s" .Values.application.host) }}
+          user-info-path: {{ printf "%s/internal/oracle-epm/oauth-userinfo" $oracleEpmUiBase | quote }}
+          {{- end }}
+          client-id: {{ .Values.oidc.oracleEpm.clientId | quote }}
+          credentials:
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.oracleEpm.clientSecretKey | default "oracle-epm-client-secret" | quote }}
+              method: post
+          authentication:
+            scopes:
+              {{- range ($.Values.oidc.oracleEpm.scopes | default (list "openid" "urn:opc:resource:consumer::all" "offline_access")) }}
+              - {{ . | quote }}
+              {{- end }}
+            redirect-path: /oracle-epm/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: false
+            # id-token-required: true because Oracle returns an id_token whenever openid is in
+            # scope and Quarkus will attempt to verify it. JWKS path above makes signature
+            # verification possible without falling back to /introspect (not authorized for
+            # this client).
+            id-token-required: true
+            user-info-required: true
+            verify-access-token: false
+            pkce-required: true
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            # discovery is disabled, so iss is not auto-fetched. Skip iss validation; the
+            # signature is still verified against jwks-path above.
             issuer: any
         embrace:
 {{- if (.Values.oidc.embrace.tlsInsecureClient | default false) }}
@@ -513,6 +668,18 @@ data:
         linear:
           client-id: {{ .Values.oidc.linear.clientId | quote }}
           client-secret-key: {{ .Values.oidc.linear.clientSecretKey | default "linear-client-secret" | quote }}
+        wisdomai:
+          client-id: {{ .Values.oidc.wisdomAi.clientId | quote }}
+          # Reserved for future confidential-client rollout (Descope E011002 fix). The WisdomAI
+          # refresh path ignores this value today (public PKCE on the wire); set so SmallRye can
+          # resolve a non-empty String at startup.
+          client-secret-key: {{ .Values.oidc.wisdomAi.clientSecretKey | default "wisdomai-client-secret" | quote }}
+        oracle-epm:
+          client-id: {{ .Values.oidc.oracleEpm.clientId | quote }}
+          # K8s secret key holding the Oracle IDCS confidential client_secret. Same key read by
+          # OracleEpmUpstreamRefreshClient (canonical L2 path) and TokenExchangeServiceOracleEpmImpl
+          # (legacy passthrough). Operator-tunable via .Values.oidc.oracleEpm.clientSecretKey.
+          client-secret-key: {{ .Values.oidc.oracleEpm.clientSecretKey | default "oracle-epm-client-secret" | quote }}
         athenz-token-exchange:
           audience: {{ .Values.application.tokenExchange.athenzTokenExchange.audience | default "sys.auth.gcp" | quote }}
         google-workforce:
@@ -617,6 +784,12 @@ data:
             - name: linear
               endpoint: {{ .Values.oidc.linear.endpoint | quote }}
               username-claim: {{ .Values.oidc.linear.claim | quote }}
+            - name: wisdomai
+              endpoint: {{ .Values.oidc.wisdomAi.endpoint | quote }}
+              username-claim: {{ .Values.oidc.wisdomAi.claim | quote }}
+            - name: oracle-epm
+              endpoint: {{ .Values.oidc.oracleEpm.endpoint | quote }}
+              username-claim: {{ .Values.oidc.oracleEpm.claim | quote }}
       resources:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}

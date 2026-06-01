@@ -44,17 +44,17 @@ class ZmsAssumeRoleResourceClientTest {
     @Test
     void buildAssumeRoleResourceUrl_whenEndpointEndsWithZmsV1() {
         String url = ZmsAssumeRoleResourceClient.buildAssumeRoleResourceUrl(
-                "https://zms.athenz.io:4443/zms/v1", "user.yosrixp");
+                "https://zms.athenz.io:4443/zms/v1", "user.testuser");
         assertEquals(
-                "https://zms.athenz.io:4443/zms/v1/resource?principal=user.yosrixp&action=gcp.assume_role", url);
+                "https://zms.athenz.io:4443/zms/v1/resource?principal=user.testuser&action=gcp.assume_role", url);
     }
 
     @Test
     void buildAssumeRoleResourceUrl_whenEndpointEndsWithZmsV1TrailingSlash() {
         String url = ZmsAssumeRoleResourceClient.buildAssumeRoleResourceUrl(
-                "https://zms.athenz.io:4443/zms/v1/", "user.yosrixp");
+                "https://zms.athenz.io:4443/zms/v1/", "user.testuser");
         assertEquals(
-                "https://zms.athenz.io:4443/zms/v1/resource?principal=user.yosrixp&action=gcp.assume_role", url);
+                "https://zms.athenz.io:4443/zms/v1/resource?principal=user.testuser&action=gcp.assume_role", url);
     }
 
     @Test

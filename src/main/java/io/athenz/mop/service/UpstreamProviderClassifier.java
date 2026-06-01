@@ -53,6 +53,20 @@ import java.util.Set;
  *       lifetime is otherwise unbounded. Linear is a public PKCE client today; see
  *       {@link LinearUpstreamRefreshClient} for the public-client wiring and the
  *       {@code TODO(linear-confidential)} hook for a future client_secret rollout.</li>
+ *   <li>{@code oracle-epm} — promoted to L2 for cross-client AT coalescing. Oracle IDCS
+ *       access tokens are 1h ({@code expires_in=3600}) and the refresh token <strong>rotates</strong>
+ *       on every refresh. L2 row TTL is capped at 30 days (operator-tunable via
+ *       {@code server.upstream-token.expiry-seconds-by-provider.oracle-epm}); matches the
+ *       global default since Oracle's RT TTL is operator-tunable upstream. Oracle is a
+ *       confidential client (client_secret_post); see {@link OracleEpmUpstreamRefreshClient}
+ *       for the wiring.</li>
+ *   <li>{@code wisdomai} — promoted to L2 for cross-client AT amortization. WisdomAI (Descope)
+ *       access tokens are 7 days ({@code expires_in=604800}) and the refresh token JWT carries
+ *       {@code rexp} ~10 years. L2 row TTL is capped at 6 months (operator-tunable via
+ *       {@code server.upstream-token.expiry-seconds-by-provider.wisdomai}) to bound row sprawl.
+ *       WisdomAI is a public PKCE client today (DCR registers no client_secret); see
+ *       {@link WisdomAiUpstreamRefreshClient} for the public-client wiring and the
+ *       {@code TODO(wisdomai-confidential)} hook for the Descope E011002 follow-up.</li>
  * </ul>
  *
  * <p>Other native-IdP providers like Slack/GitHub/Atlassian/Embrace stay on the legacy
@@ -94,6 +108,12 @@ public class UpstreamProviderClassifier {
     /** Provider id for Linear (~24h access-token lifetime, rotating RT with 30-min replay grace, L2 promoted). */
     public static final String LINEAR_PROVIDER = "linear";
 
+    /** Provider id for Oracle EPM (1h access-token lifetime, rotating RT, L2 promoted). */
+    public static final String ORACLE_EPM_PROVIDER = "oracle-epm";
+
+    /** Provider id for WisdomAI (7d access-token lifetime, long-lived RT, L2 promoted, public PKCE). */
+    public static final String WISDOMAI_PROVIDER = "wisdomai";
+
     private static final Set<String> PROMOTED_PROVIDERS;
     static {
         Set<String> all = new java.util.HashSet<>(GOOGLE_WORKSPACE_PROVIDERS);
@@ -101,6 +121,8 @@ public class UpstreamProviderClassifier {
         all.add(FIGMA_PROVIDER);
         all.add(DATADOG_PROVIDER);
         all.add(LINEAR_PROVIDER);
+        all.add(ORACLE_EPM_PROVIDER);
+        all.add(WISDOMAI_PROVIDER);
         PROMOTED_PROVIDERS = Set.copyOf(all);
     }
 
@@ -115,6 +137,12 @@ public class UpstreamProviderClassifier {
 
     @Inject
     LinearUpstreamRefreshClient linearUpstreamRefreshClient;
+
+    @Inject
+    OracleEpmUpstreamRefreshClient oracleEpmUpstreamRefreshClient;
+
+    @Inject
+    WisdomAiUpstreamRefreshClient wisdomAiUpstreamRefreshClient;
 
     /**
      * Returns true when the provider participates in the L2 canonical upstream-RT model.
@@ -164,6 +192,12 @@ public class UpstreamProviderClassifier {
         }
         if (LINEAR_PROVIDER.equals(provider)) {
             return Optional.of(linearUpstreamRefreshClient);
+        }
+        if (ORACLE_EPM_PROVIDER.equals(provider)) {
+            return Optional.of(oracleEpmUpstreamRefreshClient);
+        }
+        if (WISDOMAI_PROVIDER.equals(provider)) {
+            return Optional.of(wisdomAiUpstreamRefreshClient);
         }
         return Optional.empty();
     }

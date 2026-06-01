@@ -48,6 +48,12 @@ class UpstreamProviderClassifierTest {
     @Mock
     private LinearUpstreamRefreshClient linearUpstreamRefreshClient;
 
+    @Mock
+    private OracleEpmUpstreamRefreshClient oracleEpmUpstreamRefreshClient;
+
+    @Mock
+    private WisdomAiUpstreamRefreshClient wisdomAiUpstreamRefreshClient;
+
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
@@ -56,6 +62,8 @@ class UpstreamProviderClassifierTest {
         classifier.figmaUpstreamRefreshClient = figmaUpstreamRefreshClient;
         classifier.datadogUpstreamRefreshClient = datadogUpstreamRefreshClient;
         classifier.linearUpstreamRefreshClient = linearUpstreamRefreshClient;
+        classifier.oracleEpmUpstreamRefreshClient = oracleEpmUpstreamRefreshClient;
+        classifier.wisdomAiUpstreamRefreshClient = wisdomAiUpstreamRefreshClient;
     }
 
     @ParameterizedTest
@@ -66,7 +74,9 @@ class UpstreamProviderClassifierTest {
             "google-forms", "google-keep", "google-meet", "google-cloud-platform",
             "figma",
             "datadog",
-            "linear"
+            "linear",
+            "oracle-epm",
+            "wisdomai"
     })
     void isUpstreamPromoted_returnsTrueForPromotedProviders(String provider) {
         assertTrue(classifier.isUpstreamPromoted(provider),
@@ -77,7 +87,9 @@ class UpstreamProviderClassifierTest {
     @ValueSource(strings = {
             "slack", "github", "atlassian", "embrace", "splunk", "grafana",
             "evaluate", "databricks-sql", "google", "google-unknown", "Google-Drive",
-            "Figma", "Datadog", "datadoghq", "Linear", "linears"
+            "Figma", "Datadog", "datadoghq", "Linear", "linears",
+            "Oracle-Epm", "oracleepm", "oracle",
+            "WisdomAi", "wisdom-ai", "wisdom_ai", "wisdom"
     })
     void isUpstreamPromoted_returnsFalseForNonPromotedOrTypoProviders(String provider) {
         assertFalse(classifier.isUpstreamPromoted(provider),
@@ -125,6 +137,18 @@ class UpstreamProviderClassifierTest {
     }
 
     @Test
+    void isGoogleWorkspace_falseForOracleEpm() {
+        assertFalse(classifier.isGoogleWorkspace("oracle-epm"),
+                "Oracle EPM is promoted but is NOT google-workspace; classifier must distinguish them");
+    }
+
+    @Test
+    void isGoogleWorkspace_falseForWisdomAi() {
+        assertFalse(classifier.isGoogleWorkspace("wisdomai"),
+                "WisdomAI is promoted but is NOT google-workspace; classifier must distinguish them");
+    }
+
+    @Test
     void isGoogleWorkspace_falseForNullEmptyAndNonGoogle() {
         assertFalse(classifier.isGoogleWorkspace(null));
         assertFalse(classifier.isGoogleWorkspace(""));
@@ -166,6 +190,20 @@ class UpstreamProviderClassifierTest {
     }
 
     @Test
+    void resolveRefreshTokenClient_returnsOracleEpmClientForOracleEpm() {
+        Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("oracle-epm");
+        assertTrue(resolved.isPresent(), "Oracle EPM should resolve to the Oracle EPM client");
+        assertSame(oracleEpmUpstreamRefreshClient, resolved.get());
+    }
+
+    @Test
+    void resolveRefreshTokenClient_returnsWisdomAiClientForWisdomAi() {
+        Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("wisdomai");
+        assertTrue(resolved.isPresent(), "WisdomAI should resolve to the WisdomAI client");
+        assertSame(wisdomAiUpstreamRefreshClient, resolved.get());
+    }
+
+    @Test
     void resolveRefreshTokenClient_emptyForOkta() {
         // Okta is intentionally NOT resolved here — UpstreamRefreshService.clientFor handles
         // Okta with a service-local lambda over OktaTokenClient, which we deliberately do not
@@ -177,7 +215,8 @@ class UpstreamProviderClassifierTest {
     @ValueSource(strings = {
             "slack", "github", "atlassian", "embrace", "splunk", "grafana", "evaluate",
             "databricks-sql", "unknown", "Figma", "Google-Drive", "Datadog", "datadoghq",
-            "Linear", "linears"
+            "Linear", "linears", "Oracle-Epm", "oracleepm", "oracle",
+            "WisdomAi", "wisdom-ai", "wisdom_ai", "wisdom"
     })
     void resolveRefreshTokenClient_emptyForNonPromotedOrTypoProviders(String provider) {
         assertTrue(classifier.resolveRefreshTokenClient(provider).isEmpty(),

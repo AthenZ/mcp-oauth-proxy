@@ -15,6 +15,7 @@
  */
 package io.athenz.mop.resource;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.athenz.mop.telemetry.OauthProviderLabel;
@@ -36,7 +37,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -44,43 +44,41 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Synthetic OIDC UserInfo endpoint for the Linear tenant.
+ * Synthetic OIDC UserInfo endpoint for the Oracle EPM tenant.
  *
- * <p>Linear's OAuth authorization server does not expose a flat OIDC userinfo endpoint. Identity
- * is reachable only through Linear's GraphQL API at {@code https://api.linear.app/graphql} via
- * the {@code viewer} query, which returns:
+ * <p>Unlike Datadog (JSON-API shape) and Linear (GraphQL), Oracle IDCS already returns a flat
+ * OIDC-shaped userinfo response:
  *
  * <pre>
- * { "data": { "viewer": { "id": "&lt;uuid&gt;", "name": "Test User", "email": "testuser@example.com" } } }
+ * { "sub": "testuser@example.com", "preferred_username": "testuser@example.com",
+ *   "name": "Yosri Amarneh", "given_name": "Yosri", "family_name": "Amarneh", ... }
  * </pre>
  *
- * <p>Quarkus' {@link io.quarkus.oidc.UserInfo} only navigates top-level claims, so we proxy the
- * Linear response through this resource and re-project {@code data.viewer.email} /
- * {@code data.viewer.id} / {@code data.viewer.name} to flat top-level claims that
- * {@code BaseResource.getUsername} can consume.
+ * <p>This proxy exists not to flatten claims but to keep stage/prod synthetic UserInfo behind
+ * in-pod loopback (the pod cannot reach its own public hostname). On a 2xx response we re-encode
+ * the body through Jackson to normalize the content-type and drop any non-JSON fields. Same
+ * pattern Linear/Datadog use; the only difference is that no claim re-projection is performed.
  *
- * <p>This is the same pattern used by {@link DatadogUserInfoResource}; the path is exposed via
- * {@code quarkus.oidc.linear.user-info-path} which Quarkus calls with the just-issued bearer
- * access token after the code exchange completes.
+ * <p>Path is exposed via {@code quarkus.oidc.oracle-epm.user-info-path} which Quarkus calls with
+ * the just-issued bearer access token after the code exchange completes.
  */
 @ApplicationScoped
-@Path("/internal/linear/oauth-userinfo")
-public class LinearUserInfoResource {
+@Path("/internal/oracle-epm/oauth-userinfo")
+public class OracleEpmUserInfoResource {
 
     private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-    /** Default Linear GraphQL endpoint. Overridable for tests via {@code mop.linear.graphql-url}. */
-    private static final String DEFAULT_GRAPHQL_URL = "https://api.linear.app/graphql";
+    /** Default Oracle IDCS userinfo endpoint. Overridable for tests via {@code mop.oracle-epm.userinfo-url}. */
+    private static final String DEFAULT_USERINFO_URL =
+            "https://idcs-c0b7a2ce098d48a0a78b94a30f9e42a1.identity.oraclecloud.com/oauth2/v1/userinfo";
     private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(10);
 
-    /** Minimal {@code viewer} GraphQL query — fields we map to flat OIDC-style claims. */
-    private static final String VIEWER_QUERY_BODY =
-            "{\"query\":\"query { viewer { id name email } }\"}";
-
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final TypeReference<LinkedHashMap<String, Object>> ORDERED_MAP_TYPE =
+            new TypeReference<LinkedHashMap<String, Object>>() {};
 
-    @ConfigProperty(name = "mop.linear.graphql-url", defaultValue = DEFAULT_GRAPHQL_URL)
-    String graphqlUrl;
+    @ConfigProperty(name = "mop.oracle-epm.userinfo-url", defaultValue = DEFAULT_USERINFO_URL)
+    String userinfoUrl;
 
     @Inject
     OauthProxyMetrics oauthProxyMetrics;
@@ -106,7 +104,7 @@ public class LinearUserInfoResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response get(@HeaderParam(HttpHeaders.AUTHORIZATION) String authorization) {
         long startNanos = System.nanoTime();
-        telemetryRequestContext.setOauthProvider(OauthProviderLabel.LINEAR);
+        telemetryRequestContext.setOauthProvider(OauthProviderLabel.ORACLE_EPM);
         if (authorization == null) {
             return finishUserinfo(startNanos, false, 401, "invalid_token", "missing_bearer",
                     Response.status(Response.Status.UNAUTHORIZED).build());
@@ -124,15 +122,14 @@ public class LinearUserInfoResource {
 
         HttpRequest req;
         try {
-            req = HttpRequest.newBuilder(URI.create(graphqlUrl))
+            req = HttpRequest.newBuilder(URI.create(userinfoUrl))
                     .timeout(HTTP_TIMEOUT)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON)
                     .header(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON)
-                    .POST(HttpRequest.BodyPublishers.ofString(VIEWER_QUERY_BODY, StandardCharsets.UTF_8))
+                    .GET()
                     .build();
         } catch (IllegalArgumentException e) {
-            log.error("Linear synthetic userinfo: invalid GraphQL URL: {}", graphqlUrl, e);
+            log.error("Oracle EPM synthetic userinfo: invalid userinfo URL: {}", userinfoUrl, e);
             return finishUserinfo(startNanos, false, 502, "bad_gateway", "invalid_url",
                     Response.status(Response.Status.BAD_GATEWAY).build());
         }
@@ -141,12 +138,12 @@ public class LinearUserInfoResource {
         try {
             resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
         } catch (IOException e) {
-            log.warn("Linear synthetic userinfo: I/O error calling GraphQL viewer", e);
+            log.warn("Oracle EPM synthetic userinfo: I/O error calling upstream userinfo", e);
             return finishUserinfo(startNanos, false, 502, "bad_gateway", "io_error",
                     Response.status(Response.Status.BAD_GATEWAY).build());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.warn("Linear synthetic userinfo: interrupted calling GraphQL viewer", e);
+            log.warn("Oracle EPM synthetic userinfo: interrupted calling upstream userinfo", e);
             return finishUserinfo(startNanos, false, 502, "bad_gateway", "interrupted",
                     Response.status(Response.Status.BAD_GATEWAY).build());
         }
@@ -157,71 +154,63 @@ public class LinearUserInfoResource {
                     Response.status(Response.Status.UNAUTHORIZED).build());
         }
         if (status < 200 || status >= 300) {
-            log.warn("Linear synthetic userinfo: upstream returned status={} body_len={}",
+            log.warn("Oracle EPM synthetic userinfo: upstream returned status={} body_len={}",
                     status, resp.body() != null ? resp.body().length() : 0);
             return finishUserinfo(startNanos, false, 502, "bad_gateway", "upstream_status_" + status,
                     Response.status(Response.Status.BAD_GATEWAY).build());
         }
 
-        LinkedHashMap<String, Object> flat = new LinkedHashMap<>();
+        // Pass through the Oracle response as-is, but route it through Jackson so the response
+        // is canonical JSON (Quarkus enforces application/json on its UserInfo binding) and
+        // project an `email` claim so BaseResource.getUsername (which only strips `@domain` when
+        // the claim NAME contains "email") works against Oracle's email-shaped sub.
+        LinkedHashMap<String, Object> body;
         try {
             JsonNode root = OBJECT_MAPPER.readTree(resp.body() != null ? resp.body() : "{}");
-            // GraphQL surfaces auth/permission failures as a 200 with a top-level "errors" array
-            // and a null/missing data.viewer. Treat that as a 401 so Quarkus does not accept an
-            // empty userinfo as success.
-            if (root.has("errors") && root.path("errors").isArray() && !root.path("errors").isEmpty()) {
-                log.warn("Linear synthetic userinfo: GraphQL returned errors: {}", root.path("errors"));
-                return finishUserinfo(startNanos, false, 401, "invalid_token", "graphql_errors",
-                        Response.status(Response.Status.UNAUTHORIZED).build());
+            if (!root.isObject()) {
+                log.warn("Oracle EPM synthetic userinfo: upstream returned non-object JSON");
+                return finishUserinfo(startNanos, false, 502, "bad_gateway", "non_object",
+                        Response.status(Response.Status.BAD_GATEWAY).build());
             }
-            JsonNode viewer = root.path("data").path("viewer");
-            String email = textOrNull(viewer.path("email"));
-            String id = textOrNull(viewer.path("id"));
-            String name = textOrNull(viewer.path("name"));
-            if (email != null) {
-                flat.put("email", email);
-            }
-            if (id != null) {
-                flat.put("id", id);
-            }
-            if (name != null) {
-                flat.put("name", name);
-            }
-            if (id != null) {
-                flat.put("sub", id);
-            }
+            // Iterate stable JSON-object iteration order (Jackson preserves source order for
+            // ObjectNode by default); LinkedHashMap keeps it deterministic on the wire.
+            body = OBJECT_MAPPER.convertValue(root, ORDERED_MAP_TYPE);
         } catch (Exception e) {
-            log.warn("Linear synthetic userinfo: failed to parse GraphQL response", e);
+            log.warn("Oracle EPM synthetic userinfo: failed to parse upstream response", e);
             return finishUserinfo(startNanos, false, 502, "bad_gateway", "parse_failed",
                     Response.status(Response.Status.BAD_GATEWAY).build());
         }
 
-        if (flat.isEmpty()) {
-            log.warn("Linear synthetic userinfo: GraphQL response missing identity claims");
-            return finishUserinfo(startNanos, false, 502, "bad_gateway", "missing_claims",
+        // Defensive: Oracle's userinfo always returns at least `sub`. If it's missing, downstream
+        // BaseResource.getUsername would fall back to subject lookup which is the wrong key.
+        Object sub = body.get("sub");
+        if (sub == null || sub.toString().isEmpty()) {
+            log.warn("Oracle EPM synthetic userinfo: upstream response missing sub claim");
+            return finishUserinfo(startNanos, false, 502, "bad_gateway", "missing_sub",
                     Response.status(Response.Status.BAD_GATEWAY).build());
         }
 
-        return finishUserinfo(startNanos, true, 200, null, null, Response.ok(flat).build());
-    }
+        // Project a top-level `email` claim from preferred_username / sub if Oracle did not
+        // include one. We bind the OIDC tenant to claim=email (BaseResource.getUsername strips
+        // `@domain` only when the claim name contains "email"), so this projection ensures the
+        // stored lookupKey is the short id (e.g. "testuser" for "testuser@example.com") matching
+        // every other provider that uses email-shaped claims.
+        if (body.get("email") == null || body.get("email").toString().isEmpty()) {
+            Object preferredUsername = body.get("preferred_username");
+            String email = preferredUsername != null && !preferredUsername.toString().isEmpty()
+                    ? preferredUsername.toString() : sub.toString();
+            body.put("email", email);
+        }
 
-    private static String textOrNull(JsonNode node) {
-        if (node == null || node.isNull() || node.isMissingNode()) {
-            return null;
-        }
-        if (!node.isTextual()) {
-            return null;
-        }
-        String s = node.asText();
-        return (s == null || s.isEmpty()) ? null : s;
+        return finishUserinfo(startNanos, true, 200, null, null, Response.ok(body).build());
     }
 
     private Response finishUserinfo(long startNanos, boolean success, int httpStatus,
             String errorType, String userinfoFailureReason, Response response) {
         double seconds = (System.nanoTime() - startNanos) / 1_000_000_000.0;
-        oauthProxyMetrics.recordUserinfoDuration(OauthProviderLabel.LINEAR, success,
+        oauthProxyMetrics.recordUserinfoDuration(OauthProviderLabel.ORACLE_EPM, success,
                 userinfoFailureReason, seconds);
-        oauthProxyMetrics.recordUserinfoRequest(OauthProviderLabel.LINEAR, success, httpStatus,
+        oauthProxyMetrics.recordUserinfoRequest(OauthProviderLabel.ORACLE_EPM, success, httpStatus,
                 errorType, userinfoFailureReason);
         return response;
     }

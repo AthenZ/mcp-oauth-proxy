@@ -65,6 +65,48 @@ class K8SSecretsProviderTest {
     }
 
     @Test
+    void credentialsMapFromData_includesOracleEpmClientSecret() {
+        // Oracle IDCS confidential client_secret. Without this entry the Quarkus OIDC tenant
+        // resolves the secret to null and the Vert.x token-exchange call NPEs when adding the
+        // client_secret form-body field. Mirrors the figma test above.
+        Map<String, byte[]> data = new HashMap<>();
+        data.put(K8SSecretsProvider.SECRET_DATA_KEY_ORACLE_EPM_CLIENT_SECRET,
+                "oracle-epm-secret".getBytes(StandardCharsets.UTF_8));
+
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(data);
+
+        assertEquals("oracle-epm-secret", m.get(K8SSecretsProvider.SECRET_DATA_KEY_ORACLE_EPM_CLIENT_SECRET));
+    }
+
+    @Test
+    void credentialsMapFromData_oracleEpmClientSecretAbsent_resolvesToEmpty() {
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(new HashMap<>());
+
+        assertEquals("", m.get(K8SSecretsProvider.SECRET_DATA_KEY_ORACLE_EPM_CLIENT_SECRET));
+    }
+
+    @Test
+    void credentialsMapFromData_includesWisdomAiClientSecret() {
+        // Descope confidential client_secret. WisdomAI DCR registers public clients but Descope's
+        // token endpoint requires a secret on refresh (errorCode E011002). Without this entry the
+        // upstream refresh client falls back to the "secret not found" branch and returns null.
+        Map<String, byte[]> data = new HashMap<>();
+        data.put(K8SSecretsProvider.SECRET_DATA_KEY_WISDOMAI_CLIENT_SECRET,
+                "wisdomai-secret".getBytes(StandardCharsets.UTF_8));
+
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(data);
+
+        assertEquals("wisdomai-secret", m.get(K8SSecretsProvider.SECRET_DATA_KEY_WISDOMAI_CLIENT_SECRET));
+    }
+
+    @Test
+    void credentialsMapFromData_wisdomAiClientSecretAbsent_resolvesToEmpty() {
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(new HashMap<>());
+
+        assertEquals("", m.get(K8SSecretsProvider.SECRET_DATA_KEY_WISDOMAI_CLIENT_SECRET));
+    }
+
+    @Test
     void credentialsMapFromData_includesGrafanaStageAndProd() {
         Map<String, byte[]> data = new HashMap<>();
         data.put(K8SSecretsProvider.SECRET_DATA_KEY_GRAFANA_API_STAGE,

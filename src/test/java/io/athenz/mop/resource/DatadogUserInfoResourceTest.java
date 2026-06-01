@@ -43,8 +43,10 @@ import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link DatadogUserInfoResource}. The resource proxies
- * {@code https://api.datadoghq.com/api/v2/current_user} and re-projects the JSON-API-shaped
- * payload to flat top-level claims so Quarkus' {@code UserInfo.get("email")} can find them.
+ * {@code https://api.datadoghq.com/api/v2/users} and re-projects the JSON-API-shaped payload
+ * (a one-element list with a zero-scope MCP token) to flat top-level claims so Quarkus'
+ * {@code UserInfo.get("email")} can find them. A defensive single-object fallback is also
+ * supported and asserted below in {@code get_singleObjectDataShape_*}.
  */
 // Mocking HttpClient.send(HttpRequest, BodyHandler<T>) inherently produces unchecked warnings on
 // the BodyHandler type parameter. Localized to the test surface; production code is fully typed.
@@ -69,7 +71,7 @@ class DatadogUserInfoResourceTest {
         resource = new DatadogUserInfoResource();
         resource.oauthProxyMetrics = oauthProxyMetrics;
         resource.telemetryRequestContext = telemetryRequestContext;
-        resource.currentUserUrl = "https://api.datadoghq.com/api/v2/current_user";
+        resource.currentUserUrl = "https://api.datadoghq.com/api/v2/users";
         resource.setHttpClient(httpClient);
     }
 
@@ -92,18 +94,23 @@ class DatadogUserInfoResourceTest {
     }
 
     @Test
-    void get_happyPath_flattensDataAttributesToTopLevel() throws Exception {
+    void get_happyPath_flattensFirstDataElementToTopLevel() throws Exception {
+        // Real Datadog /api/v2/users response shape: { "data": [ { ... } ], "meta": {...} }.
+        // With a zero-scope MCP token Datadog filters to a single element (the calling user).
         HttpResponse<String> upstream = (HttpResponse<String>) org.mockito.Mockito.mock(HttpResponse.class);
         String body = "{\n" +
-                "  \"data\": {\n" +
-                "    \"type\": \"users\",\n" +
-                "    \"id\": \"e92be4dd-2ca3-40d5-8a2a-73191475fabd\",\n" +
-                "    \"attributes\": {\n" +
-                "      \"email\": \"yosrixp@yahooinc.com\",\n" +
-                "      \"handle\": \"yosrixp@yahooinc.com\",\n" +
-                "      \"uuid\":  \"e92be4dd-2ca3-40d5-8a2a-73191475fabd\"\n" +
+                "  \"data\": [\n" +
+                "    {\n" +
+                "      \"type\": \"users\",\n" +
+                "      \"id\": \"00000000-0000-0000-0000-000000000001\",\n" +
+                "      \"attributes\": {\n" +
+                "        \"email\": \"testuser@example.com\",\n" +
+                "        \"handle\": \"testuser@example.com\",\n" +
+                "        \"uuid\":  \"00000000-0000-0000-0000-000000000001\"\n" +
+                "      }\n" +
                 "    }\n" +
-                "  }\n" +
+                "  ],\n" +
+                "  \"meta\": { \"page\": { \"total_count\": 1 } }\n" +
                 "}";
         when(upstream.statusCode()).thenReturn(200);
         when(upstream.body()).thenReturn(body);
@@ -116,18 +123,53 @@ class DatadogUserInfoResourceTest {
         assertNotNull(entity);
         // Flat top-level claims that Quarkus UserInfo can navigate. BaseResource.getUsername
         // strips @domain when the claim name contains "email", so the stored lookupKey will be
-        // "yosrixp" — the short id we want.
-        assertEquals("yosrixp@yahooinc.com", entity.get("email"));
-        assertEquals("e92be4dd-2ca3-40d5-8a2a-73191475fabd", entity.get("id"));
-        assertEquals("yosrixp@yahooinc.com", entity.get("handle"));
-        assertEquals("e92be4dd-2ca3-40d5-8a2a-73191475fabd", entity.get("sub"));
+        // "testuser" — the short id we want.
+        assertEquals("testuser@example.com", entity.get("email"));
+        assertEquals("00000000-0000-0000-0000-000000000001", entity.get("id"));
+        assertEquals("testuser@example.com", entity.get("handle"));
+        assertEquals("00000000-0000-0000-0000-000000000001", entity.get("sub"));
+    }
+
+    @Test
+    void get_singleObjectDataShape_isAcceptedDefensively() throws Exception {
+        // Defensive: if Datadog ever collapses zero-scope responses to the current_user-style
+        // single-object envelope, the resource must still work. This guards against a silent
+        // 502 on a future upstream shape change.
+        HttpResponse<String> upstream = (HttpResponse<String>) org.mockito.Mockito.mock(HttpResponse.class);
+        when(upstream.statusCode()).thenReturn(200);
+        when(upstream.body()).thenReturn(
+                "{\"data\":{\"id\":\"u-1\",\"attributes\":{\"email\":\"x@y.com\",\"uuid\":\"u-1\"}}}");
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(upstream);
+
+        Response r = resource.get("Bearer ddoat_test");
+        assertEquals(200, r.getStatus());
+        Map<String, Object> entity = (Map<String, Object>) r.getEntity();
+        assertEquals("x@y.com", entity.get("email"));
+        assertEquals("u-1", entity.get("id"));
+        assertEquals("u-1", entity.get("sub"));
+    }
+
+    @Test
+    void get_emptyDataArray_returns502() throws Exception {
+        // Pathological: Datadog returns an empty data list (shouldn't happen for the calling
+        // user but defensively coverage). Without identity claims to project, surface the
+        // failure as bad_gateway rather than a 200 with an empty userinfo payload.
+        HttpResponse<String> upstream = (HttpResponse<String>) org.mockito.Mockito.mock(HttpResponse.class);
+        when(upstream.statusCode()).thenReturn(200);
+        when(upstream.body()).thenReturn("{\"data\": [], \"meta\": {\"page\": {\"total_count\": 0}}}");
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(upstream);
+
+        Response r = resource.get("Bearer ddoat_test");
+        assertEquals(502, r.getStatus());
     }
 
     @Test
     void get_forwardsBearerHeaderToUpstream() throws Exception {
         HttpResponse<String> upstream = (HttpResponse<String>) org.mockito.Mockito.mock(HttpResponse.class);
         when(upstream.statusCode()).thenReturn(200);
-        when(upstream.body()).thenReturn("{\"data\":{\"id\":\"x\",\"attributes\":{\"email\":\"a@b.com\"}}}");
+        when(upstream.body()).thenReturn("{\"data\":[{\"id\":\"x\",\"attributes\":{\"email\":\"a@b.com\"}}]}");
         ArgumentCaptor<HttpRequest> captor = ArgumentCaptor.forClass(HttpRequest.class);
         when(httpClient.send(captor.capture(), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(upstream);
@@ -135,7 +177,7 @@ class DatadogUserInfoResourceTest {
         Response r = resource.get("Bearer ddoat_specific_token");
         assertEquals(200, r.getStatus());
         HttpRequest sent = captor.getValue();
-        assertEquals(URI.create("https://api.datadoghq.com/api/v2/current_user"), sent.uri());
+        assertEquals(URI.create("https://api.datadoghq.com/api/v2/users"), sent.uri());
         assertEquals("GET", sent.method());
         // Authorization header is forwarded verbatim with the Bearer prefix re-applied.
         assertTrue(sent.headers().firstValue("Authorization").orElse("").contains("ddoat_specific_token"),

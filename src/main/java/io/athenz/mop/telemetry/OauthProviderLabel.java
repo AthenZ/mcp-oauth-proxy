@@ -47,6 +47,8 @@ public final class OauthProviderLabel {
     public static final String FIGMA = "figma";
     public static final String DATADOG = "datadog";
     public static final String LINEAR = "linear";
+    public static final String ORACLE_EPM = "oracle-epm";
+    public static final String WISDOMAI = "wisdomai";
     public static final String GRAFANA = "grafana";
     public static final String EVALUATE = "evaluate";
 
@@ -63,10 +65,11 @@ public final class OauthProviderLabel {
                     GOOGLE_SLIDES, GOOGLE_GMAIL, GOOGLE_CALENDAR, GOOGLE_TASKS, GOOGLE_CHAT, GOOGLE_FORMS,
                     GOOGLE_KEEP, GOOGLE_MEET, GOOGLE_CLOUD_PLATFORM, ATLASSIAN, ATHENZ, GOOGLE_MONITORING,
                     GOOGLE_LOGGING, GOOGLE_BIGQUERY, DATABRICKS_SQL, DATABRICKS_VECTOR_SEARCH, SLACK, FIGMA,
-                    DATADOG, LINEAR, GRAFANA, EVALUATE -> s;
+                    DATADOG, LINEAR, ORACLE_EPM, WISDOMAI, GRAFANA, EVALUATE -> s;
             case "gcp-monitoring" -> GOOGLE_MONITORING;
             case "gcp-logging" -> GOOGLE_LOGGING;
             case "gcp-bigquery" -> GOOGLE_BIGQUERY;
+            case "wisdom-ai", "wisdom_ai" -> WISDOMAI;
             default -> s;
         };
     }

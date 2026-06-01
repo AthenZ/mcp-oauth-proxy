@@ -55,7 +55,7 @@ import static org.mockito.Mockito.when;
  * <ul>
  *   <li>Username claim is {@code email}, and {@code BaseResource.getUsername} strips the
  *       {@code @domain} suffix so the stored {@code lookupKey} is the short id (e.g.
- *       {@code yosrixp} for {@code yosrixp@yahooinc.com}).</li>
+ *       {@code testuser} for {@code testuser@example.com}).</li>
  *   <li>The 8-arg {@code AuthorizerService.storeTokens} overload is used with
  *       {@link LinearResource#LINEAR_ACCESS_TOKEN_LIFETIME_SECONDS} (~24 h) so the bare L1 row
  *       outlives the global ~8h {@code server.token-store.expiry} cap. Without this the row
@@ -74,8 +74,8 @@ class LinearResourceTest {
     private static final String AUTH_CODE_STATE = "auth-code-state";
     private static final String ACCESS_TOKEN = "lin_oat_access_token";
     private static final String REFRESH_TOKEN = "lin_oar_refresh_token";
-    private static final String EMAIL = "yosrixp@yahooinc.com";
-    private static final String LOOKUP_KEY = "yosrixp";
+    private static final String EMAIL = "testuser@example.com";
+    private static final String LOOKUP_KEY = "testuser";
     private static final String CLIENT_ID = "mcp-client-1";
     private static final String RESOURCE = "https://local.sample-mcp.experiments.athenz.ouryahoo.com:8443/v1/linear/mcp";
     private static final long EXPECTED_LIFETIME = 86_399L;

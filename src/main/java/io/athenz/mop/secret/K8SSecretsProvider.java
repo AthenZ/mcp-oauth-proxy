@@ -50,6 +50,8 @@ public class K8SSecretsProvider implements CredentialsProvider {
     public static final String SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET = "embrace-client-secret";
     public static final String SECRET_DATA_KEY_SLACK_CLIENT_SECRET = "slack-client-secret";
     public static final String SECRET_DATA_KEY_FIGMA_CLIENT_SECRET = "figma-client-secret";
+    public static final String SECRET_DATA_KEY_ORACLE_EPM_CLIENT_SECRET = "oracle-epm-client-secret";
+    public static final String SECRET_DATA_KEY_WISDOMAI_CLIENT_SECRET = "wisdomai-client-secret";
     public static final String SECRET_DATA_KEY_OKTA_TOKEN_EXCHANGE_CLIENT_SECRET = "okta-token-exchange-client-secret";
 
     /** Kubernetes secret data keys for Splunk management API tokens (same names in {@link #getCredentials} map). */
@@ -100,6 +102,8 @@ public class K8SSecretsProvider implements CredentialsProvider {
         String embraceClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET);
         String slackClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_SLACK_CLIENT_SECRET);
         String figmaClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_FIGMA_CLIENT_SECRET);
+        String oracleEpmClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_ORACLE_EPM_CLIENT_SECRET);
+        String wisdomAiClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_WISDOMAI_CLIENT_SECRET);
         String oktaTokenExchangeClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_OKTA_TOKEN_EXCHANGE_CLIENT_SECRET);
         String splunkApiStage = decodeTrimmed(data, SECRET_DATA_KEY_SPLUNK_API_STAGE);
         String splunkApiProd = decodeTrimmed(data, SECRET_DATA_KEY_SPLUNK_API_PROD);
@@ -114,6 +118,8 @@ public class K8SSecretsProvider implements CredentialsProvider {
         map.put(SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET, embraceClientSecret);
         map.put(SECRET_DATA_KEY_SLACK_CLIENT_SECRET, slackClientSecret);
         map.put(SECRET_DATA_KEY_FIGMA_CLIENT_SECRET, figmaClientSecret);
+        map.put(SECRET_DATA_KEY_ORACLE_EPM_CLIENT_SECRET, oracleEpmClientSecret);
+        map.put(SECRET_DATA_KEY_WISDOMAI_CLIENT_SECRET, wisdomAiClientSecret);
         map.put(SECRET_DATA_KEY_OKTA_TOKEN_EXCHANGE_CLIENT_SECRET, oktaTokenExchangeClientSecret);
         map.put(SECRET_DATA_KEY_SPLUNK_API_STAGE, splunkApiStage);
         map.put(SECRET_DATA_KEY_SPLUNK_API_PROD, splunkApiProd);

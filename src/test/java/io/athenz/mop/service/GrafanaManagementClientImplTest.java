@@ -81,10 +81,10 @@ class GrafanaManagementClientImplTest {
         GrafanaHttpExecutor exec = req -> {
             assertEquals("POST", req.method());
             assertTrue(req.uri().toString().endsWith("/api/serviceaccounts/" + SA + "/tokens"));
-            return mockResponse(200, "{\"id\":284,\"name\":\"mcp.yosrixp.1\",\"key\":\"glsa_abc\"}");
+            return mockResponse(200, "{\"id\":284,\"name\":\"mcp.testuser.1\",\"key\":\"glsa_abc\"}");
         };
         GrafanaManagementClientImpl client = new GrafanaManagementClientImpl(new ObjectMapper(), exec);
-        assertEquals("glsa_abc", client.mintToken(BASE, SA, BEARER, "mcp.yosrixp.1", 3600));
+        assertEquals("glsa_abc", client.mintToken(BASE, SA, BEARER, "mcp.testuser.1", 3600));
     }
 
     @Test

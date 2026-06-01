@@ -35,7 +35,7 @@ class ZmsResourceModelJsonTest {
                 {
                   "resources": [
                     {
-                      "principal": "user.yosrixp",
+                      "principal": "user.testuser",
                       "assertions": [
                         {
                           "role": "calypso.nonprod:role.gcp.fed.power.user",
@@ -57,7 +57,7 @@ class ZmsResourceModelJsonTest {
         assertEquals(1, root.getResources().size());
 
         ZmsResourcePrincipalEntry block = root.getResources().get(0);
-        assertEquals("user.yosrixp", block.getPrincipal());
+        assertEquals("user.testuser", block.getPrincipal());
         assertNotNull(block.getAssertions());
         assertEquals(1, block.getAssertions().size());
 

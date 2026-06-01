@@ -499,8 +499,8 @@ class UserInfoResourceTest {
         when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
         Map<String, Object> cached = new java.util.LinkedHashMap<>();
         cached.put("sub", USER);
-        cached.put("email", "yosrixp@example.com");
-        cached.put("short_id", "yosrixp");
+        cached.put("email", "testuser@example.com");
+        cached.put("short_id", "testuser");
         when(userInfoClaimsCache.getIfPresent(SUBJECT))
                 .thenReturn(java.util.Optional.of(java.util.Collections.unmodifiableMap(cached)));
 
@@ -513,8 +513,8 @@ class UserInfoResourceTest {
         verify(oauthProxyMetrics).recordUserinfoClaimCacheOutcome("fresh_hit_no_okta_call");
         Map<String, Object> body = (Map<String, Object>) response.getEntity();
         assertEquals(USER, body.get("sub"));
-        assertEquals("yosrixp@example.com", body.get("email"));
-        assertEquals("yosrixp", body.get("short_id"));
+        assertEquals("testuser@example.com", body.get("email"));
+        assertEquals("testuser", body.get("short_id"));
         assertEquals("Cursor", body.get("mcp_client_id"),
                 "Glue must come from the bearer-index row, not the cached snapshot");
         assertEquals(PROVIDER, body.get("mcp_resource_idp"),
@@ -528,7 +528,7 @@ class UserInfoResourceTest {
         // bearer's provider, never some stale value baked into the cached map.
         Map<String, Object> cached = new java.util.LinkedHashMap<>();
         cached.put("sub", USER);
-        cached.put("email", "yosrixp@example.com");
+        cached.put("email", "testuser@example.com");
         when(userInfoClaimsCacheConfig.enabled()).thenReturn(true);
         when(userInfoClaimsCache.getIfPresent(SUBJECT))
                 .thenReturn(java.util.Optional.of(java.util.Collections.unmodifiableMap(cached)));
