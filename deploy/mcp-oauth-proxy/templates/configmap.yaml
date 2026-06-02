@@ -73,6 +73,9 @@ data:
             oracle-epm:
               paths: "/oracle-epm/*"
               policy: authenticated
+            airtable:
+              paths: "/airtable/*"
+              policy: authenticated
             embrace:
               paths: "/embrace/*"
               policy: authenticated
@@ -463,6 +466,46 @@ data:
             # discovery is disabled, so iss is not auto-fetched. Skip iss validation; the
             # signature is still verified against jwks-path above.
             issuer: any
+        airtable:
+          # Airtable confidential PKCE client. Token endpoint uses HTTP Basic on the
+          # `Authorization` header (Airtable's docs use `curl -u client_id:client_secret`); do
+          # NOT switch to client_secret_post. Userinfo is served directly by api.airtable.com
+          # as a flat JSON ({ id, email, scopes }) so Quarkus calls it directly — no synthetic
+          # proxy and no in-pod loopback TLS trust block needed (Figma pattern). The MCP
+          # resource indicator (RFC 8707) is required on /authorize so Airtable knows the
+          # caller is asking for an MCP-scoped token (same shape as Datadog's extra-params).
+          auth-server-url: "https://airtable.com"
+          discovery-enabled: false
+          authorization-path: "/oauth2/v1/authorize"
+          token-path: "https://airtable.com/oauth2/v1/token"
+          user-info-path: {{ .Values.oidc.airtable.userInfoPath | default "https://api.airtable.com/v0/meta/whoami" | quote }}
+          client-id: {{ .Values.oidc.airtable.clientId | quote }}
+          credentials:
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.airtable.clientSecretKey | default "airtable-client-secret" | quote }}
+              method: basic
+          authentication:
+            scopes:
+              {{- range ($.Values.oidc.airtable.scopes | default (list "data.recordComments:read" "data.recordComments:write" "data.records:read" "data.records:write" "schema.bases:read" "user.email:read" "workspacesAndBases:read" "enterprise.groups:read")) }}
+              - {{ . | quote }}
+              {{- end }}
+            redirect-path: /airtable/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: false
+            id-token-required: false
+            user-info-required: true
+            verify-access-token: false
+            pkce-required: true
+            extra-params:
+              resource: {{ .Values.oidc.airtable.resourceIndicator | default "https://mcp.airtable.com" | quote }}
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            issuer: any
         embrace:
 {{- if (.Values.oidc.embrace.tlsInsecureClient | default false) }}
           tls:
@@ -680,6 +723,12 @@ data:
           # OracleEpmUpstreamRefreshClient (canonical L2 path) and TokenExchangeServiceOracleEpmImpl
           # (legacy passthrough). Operator-tunable via .Values.oidc.oracleEpm.clientSecretKey.
           client-secret-key: {{ .Values.oidc.oracleEpm.clientSecretKey | default "oracle-epm-client-secret" | quote }}
+        airtable:
+          client-id: {{ .Values.oidc.airtable.clientId | quote }}
+          # K8s secret key holding the Airtable confidential client_secret. Same key read by
+          # AirtableUpstreamRefreshClient (canonical L2 path) and TokenExchangeServiceAirtableImpl
+          # (legacy passthrough). Operator-tunable via .Values.oidc.airtable.clientSecretKey.
+          client-secret-key: {{ .Values.oidc.airtable.clientSecretKey | default "airtable-client-secret" | quote }}
         athenz-token-exchange:
           audience: {{ .Values.application.tokenExchange.athenzTokenExchange.audience | default "sys.auth.gcp" | quote }}
         google-workforce:
@@ -790,6 +839,9 @@ data:
             - name: oracle-epm
               endpoint: {{ .Values.oidc.oracleEpm.endpoint | quote }}
               username-claim: {{ .Values.oidc.oracleEpm.claim | quote }}
+            - name: airtable
+              endpoint: {{ .Values.oidc.airtable.endpoint | quote }}
+              username-claim: {{ .Values.oidc.airtable.claim | quote }}
       resources:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}

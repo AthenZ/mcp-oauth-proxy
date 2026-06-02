@@ -374,6 +374,42 @@ class UpstreamTokenConfigTest {
     }
 
     @Test
+    void airtable_exactMatchOverride_returnsConfiguredLifetime() {
+        // Airtable is L2 promoted but NOT in GOOGLE_WORKSPACE_PROVIDERS, so the floor does not
+        // apply. The exact-match key must yield the configured cap (6 months by default).
+        long sixMonths = GOOGLE_180D;
+        Map<String, Long> map = new HashMap<>();
+        map.put("airtable", sixMonths);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(sixMonths, cfg.expirySecondsForProvider("airtable"));
+        assertEquals(sixMonths, cfg.expirySecondsForProvider("airtable#alice@example.com"));
+    }
+
+    @Test
+    void airtable_unconfigured_fallsBackToDefault() {
+        // Without an exact-match key Airtable falls through to the global default (30 d).
+        // Production sets airtable=15552000 (6 months) explicitly via chart values.yaml + env
+        // overrides; if the override is dropped this test demonstrates the fallback. Airtable's
+        // RT rotates every refresh with a 60d lifetime, so the only effect of a shorter cap is
+        // bounded L2 row sprawl, not data loss.
+        UpstreamTokenConfig cfg = configWith(new HashMap<>());
+
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("airtable#user-id"));
+    }
+
+    @Test
+    void airtable_groupKeyDoesNotApplyToAirtable() {
+        // The google-workspace group key is scoped to Workspace providers only. Airtable must NOT
+        // accidentally inherit a Google-tier expiry just because the group key is set.
+        Map<String, Long> map = new HashMap<>();
+        map.put(UpstreamTokenConfig.GOOGLE_WORKSPACE_GROUP_KEY, GOOGLE_180D);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("airtable#u"));
+    }
+
+    @Test
     void zeroOrNegativeMapValue_ignoredInFavorOfDefault() {
         // Zero/negative is treated as "unset" — falls back to the default. This catches a
         // malformed values.yaml gracefully rather than writing a row with 0s TTL.

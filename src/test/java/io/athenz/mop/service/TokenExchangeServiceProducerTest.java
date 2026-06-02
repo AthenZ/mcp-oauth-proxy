@@ -74,6 +74,9 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceOracleEpmImpl tokenExchangeServiceOracleEpmImpl;
 
     @Mock
+    private TokenExchangeServiceAirtableImpl tokenExchangeServiceAirtableImpl;
+
+    @Mock
     private TokenExchangeServiceEvaluateImpl tokenExchangeServiceEvaluateImpl;
 
     @Mock
@@ -256,6 +259,13 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("oracle-epm");
         assertNotNull(result);
         assertSame(tokenExchangeServiceOracleEpmImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_Airtable() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("airtable");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceAirtableImpl, result);
     }
 
     @Test

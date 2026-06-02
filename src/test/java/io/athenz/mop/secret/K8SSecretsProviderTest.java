@@ -107,6 +107,27 @@ class K8SSecretsProviderTest {
     }
 
     @Test
+    void credentialsMapFromData_includesAirtableClientSecret() {
+        // Airtable confidential client_secret. Without this entry the Quarkus OIDC tenant
+        // resolves the secret to null and the Vert.x token-exchange call NPEs when computing
+        // the Basic-auth Authorization header. Mirrors the figma/oracle/wisdom tests above.
+        Map<String, byte[]> data = new HashMap<>();
+        data.put(K8SSecretsProvider.SECRET_DATA_KEY_AIRTABLE_CLIENT_SECRET,
+                "airtable-secret".getBytes(StandardCharsets.UTF_8));
+
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(data);
+
+        assertEquals("airtable-secret", m.get(K8SSecretsProvider.SECRET_DATA_KEY_AIRTABLE_CLIENT_SECRET));
+    }
+
+    @Test
+    void credentialsMapFromData_airtableClientSecretAbsent_resolvesToEmpty() {
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(new HashMap<>());
+
+        assertEquals("", m.get(K8SSecretsProvider.SECRET_DATA_KEY_AIRTABLE_CLIENT_SECRET));
+    }
+
+    @Test
     void credentialsMapFromData_includesGrafanaStageAndProd() {
         Map<String, byte[]> data = new HashMap<>();
         data.put(K8SSecretsProvider.SECRET_DATA_KEY_GRAFANA_API_STAGE,

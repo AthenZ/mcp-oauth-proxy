@@ -189,6 +189,7 @@ application:
       linear: "15552000"             # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
       wisdomai: "15552000"           # 6 months — Descope RT JWT rexp is ~10y; capped to bound L2 row TTL
       oracle-epm: "2592000"          # 30 days — matches global default; Oracle IDCS RT TTL is operator-tunable
+      airtable: "15552000"           # 6 months — caps Airtable 60d rotating RT
     ttlBufferDays: 3
     # How long REVOKED L2 rows are retained before TTL eviction. Sized so an operator can
     # still inspect a recently-revoked row when triaging a refresh-token-revoked event.
@@ -528,6 +529,33 @@ oidc:
     # configmap renders an `oracle-epm-insecure-client` named TLS config (trust-all + skip
     # hostname verification) and binds it to quarkus.oidc.oracle-epm.tls.tls-configuration-name.
     tlsInsecureClient: false
+  # Airtable confidential OIDC client used by the Airtable MCP. Quarkus tenant key is `airtable`
+  # (one word, no hyphen) to match the MCP resource URI path segment `/v1/airtable/mcp`. Airtable
+  # is a confidential PKCE client using HTTP Basic on the token endpoint (Airtable's docs use
+  # `curl -u client_id:client_secret`) — do NOT switch to client_secret_post. Userinfo is served
+  # directly by api.airtable.com as flat JSON, so no synthetic proxy or in-pod loopback TLS
+  # trust block is required (Figma pattern).
+  airtable:
+    # remote-servers.endpoints[name=airtable].endpoint — used by ConfigService when resolving the
+    # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.
+    endpoint: "https://api.airtable.com"
+    # Confidential client; client-id and client-secret are required. Same client_id is used in
+    # local, stage, and prod per Airtable OAuth setup.
+    clientId:
+    # Airtable's flat /v0/meta/whoami returns { id, email, scopes }; BaseResource.getUsername
+    # strips @domain for email claims.
+    claim: email
+    # K8s secret key holding the Airtable confidential client_secret. Same key is read by the
+    # canonical L2 path (AirtableUpstreamRefreshClient) and the legacy passthrough
+    # (TokenExchangeServiceAirtableImpl) so they always agree. Operator-tunable.
+    clientSecretKey: "airtable-client-secret"
+    # RFC 8707 resource indicator required by Airtable on /authorize so it knows the caller is
+    # asking for an MCP-scoped token. Mirrors Datadog's `resource` knob.
+    resourceIndicator: "https://mcp.airtable.com"
+    # When non-empty, used verbatim as quarkus.oidc.airtable.user-info-path. When empty,
+    # configmap.yaml defaults to Airtable's direct flat userinfo at
+    # https://api.airtable.com/v0/meta/whoami (no synthetic proxy needed).
+    userInfoPath: ""
   embrace:
     authServerUrl: "https://dash-api.embrace.io"
     authorizationUrl: "https://dash.embrace.io/oauth/authorize"

@@ -443,6 +443,53 @@ quarkus:
         # discovery is disabled, so Quarkus does not auto-fetch the IDCS issuer URL. Skip iss
         # validation on token claims; signature is verified via jwks-path above.
         issuer: any
+    airtable:
+      # Airtable is a confidential PKCE client. The token endpoint uses HTTP Basic on the
+      # `Authorization` header (Airtable's docs use `curl -u <client_id>:<client_secret>`); do
+      # NOT switch to client_secret_post — Airtable's documented examples require Basic. The
+      # K8s secret store provides the secret value via `airtable-client-secret`.
+      # Userinfo is served directly by Airtable as a flat JSON ({ id, email, scopes }) — no
+      # synthetic proxy needed; Quarkus calls `https://api.airtable.com/v0/meta/whoami`
+      # directly (Figma pattern).
+      # The MCP resource indicator (RFC 8707) is required on /authorize so Airtable knows the
+      # caller is asking for an MCP-scoped token, exactly like Datadog.
+      auth-server-url: "https://airtable.com"
+      discovery-enabled: false
+      authorization-path: "/oauth2/v1/authorize"
+      token-path: "https://airtable.com/oauth2/v1/token"
+      user-info-path: "https://api.airtable.com/v0/meta/whoami"
+      client-id: ${AIRTABLE_CLIENT_ID:}
+      credentials:
+        client-secret:
+          provider:
+            key: ${AIRTABLE_CLIENT_SECRET_KEY:airtable-client-secret}
+          method: basic
+      authentication:
+        scopes:
+          - data.recordComments:read
+          - data.recordComments:write
+          - data.records:read
+          - data.records:write
+          - schema.bases:read
+          - user.email:read
+          - workspacesAndBases:read
+          - enterprise.groups:read
+        redirect-path: /airtable/authorize/callback
+        restore-path-after-redirect: true
+        add-openid-scope: false
+        id-token-required: false
+        user-info-required: true
+        verify-access-token: false
+        pkce-required: true
+        extra-params:
+          resource: "https://mcp.airtable.com"
+      application-type: web-app
+      allow-user-info-cache: false
+      cache-user-info-in-idtoken: true
+      token-state-manager:
+        strategy: keep-all-tokens
+      token:
+        issuer: any
     embrace:
       discovery-enabled: false
       auth-server-url: ${EMBRACE_AUTH_SERVER_URL:https://dash-api.embrace.io}
@@ -604,6 +651,7 @@ server:
       linear: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_LINEAR:15552000}     # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
       wisdomai: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_WISDOMAI:15552000} # 6 months — Descope RT JWT rexp is ~10y; capped to bound L2 row TTL
       oracle-epm: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_ORACLE_EPM:2592000}  # 30 days — matches the global default; Oracle IDCS RT TTL is operator-tunable
+      airtable: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_AIRTABLE:15552000}     # 6 months — caps Airtable 60d rotating RT
     ttl-buffer-days: ${MOP_UPSTREAM_TOKEN_TTL_BUFFER_DAYS:3}
   # Dedicated index keyed by H(bearer) for /userinfo bearer resolution. Each minted bearer owns
   # its own row, so multi-window /userinfo no longer 401s on GSI clobbering. The row stores no
@@ -694,6 +742,12 @@ server:
       # OracleEpmUpstreamRefreshClient (canonical L2 path) and TokenExchangeServiceOracleEpmImpl
       # (legacy passthrough path) so they always agree on which secret to use.
       client-secret-key: ${ORACLE_CLIENT_SECRET_KEY:oracle-epm-client-secret}
+    airtable:
+      client-id: ${AIRTABLE_CLIENT_ID:}
+      # K8s secret key holding the Airtable confidential client_secret. Same key is read by
+      # AirtableUpstreamRefreshClient (canonical L2 path) and TokenExchangeServiceAirtableImpl
+      # (legacy passthrough path) so they always agree on which secret to use.
+      client-secret-key: ${AIRTABLE_CLIENT_SECRET_KEY:airtable-client-secret}
     splunk:
       admin-token-secret-key: splunk-api-stage
       mirror-user-prefix: mcp.

@@ -90,6 +90,9 @@ public class TokenExchangeServiceProducer {
     TokenExchangeServiceOracleEpmImpl tokenExchangeServiceOracleEpmImpl;
 
     @Inject
+    TokenExchangeServiceAirtableImpl tokenExchangeServiceAirtableImpl;
+
+    @Inject
     TokenExchangeServiceEvaluateImpl tokenExchangeServiceEvaluateImpl;
 
     private final Map<String, TokenExchangeService> googleWorkspaceServices = new HashMap<>();
@@ -141,6 +144,7 @@ public class TokenExchangeServiceProducer {
             case "linear" -> tokenExchangeServiceLinearImpl;
             case "wisdomai" -> tokenExchangeServiceWisdomAiImpl;
             case "oracle-epm" -> tokenExchangeServiceOracleEpmImpl;
+            case "airtable" -> tokenExchangeServiceAirtableImpl;
             case "evaluate" -> tokenExchangeServiceEvaluateImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
         };
