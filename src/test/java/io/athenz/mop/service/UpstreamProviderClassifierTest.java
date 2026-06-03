@@ -54,6 +54,9 @@ class UpstreamProviderClassifierTest {
     @Mock
     private WisdomAiUpstreamRefreshClient wisdomAiUpstreamRefreshClient;
 
+    @Mock
+    private AirtableUpstreamRefreshClient airtableUpstreamRefreshClient;
+
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
@@ -64,6 +67,7 @@ class UpstreamProviderClassifierTest {
         classifier.linearUpstreamRefreshClient = linearUpstreamRefreshClient;
         classifier.oracleEpmUpstreamRefreshClient = oracleEpmUpstreamRefreshClient;
         classifier.wisdomAiUpstreamRefreshClient = wisdomAiUpstreamRefreshClient;
+        classifier.airtableUpstreamRefreshClient = airtableUpstreamRefreshClient;
     }
 
     @ParameterizedTest
@@ -76,7 +80,8 @@ class UpstreamProviderClassifierTest {
             "datadog",
             "linear",
             "oracle-epm",
-            "wisdomai"
+            "wisdomai",
+            "airtable"
     })
     void isUpstreamPromoted_returnsTrueForPromotedProviders(String provider) {
         assertTrue(classifier.isUpstreamPromoted(provider),
@@ -89,7 +94,8 @@ class UpstreamProviderClassifierTest {
             "evaluate", "databricks-sql", "google", "google-unknown", "Google-Drive",
             "Figma", "Datadog", "datadoghq", "Linear", "linears",
             "Oracle-Epm", "oracleepm", "oracle",
-            "WisdomAi", "wisdom-ai", "wisdom_ai", "wisdom"
+            "WisdomAi", "wisdom-ai", "wisdom_ai", "wisdom",
+            "Airtable", "AIRTABLE", "air-table", "air_table", "airtables"
     })
     void isUpstreamPromoted_returnsFalseForNonPromotedOrTypoProviders(String provider) {
         assertFalse(classifier.isUpstreamPromoted(provider),
@@ -149,6 +155,12 @@ class UpstreamProviderClassifierTest {
     }
 
     @Test
+    void isGoogleWorkspace_falseForAirtable() {
+        assertFalse(classifier.isGoogleWorkspace("airtable"),
+                "Airtable is promoted but is NOT google-workspace; classifier must distinguish them");
+    }
+
+    @Test
     void isGoogleWorkspace_falseForNullEmptyAndNonGoogle() {
         assertFalse(classifier.isGoogleWorkspace(null));
         assertFalse(classifier.isGoogleWorkspace(""));
@@ -204,6 +216,13 @@ class UpstreamProviderClassifierTest {
     }
 
     @Test
+    void resolveRefreshTokenClient_returnsAirtableClientForAirtable() {
+        Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("airtable");
+        assertTrue(resolved.isPresent(), "Airtable should resolve to the Airtable client");
+        assertSame(airtableUpstreamRefreshClient, resolved.get());
+    }
+
+    @Test
     void resolveRefreshTokenClient_emptyForOkta() {
         // Okta is intentionally NOT resolved here — UpstreamRefreshService.clientFor handles
         // Okta with a service-local lambda over OktaTokenClient, which we deliberately do not
@@ -216,7 +235,8 @@ class UpstreamProviderClassifierTest {
             "slack", "github", "atlassian", "embrace", "splunk", "grafana", "evaluate",
             "databricks-sql", "unknown", "Figma", "Google-Drive", "Datadog", "datadoghq",
             "Linear", "linears", "Oracle-Epm", "oracleepm", "oracle",
-            "WisdomAi", "wisdom-ai", "wisdom_ai", "wisdom"
+            "WisdomAi", "wisdom-ai", "wisdom_ai", "wisdom",
+            "Airtable", "AIRTABLE", "air-table", "air_table", "airtables"
     })
     void resolveRefreshTokenClient_emptyForNonPromotedOrTypoProviders(String provider) {
         assertTrue(classifier.resolveRefreshTokenClient(provider).isEmpty(),

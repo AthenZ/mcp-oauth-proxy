@@ -67,6 +67,13 @@ import java.util.Set;
  *       WisdomAI is a public PKCE client today (DCR registers no client_secret); see
  *       {@link WisdomAiUpstreamRefreshClient} for the public-client wiring and the
  *       {@code TODO(wisdomai-confidential)} hook for the Descope E011002 follow-up.</li>
+ *   <li>{@code airtable} — promoted to L2 for cross-client AT amortization. Airtable access
+ *       tokens are 1 hour ({@code expires_in=3600}) and the refresh token <strong>rotates</strong>
+ *       on every refresh (RT lifetime 60 d). L2 row TTL is capped at 6 months (operator-tunable
+ *       via {@code server.upstream-token.expiry-seconds-by-provider.airtable}) to bound row
+ *       sprawl past the 60 d rotating-RT window. Airtable is a confidential PKCE client using
+ *       HTTP Basic on the token endpoint; see {@link AirtableUpstreamRefreshClient} for the
+ *       {@code client_secret_basic} wiring.</li>
  * </ul>
  *
  * <p>Other native-IdP providers like Slack/GitHub/Atlassian/Embrace stay on the legacy
@@ -114,6 +121,9 @@ public class UpstreamProviderClassifier {
     /** Provider id for WisdomAI (7d access-token lifetime, long-lived RT, L2 promoted, public PKCE). */
     public static final String WISDOMAI_PROVIDER = "wisdomai";
 
+    /** Provider id for Airtable (1h access-token lifetime, rotating RT with 60d lifetime, L2 promoted, confidential PKCE + Basic). */
+    public static final String AIRTABLE_PROVIDER = "airtable";
+
     private static final Set<String> PROMOTED_PROVIDERS;
     static {
         Set<String> all = new java.util.HashSet<>(GOOGLE_WORKSPACE_PROVIDERS);
@@ -123,6 +133,7 @@ public class UpstreamProviderClassifier {
         all.add(LINEAR_PROVIDER);
         all.add(ORACLE_EPM_PROVIDER);
         all.add(WISDOMAI_PROVIDER);
+        all.add(AIRTABLE_PROVIDER);
         PROMOTED_PROVIDERS = Set.copyOf(all);
     }
 
@@ -143,6 +154,9 @@ public class UpstreamProviderClassifier {
 
     @Inject
     WisdomAiUpstreamRefreshClient wisdomAiUpstreamRefreshClient;
+
+    @Inject
+    AirtableUpstreamRefreshClient airtableUpstreamRefreshClient;
 
     /**
      * Returns true when the provider participates in the L2 canonical upstream-RT model.
@@ -198,6 +212,9 @@ public class UpstreamProviderClassifier {
         }
         if (WISDOMAI_PROVIDER.equals(provider)) {
             return Optional.of(wisdomAiUpstreamRefreshClient);
+        }
+        if (AIRTABLE_PROVIDER.equals(provider)) {
+            return Optional.of(airtableUpstreamRefreshClient);
         }
         return Optional.empty();
     }
