@@ -95,6 +95,9 @@ public class TokenExchangeServiceProducer {
     @Inject
     TokenExchangeServiceEvaluateImpl tokenExchangeServiceEvaluateImpl;
 
+    @Inject
+    TokenExchangeServiceYahooOsImpl tokenExchangeServiceYahooOsImpl;
+
     private final Map<String, TokenExchangeService> googleWorkspaceServices = new HashMap<>();
     private final Map<String, TokenExchangeService> databricksServices = new HashMap<>();
 
@@ -146,6 +149,7 @@ public class TokenExchangeServiceProducer {
             case "oracle-epm" -> tokenExchangeServiceOracleEpmImpl;
             case "airtable" -> tokenExchangeServiceAirtableImpl;
             case "evaluate" -> tokenExchangeServiceEvaluateImpl;
+            case "yahoo-os" -> tokenExchangeServiceYahooOsImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
         };
     }
