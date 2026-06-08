@@ -39,6 +39,9 @@ public class TokenExchangeServiceProducer {
     Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
 
     @Inject
+    Instance<TokenExchangeServiceLookerImpl> lookerProvider;
+
+    @Inject
     Instance<TokenExchangeServiceDatabricksImpl> databricksProvider;
 
     @Inject
@@ -100,6 +103,7 @@ public class TokenExchangeServiceProducer {
 
     private final Map<String, TokenExchangeService> googleWorkspaceServices = new HashMap<>();
     private final Map<String, TokenExchangeService> databricksServices = new HashMap<>();
+    private final Map<String, TokenExchangeService> lookerServices = new HashMap<>();
 
     @PostConstruct
     void init() {
@@ -107,6 +111,12 @@ public class TokenExchangeServiceProducer {
             TokenExchangeServiceGoogleWorkspaceImpl svc = googleWorkspaceProvider.get();
             svc.setProviderLabel(provider);
             googleWorkspaceServices.put(provider, svc);
+        }
+
+        for (String provider : LookerInstances.PROVIDERS) {
+            TokenExchangeServiceLookerImpl svc = lookerProvider.get();
+            svc.setProviderLabel(provider);
+            lookerServices.put(provider, svc);
         }
 
         TokenExchangeServiceDatabricksImpl sqlSvc = databricksProvider.get();
@@ -129,6 +139,11 @@ public class TokenExchangeServiceProducer {
         TokenExchangeService databricksSvc = databricksServices.get(idpType);
         if (databricksSvc != null) {
             return databricksSvc;
+        }
+
+        TokenExchangeService lookerSvc = lookerServices.get(idpType);
+        if (lookerSvc != null) {
+            return lookerSvc;
         }
 
         return switch (idpType) {

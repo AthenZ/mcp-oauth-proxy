@@ -53,6 +53,13 @@ public final class OauthProviderLabel {
     public static final String GRAFANA = "grafana";
     public static final String EVALUATE = "evaluate";
     public static final String YAHOO_OS = "yahoo-os";
+    public static final String LOOKER_MAW = "looker-maw";
+    public static final String LOOKER_OURYAHOO = "looker-ouryahoo";
+    public static final String LOOKER_FINANCE = "looker-finance";
+    public static final String LOOKER_HR = "looker-hr";
+    public static final String LOOKER_SEARCH = "looker-search";
+    public static final String LOOKER_ENTERPRISE = "looker-enterprise";
+    public static final String LOOKER_PRISM_MAIL = "looker-prism-mail";
 
     private OauthProviderLabel() {
     }
@@ -67,7 +74,9 @@ public final class OauthProviderLabel {
                     GOOGLE_SLIDES, GOOGLE_GMAIL, GOOGLE_CALENDAR, GOOGLE_TASKS, GOOGLE_CHAT, GOOGLE_FORMS,
                     GOOGLE_KEEP, GOOGLE_MEET, GOOGLE_CLOUD_PLATFORM, ATLASSIAN, ATHENZ, GOOGLE_MONITORING,
                     GOOGLE_LOGGING, GOOGLE_BIGQUERY, DATABRICKS_SQL, DATABRICKS_VECTOR_SEARCH, SLACK, FIGMA,
-                    DATADOG, LINEAR, ORACLE_EPM, WISDOMAI, AIRTABLE, GRAFANA, EVALUATE, YAHOO_OS -> s;
+                    DATADOG, LINEAR, ORACLE_EPM, WISDOMAI, AIRTABLE, GRAFANA, EVALUATE, YAHOO_OS,
+                    LOOKER_MAW, LOOKER_OURYAHOO, LOOKER_FINANCE, LOOKER_HR, LOOKER_SEARCH,
+                    LOOKER_ENTERPRISE, LOOKER_PRISM_MAIL -> s;
             case "gcp-monitoring" -> GOOGLE_MONITORING;
             case "gcp-logging" -> GOOGLE_LOGGING;
             case "gcp-bigquery" -> GOOGLE_BIGQUERY;

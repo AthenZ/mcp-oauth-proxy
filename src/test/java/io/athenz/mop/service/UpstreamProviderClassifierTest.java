@@ -57,6 +57,9 @@ class UpstreamProviderClassifierTest {
     @Mock
     private AirtableUpstreamRefreshClient airtableUpstreamRefreshClient;
 
+    @Mock
+    private LookerUpstreamRefreshClient lookerUpstreamRefreshClient;
+
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
@@ -68,6 +71,7 @@ class UpstreamProviderClassifierTest {
         classifier.oracleEpmUpstreamRefreshClient = oracleEpmUpstreamRefreshClient;
         classifier.wisdomAiUpstreamRefreshClient = wisdomAiUpstreamRefreshClient;
         classifier.airtableUpstreamRefreshClient = airtableUpstreamRefreshClient;
+        classifier.lookerUpstreamRefreshClient = lookerUpstreamRefreshClient;
     }
 
     @ParameterizedTest
@@ -81,7 +85,9 @@ class UpstreamProviderClassifierTest {
             "linear",
             "oracle-epm",
             "wisdomai",
-            "airtable"
+            "airtable",
+            "looker-maw", "looker-ouryahoo", "looker-finance", "looker-hr",
+            "looker-search", "looker-enterprise", "looker-prism-mail"
     })
     void isUpstreamPromoted_returnsTrueForPromotedProviders(String provider) {
         assertTrue(classifier.isUpstreamPromoted(provider),
@@ -95,7 +101,8 @@ class UpstreamProviderClassifierTest {
             "Figma", "Datadog", "datadoghq", "Linear", "linears",
             "Oracle-Epm", "oracleepm", "oracle",
             "WisdomAi", "wisdom-ai", "wisdom_ai", "wisdom",
-            "Airtable", "AIRTABLE", "air-table", "air_table", "airtables"
+            "Airtable", "AIRTABLE", "air-table", "air_table", "airtables",
+            "looker", "Looker-Ouryahoo", "looker_ouryahoo", "looker-unknown"
     })
     void isUpstreamPromoted_returnsFalseForNonPromotedOrTypoProviders(String provider) {
         assertFalse(classifier.isUpstreamPromoted(provider),
@@ -161,6 +168,12 @@ class UpstreamProviderClassifierTest {
     }
 
     @Test
+    void isGoogleWorkspace_falseForLooker() {
+        assertFalse(classifier.isGoogleWorkspace("looker-ouryahoo"),
+                "Looker is promoted but is NOT google-workspace; classifier must distinguish them");
+    }
+
+    @Test
     void isGoogleWorkspace_falseForNullEmptyAndNonGoogle() {
         assertFalse(classifier.isGoogleWorkspace(null));
         assertFalse(classifier.isGoogleWorkspace(""));
@@ -222,6 +235,17 @@ class UpstreamProviderClassifierTest {
         assertSame(airtableUpstreamRefreshClient, resolved.get());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "looker-maw", "looker-ouryahoo", "looker-finance", "looker-hr",
+            "looker-search", "looker-enterprise", "looker-prism-mail"
+    })
+    void resolveRefreshTokenClient_returnsLookerClientForLookerInstances(String provider) {
+        Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient(provider);
+        assertTrue(resolved.isPresent(), "Looker instance should resolve to the Looker client: " + provider);
+        assertSame(lookerUpstreamRefreshClient, resolved.get());
+    }
+
     @Test
     void resolveRefreshTokenClient_emptyForOkta() {
         // Okta is intentionally NOT resolved here — UpstreamRefreshService.clientFor handles
@@ -236,7 +260,8 @@ class UpstreamProviderClassifierTest {
             "databricks-sql", "unknown", "Figma", "Google-Drive", "Datadog", "datadoghq",
             "Linear", "linears", "Oracle-Epm", "oracleepm", "oracle",
             "WisdomAi", "wisdom-ai", "wisdom_ai", "wisdom",
-            "Airtable", "AIRTABLE", "air-table", "air_table", "airtables"
+            "Airtable", "AIRTABLE", "air-table", "air_table", "airtables",
+            "looker", "Looker-Ouryahoo", "looker_ouryahoo", "looker-unknown"
     })
     void resolveRefreshTokenClient_emptyForNonPromotedOrTypoProviders(String provider) {
         assertTrue(classifier.resolveRefreshTokenClient(provider).isEmpty(),

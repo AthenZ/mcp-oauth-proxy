@@ -124,6 +124,13 @@ public class UpstreamProviderClassifier {
     /** Provider id for Airtable (1h access-token lifetime, rotating RT with 60d lifetime, L2 promoted, confidential PKCE + Basic). */
     public static final String AIRTABLE_PROVIDER = "airtable";
 
+    /**
+     * Looker MCP instance provider ids (1h access-token lifetime, <strong>non-rotating</strong> RT
+     * ~1 month, L2 promoted, public PKCE). Each Looker deployment is its own provider id so its L2
+     * canonical-RT row is keyed per instance; they share one {@link LookerUpstreamRefreshClient}.
+     */
+    public static final Set<String> LOOKER_PROVIDERS = LookerInstances.PROVIDERS;
+
     private static final Set<String> PROMOTED_PROVIDERS;
     static {
         Set<String> all = new java.util.HashSet<>(GOOGLE_WORKSPACE_PROVIDERS);
@@ -134,6 +141,7 @@ public class UpstreamProviderClassifier {
         all.add(ORACLE_EPM_PROVIDER);
         all.add(WISDOMAI_PROVIDER);
         all.add(AIRTABLE_PROVIDER);
+        all.addAll(LOOKER_PROVIDERS);
         PROMOTED_PROVIDERS = Set.copyOf(all);
     }
 
@@ -157,6 +165,9 @@ public class UpstreamProviderClassifier {
 
     @Inject
     AirtableUpstreamRefreshClient airtableUpstreamRefreshClient;
+
+    @Inject
+    LookerUpstreamRefreshClient lookerUpstreamRefreshClient;
 
     /**
      * Returns true when the provider participates in the L2 canonical upstream-RT model.
@@ -215,6 +226,9 @@ public class UpstreamProviderClassifier {
         }
         if (AIRTABLE_PROVIDER.equals(provider)) {
             return Optional.of(airtableUpstreamRefreshClient);
+        }
+        if (LOOKER_PROVIDERS.contains(provider)) {
+            return Optional.of(lookerUpstreamRefreshClient);
         }
         return Optional.empty();
     }
