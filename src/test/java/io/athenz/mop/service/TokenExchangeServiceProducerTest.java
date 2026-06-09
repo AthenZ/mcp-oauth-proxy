@@ -80,7 +80,13 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceEvaluateImpl tokenExchangeServiceEvaluateImpl;
 
     @Mock
+    private TokenExchangeServiceYahooOsImpl tokenExchangeServiceYahooOsImpl;
+
+    @Mock
     private Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
+
+    @Mock
+    private Instance<TokenExchangeServiceLookerImpl> lookerProvider;
 
     @Mock
     private Instance<TokenExchangeServiceDatabricksImpl> databricksProvider;
@@ -102,6 +108,7 @@ class TokenExchangeServiceProducerTest {
             return impl;
         });
         when(databricksProvider.get()).thenAnswer(invocation -> new TokenExchangeServiceDatabricksImpl());
+        when(lookerProvider.get()).thenAnswer(invocation -> new TokenExchangeServiceLookerImpl());
         tokenExchangeServiceProducer.init();
     }
 
@@ -275,6 +282,13 @@ class TokenExchangeServiceProducerTest {
         assertSame(tokenExchangeServiceEvaluateImpl, result);
     }
 
+    @Test
+    void testGetTokenExchangeServiceImplementation_YahooOs() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("yahoo-os");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceYahooOsImpl, result);
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
         "google-drive", "google-docs", "google-sheets",
@@ -307,6 +321,32 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService drive = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-drive");
         TokenExchangeService docs = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-docs");
         assertNotSame(drive, docs, "Different providers should return different instances");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "looker-maw", "looker-ouryahoo", "looker-finance", "looker-hr",
+        "looker-search", "looker-enterprise", "looker-prism-mail"
+    })
+    void testGetTokenExchangeServiceImplementation_LookerProviders(String provider) {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
+        assertNotNull(result);
+        assertInstanceOf(TokenExchangeServiceLookerImpl.class, result);
+        assertEquals(provider, ((TokenExchangeServiceLookerImpl) result).getProviderLabel());
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_LookerProviders_AllDistinct() {
+        TokenExchangeService ouryahoo = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("looker-ouryahoo");
+        TokenExchangeService enterprise = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("looker-enterprise");
+        assertNotSame(ouryahoo, enterprise, "Different Looker instances should return different instances");
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_LookerProvider_cachedInstance() {
+        TokenExchangeService first = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("looker-ouryahoo");
+        TokenExchangeService second = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("looker-ouryahoo");
+        assertSame(first, second);
     }
 
     @Test

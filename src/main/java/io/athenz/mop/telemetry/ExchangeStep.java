@@ -19,6 +19,7 @@ public enum ExchangeStep {
     GCP_ATHENZ_ID_TOKEN("gcp_athenz_id_token"),
     GCP_GOOGLE_STS("gcp_google_sts"),
     EVALUATE_ATHENZ_ID_TOKEN("evaluate_athenz_id_token"),
+    YAHOO_OS_ID_TOKEN("yahoo_os_id_token"),
     UPSTREAM_REFRESH("upstream_refresh"),
     PASS_THROUGH("pass_through");
 

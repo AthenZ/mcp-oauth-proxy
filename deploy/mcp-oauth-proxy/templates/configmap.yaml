@@ -76,6 +76,13 @@ data:
             airtable:
               paths: "/airtable/*"
               policy: authenticated
+            {{- range $name, $inst := (.Values.oidc.looker | default dict).instances }}
+            {{- if $inst.clientId }}
+            {{ $name }}:
+              paths: "/{{ $name }}/*"
+              policy: authenticated
+            {{- end }}
+            {{- end }}
             embrace:
               paths: "/embrace/*"
               policy: authenticated
@@ -506,6 +513,44 @@ data:
             strategy: keep-all-tokens
           token:
             issuer: any
+        {{- /* Looker MCP instances. Public PKCE clients (no client_secret). Each instance is its
+               own tenant/provider id, differing only by host + client_id. Flat userinfo at
+               /api/4.0/user; scopes "cors_api api"; RFC 8707 resource indicator = <mcpUrl>.
+               Skip any instance whose OAuth app isn't registered yet (blank clientId): a static
+               (discovery-disabled) Quarkus OIDC tenant with an empty client-id fails startup with
+               "'quarkus.oidc.client-id' property must be configured". */ -}}
+        {{- range $name, $inst := (.Values.oidc.looker | default dict).instances }}
+        {{- if $inst.clientId }}
+        {{ $name }}:
+          auth-server-url: {{ $inst.host | quote }}
+          discovery-enabled: false
+          authorization-path: "/auth"
+          token-path: {{ printf "%s/api/token" $inst.host | quote }}
+          user-info-path: {{ printf "%s/api/4.0/user" $inst.host | quote }}
+          client-id: {{ $inst.clientId | quote }}
+          authentication:
+            scopes:
+              {{- range ($inst.scopes | default (list "cors_api" "api")) }}
+              - {{ . | quote }}
+              {{- end }}
+            redirect-path: /{{ $name }}/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: false
+            id-token-required: false
+            user-info-required: true
+            verify-access-token: false
+            pkce-required: true
+            extra-params:
+              resource: {{ $inst.resource | quote }}
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            issuer: any
+        {{- end }}
+        {{- end }}
         embrace:
 {{- if (.Values.oidc.embrace.tlsInsecureClient | default false) }}
           tls:
@@ -729,6 +774,27 @@ data:
           # AirtableUpstreamRefreshClient (canonical L2 path) and TokenExchangeServiceAirtableImpl
           # (legacy passthrough). Operator-tunable via .Values.oidc.airtable.clientSecretKey.
           client-secret-key: {{ .Values.oidc.airtable.clientSecretKey | default "airtable-client-secret" | quote }}
+        {{- $lookerInstances := (.Values.oidc.looker | default dict).instances | default dict }}
+        {{- /* Only emit client-ids for instances with a non-blank clientId. SmallRye Config
+               rejects empty-string ("") map values (SRCFG00040), and an instance whose OAuth app
+               isn't registered yet has clientId: "". Skipping it keeps startup green; the L2
+               refresh path looks up each instance's client_id by its own provider id on demand. */ -}}
+        {{- $lookerClientIds := dict }}
+        {{- range $name, $inst := $lookerInstances }}
+        {{- if $inst.clientId }}
+        {{- $_ := set $lookerClientIds $name $inst.clientId }}
+        {{- end }}
+        {{- end }}
+        {{- if $lookerClientIds }}
+        looker:
+          # Looker public PKCE clients (token_endpoint_auth_method=none) — no client_secret. The
+          # L2 refresh path (LookerUpstreamRefreshClient) only needs the per-instance public
+          # client_id; the token endpoint host comes from the remote-servers endpoint below.
+          client-ids:
+            {{- range $name, $clientId := $lookerClientIds }}
+            {{ $name }}: {{ $clientId | quote }}
+            {{- end }}
+        {{- end }}
         athenz-token-exchange:
           audience: {{ .Values.application.tokenExchange.athenzTokenExchange.audience | default "sys.auth.gcp" | quote }}
         google-workforce:
@@ -842,6 +908,13 @@ data:
             - name: airtable
               endpoint: {{ .Values.oidc.airtable.endpoint | quote }}
               username-claim: {{ .Values.oidc.airtable.claim | quote }}
+            {{- range $name, $inst := (.Values.oidc.looker | default dict).instances }}
+            {{- if $inst.clientId }}
+            - name: {{ $name }}
+              endpoint: {{ $inst.host | quote }}
+              username-claim: {{ $inst.claim | default "email" | quote }}
+            {{- end }}
+            {{- end }}
       resources:
         resource-mapping:
         {{- with .Values.application.resourceMapping -}}
