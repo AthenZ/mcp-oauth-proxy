@@ -81,6 +81,9 @@ public class TokenExchangeServiceProducer {
     TokenExchangeServiceFigmaImpl tokenExchangeServiceFigmaImpl;
 
     @Inject
+    TokenExchangeServiceRootlyImpl tokenExchangeServiceRootlyImpl;
+
+    @Inject
     TokenExchangeServiceDatadogImpl tokenExchangeServiceDatadogImpl;
 
     @Inject
@@ -158,6 +161,7 @@ public class TokenExchangeServiceProducer {
             case "grafana" -> tokenExchangeServiceGrafanaImpl;
             case "slack" -> tokenExchangeServiceSlackImpl;
             case "figma" -> tokenExchangeServiceFigmaImpl;
+            case "rootly" -> tokenExchangeServiceRootlyImpl;
             case "datadog" -> tokenExchangeServiceDatadogImpl;
             case "linear" -> tokenExchangeServiceLinearImpl;
             case "wisdomai" -> tokenExchangeServiceWisdomAiImpl;

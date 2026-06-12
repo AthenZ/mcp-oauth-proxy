@@ -62,6 +62,9 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceFigmaImpl tokenExchangeServiceFigmaImpl;
 
     @Mock
+    private TokenExchangeServiceRootlyImpl tokenExchangeServiceRootlyImpl;
+
+    @Mock
     private TokenExchangeServiceDatadogImpl tokenExchangeServiceDatadogImpl;
 
     @Mock
@@ -238,6 +241,13 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("figma");
         assertNotNull(result);
         assertSame(tokenExchangeServiceFigmaImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_Rootly() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("rootly");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceRootlyImpl, result);
     }
 
     @Test
