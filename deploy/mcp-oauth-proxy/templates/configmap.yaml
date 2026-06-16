@@ -17,7 +17,7 @@ data:
           exclude-pattern: "/q/.*"
         tls-configuration-name: enterprise
         ssl:
-          client-auth: request
+          client-auth: none
         auth:
           permission:
             health:

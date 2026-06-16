@@ -37,6 +37,7 @@ public final class AudienceConstants {
     public static final String PROVIDER_GRAFANA = "grafana";
     public static final String PROVIDER_EVALUATE = "evaluate";
     public static final String PROVIDER_YAHOO_OS = "yahoo-os";
+    public static final String PROVIDER_YAHOO_SYNAPSE = "yahoo-synapse";
 
     /** Databricks SQL MCP resource mapping {@code token.audience} / {@code token.as} routing id. */
     public static final String PROVIDER_DATABRICKS_SQL = "databricks-sql";
@@ -77,6 +78,7 @@ public final class AudienceConstants {
                 || PROVIDER_GRAFANA.equals(audience)
                 || PROVIDER_EVALUATE.equals(audience)
                 || PROVIDER_YAHOO_OS.equals(audience)
+                || PROVIDER_YAHOO_SYNAPSE.equals(audience)
                 || PROVIDER_DATABRICKS_SQL.equals(audience)
                 || PROVIDER_DATABRICKS_VECTOR_SEARCH.equals(audience);
     }
