@@ -89,6 +89,9 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceYahooSynapseImpl tokenExchangeServiceYahooSynapseImpl;
 
     @Mock
+    private TokenExchangeServiceUdsImpl tokenExchangeServiceUdsImpl;
+
+    @Mock
     private Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
 
     @Mock
@@ -307,6 +310,13 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("yahoo-synapse");
         assertNotNull(result);
         assertSame(tokenExchangeServiceYahooSynapseImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_Uds() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("uds");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceUdsImpl, result);
     }
 
     @ParameterizedTest

@@ -107,6 +107,9 @@ public class TokenExchangeServiceProducer {
     @Inject
     TokenExchangeServiceYahooSynapseImpl tokenExchangeServiceYahooSynapseImpl;
 
+    @Inject
+    TokenExchangeServiceUdsImpl tokenExchangeServiceUdsImpl;
+
     private final Map<String, TokenExchangeService> googleWorkspaceServices = new HashMap<>();
     private final Map<String, TokenExchangeService> databricksServices = new HashMap<>();
     private final Map<String, TokenExchangeService> lookerServices = new HashMap<>();
@@ -173,6 +176,7 @@ public class TokenExchangeServiceProducer {
             case "evaluate" -> tokenExchangeServiceEvaluateImpl;
             case "yahoo-os" -> tokenExchangeServiceYahooOsImpl;
             case "yahoo-synapse" -> tokenExchangeServiceYahooSynapseImpl;
+            case "uds" -> tokenExchangeServiceUdsImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
         };
     }
