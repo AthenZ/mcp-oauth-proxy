@@ -8,7 +8,7 @@ quarkus:
       exclude-pattern: "/q/.*"
     tls-configuration-name:
     ssl:
-      client-auth: request
+      client-auth: none
     auth:
       permission:
         health:

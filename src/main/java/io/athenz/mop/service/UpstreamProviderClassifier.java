@@ -39,6 +39,12 @@ import java.util.Set;
  *       {@code mcp-oauth-proxy-tokens} honors the real 90-day Figma access-token lifetime
  *       instead of the global ~8h {@code server.token-store.expiry} cap. Without promotion the
  *       row would evict 8h after consent regardless of the real AT lifetime.</li>
+ *   <li>{@code rootly} — promoted to L2 for cross-client AT amortization. Rootly is a plain
+ *       OAuth consent-passthrough provider (confidential {@code client_secret_post} + PKCE) with
+ *       a real userinfo endpoint. The refresh token rotates on every refresh; the L2 row TTL is
+ *       capped at 6 months (operator-tunable via
+ *       {@code server.upstream-token.expiry-seconds-by-provider.rootly}) to bound row sprawl.
+ *       See {@link RootlyUpstreamRefreshClient} for the {@code client_secret_post} wiring.</li>
  *   <li>{@code datadog} — promoted to L2 so the canonical upstream RT is stored once and
  *       amortized across MCP-client windows. Datadog access tokens are 1h and the refresh
  *       token does not rotate; the L2 row TTL is capped at 6 months (operator-tunable via
@@ -109,6 +115,9 @@ public class UpstreamProviderClassifier {
     /** Provider id for Figma (90-day access-token lifetime, L2 promoted). */
     public static final String FIGMA_PROVIDER = "figma";
 
+    /** Provider id for Rootly (plain OAuth consent-passthrough, confidential client_secret_post + PKCE, L2 promoted). */
+    public static final String ROOTLY_PROVIDER = "rootly";
+
     /** Provider id for Datadog (1h access-token lifetime, non-rotating RT, L2 promoted). */
     public static final String DATADOG_PROVIDER = "datadog";
 
@@ -136,6 +145,7 @@ public class UpstreamProviderClassifier {
         Set<String> all = new java.util.HashSet<>(GOOGLE_WORKSPACE_PROVIDERS);
         all.add(AudienceConstants.PROVIDER_OKTA);
         all.add(FIGMA_PROVIDER);
+        all.add(ROOTLY_PROVIDER);
         all.add(DATADOG_PROVIDER);
         all.add(LINEAR_PROVIDER);
         all.add(ORACLE_EPM_PROVIDER);
@@ -150,6 +160,9 @@ public class UpstreamProviderClassifier {
 
     @Inject
     FigmaUpstreamRefreshClient figmaUpstreamRefreshClient;
+
+    @Inject
+    RootlyUpstreamRefreshClient rootlyUpstreamRefreshClient;
 
     @Inject
     DatadogUpstreamRefreshClient datadogUpstreamRefreshClient;
@@ -211,6 +224,9 @@ public class UpstreamProviderClassifier {
         }
         if (FIGMA_PROVIDER.equals(provider)) {
             return Optional.of(figmaUpstreamRefreshClient);
+        }
+        if (ROOTLY_PROVIDER.equals(provider)) {
+            return Optional.of(rootlyUpstreamRefreshClient);
         }
         if (DATADOG_PROVIDER.equals(provider)) {
             return Optional.of(datadogUpstreamRefreshClient);

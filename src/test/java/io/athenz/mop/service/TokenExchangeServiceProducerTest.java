@@ -62,6 +62,9 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceFigmaImpl tokenExchangeServiceFigmaImpl;
 
     @Mock
+    private TokenExchangeServiceRootlyImpl tokenExchangeServiceRootlyImpl;
+
+    @Mock
     private TokenExchangeServiceDatadogImpl tokenExchangeServiceDatadogImpl;
 
     @Mock
@@ -81,6 +84,12 @@ class TokenExchangeServiceProducerTest {
 
     @Mock
     private TokenExchangeServiceYahooOsImpl tokenExchangeServiceYahooOsImpl;
+
+    @Mock
+    private TokenExchangeServiceYahooSynapseImpl tokenExchangeServiceYahooSynapseImpl;
+
+    @Mock
+    private TokenExchangeServiceUdsImpl tokenExchangeServiceUdsImpl;
 
     @Mock
     private Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
@@ -241,6 +250,13 @@ class TokenExchangeServiceProducerTest {
     }
 
     @Test
+    void testGetTokenExchangeServiceImplementation_Rootly() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("rootly");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceRootlyImpl, result);
+    }
+
+    @Test
     void testGetTokenExchangeServiceImplementation_Datadog() {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("datadog");
         assertNotNull(result);
@@ -287,6 +303,20 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("yahoo-os");
         assertNotNull(result);
         assertSame(tokenExchangeServiceYahooOsImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_YahooSynapse() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("yahoo-synapse");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceYahooSynapseImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_Uds() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("uds");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceUdsImpl, result);
     }
 
     @ParameterizedTest

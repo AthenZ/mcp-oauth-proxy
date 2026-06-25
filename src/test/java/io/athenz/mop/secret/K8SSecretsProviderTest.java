@@ -65,6 +65,27 @@ class K8SSecretsProviderTest {
     }
 
     @Test
+    void credentialsMapFromData_includesRootlyClientSecret() {
+        // Rootly confidential client_secret_post. Without this entry the Quarkus OIDC tenant
+        // resolves the secret to null and the Vert.x token-exchange call NPEs when adding the
+        // client_secret form-body field. Mirrors the figma/oracle/wisdom/airtable tests above.
+        Map<String, byte[]> data = new HashMap<>();
+        data.put(K8SSecretsProvider.SECRET_DATA_KEY_ROOTLY_CLIENT_SECRET,
+                "rootly-secret".getBytes(StandardCharsets.UTF_8));
+
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(data);
+
+        assertEquals("rootly-secret", m.get(K8SSecretsProvider.SECRET_DATA_KEY_ROOTLY_CLIENT_SECRET));
+    }
+
+    @Test
+    void credentialsMapFromData_rootlyClientSecretAbsent_resolvesToEmpty() {
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(new HashMap<>());
+
+        assertEquals("", m.get(K8SSecretsProvider.SECRET_DATA_KEY_ROOTLY_CLIENT_SECRET));
+    }
+
+    @Test
     void credentialsMapFromData_includesOracleEpmClientSecret() {
         // Oracle IDCS confidential client_secret. Without this entry the Quarkus OIDC tenant
         // resolves the secret to null and the Vert.x token-exchange call NPEs when adding the

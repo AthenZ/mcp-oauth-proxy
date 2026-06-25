@@ -45,6 +45,7 @@ public final class OauthProviderLabel {
     public static final String DATABRICKS_VECTOR_SEARCH = "databricks-vector-search";
     public static final String SLACK = "slack";
     public static final String FIGMA = "figma";
+    public static final String ROOTLY = "rootly";
     public static final String DATADOG = "datadog";
     public static final String LINEAR = "linear";
     public static final String ORACLE_EPM = "oracle-epm";
@@ -53,6 +54,8 @@ public final class OauthProviderLabel {
     public static final String GRAFANA = "grafana";
     public static final String EVALUATE = "evaluate";
     public static final String YAHOO_OS = "yahoo-os";
+    public static final String YAHOO_SYNAPSE = "yahoo-synapse";
+    public static final String UDS = "uds";
     public static final String LOOKER_MAW = "looker-maw";
     public static final String LOOKER_OURYAHOO = "looker-ouryahoo";
     public static final String LOOKER_FINANCE = "looker-finance";
@@ -74,8 +77,8 @@ public final class OauthProviderLabel {
                     GOOGLE_SLIDES, GOOGLE_GMAIL, GOOGLE_CALENDAR, GOOGLE_TASKS, GOOGLE_CHAT, GOOGLE_FORMS,
                     GOOGLE_KEEP, GOOGLE_MEET, GOOGLE_CLOUD_PLATFORM, ATLASSIAN, ATHENZ, GOOGLE_MONITORING,
                     GOOGLE_LOGGING, GOOGLE_BIGQUERY, DATABRICKS_SQL, DATABRICKS_VECTOR_SEARCH, SLACK, FIGMA,
-                    DATADOG, LINEAR, ORACLE_EPM, WISDOMAI, AIRTABLE, GRAFANA, EVALUATE, YAHOO_OS,
-                    LOOKER_MAW, LOOKER_OURYAHOO, LOOKER_FINANCE, LOOKER_HR, LOOKER_SEARCH,
+                    ROOTLY, DATADOG, LINEAR, ORACLE_EPM, WISDOMAI, AIRTABLE, GRAFANA, EVALUATE, YAHOO_OS,
+                    YAHOO_SYNAPSE, UDS, LOOKER_MAW, LOOKER_OURYAHOO, LOOKER_FINANCE, LOOKER_HR, LOOKER_SEARCH,
                     LOOKER_ENTERPRISE, LOOKER_PRISM_MAIL -> s;
             case "gcp-monitoring" -> GOOGLE_MONITORING;
             case "gcp-logging" -> GOOGLE_LOGGING;

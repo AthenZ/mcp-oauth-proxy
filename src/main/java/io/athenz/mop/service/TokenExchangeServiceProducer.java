@@ -81,6 +81,9 @@ public class TokenExchangeServiceProducer {
     TokenExchangeServiceFigmaImpl tokenExchangeServiceFigmaImpl;
 
     @Inject
+    TokenExchangeServiceRootlyImpl tokenExchangeServiceRootlyImpl;
+
+    @Inject
     TokenExchangeServiceDatadogImpl tokenExchangeServiceDatadogImpl;
 
     @Inject
@@ -100,6 +103,12 @@ public class TokenExchangeServiceProducer {
 
     @Inject
     TokenExchangeServiceYahooOsImpl tokenExchangeServiceYahooOsImpl;
+
+    @Inject
+    TokenExchangeServiceYahooSynapseImpl tokenExchangeServiceYahooSynapseImpl;
+
+    @Inject
+    TokenExchangeServiceUdsImpl tokenExchangeServiceUdsImpl;
 
     private final Map<String, TokenExchangeService> googleWorkspaceServices = new HashMap<>();
     private final Map<String, TokenExchangeService> databricksServices = new HashMap<>();
@@ -158,6 +167,7 @@ public class TokenExchangeServiceProducer {
             case "grafana" -> tokenExchangeServiceGrafanaImpl;
             case "slack" -> tokenExchangeServiceSlackImpl;
             case "figma" -> tokenExchangeServiceFigmaImpl;
+            case "rootly" -> tokenExchangeServiceRootlyImpl;
             case "datadog" -> tokenExchangeServiceDatadogImpl;
             case "linear" -> tokenExchangeServiceLinearImpl;
             case "wisdomai" -> tokenExchangeServiceWisdomAiImpl;
@@ -165,6 +175,8 @@ public class TokenExchangeServiceProducer {
             case "airtable" -> tokenExchangeServiceAirtableImpl;
             case "evaluate" -> tokenExchangeServiceEvaluateImpl;
             case "yahoo-os" -> tokenExchangeServiceYahooOsImpl;
+            case "yahoo-synapse" -> tokenExchangeServiceYahooSynapseImpl;
+            case "uds" -> tokenExchangeServiceUdsImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);
         };
     }

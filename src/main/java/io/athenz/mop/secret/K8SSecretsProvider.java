@@ -50,6 +50,7 @@ public class K8SSecretsProvider implements CredentialsProvider {
     public static final String SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET = "embrace-client-secret";
     public static final String SECRET_DATA_KEY_SLACK_CLIENT_SECRET = "slack-client-secret";
     public static final String SECRET_DATA_KEY_FIGMA_CLIENT_SECRET = "figma-client-secret";
+    public static final String SECRET_DATA_KEY_ROOTLY_CLIENT_SECRET = "rootly-client-secret";
     public static final String SECRET_DATA_KEY_ORACLE_EPM_CLIENT_SECRET = "oracle-epm-client-secret";
     public static final String SECRET_DATA_KEY_WISDOMAI_CLIENT_SECRET = "wisdomai-client-secret";
     public static final String SECRET_DATA_KEY_AIRTABLE_CLIENT_SECRET = "airtable-client-secret";
@@ -103,6 +104,7 @@ public class K8SSecretsProvider implements CredentialsProvider {
         String embraceClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET);
         String slackClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_SLACK_CLIENT_SECRET);
         String figmaClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_FIGMA_CLIENT_SECRET);
+        String rootlyClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_ROOTLY_CLIENT_SECRET);
         String oracleEpmClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_ORACLE_EPM_CLIENT_SECRET);
         String wisdomAiClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_WISDOMAI_CLIENT_SECRET);
         String airtableClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_AIRTABLE_CLIENT_SECRET);
@@ -120,6 +122,7 @@ public class K8SSecretsProvider implements CredentialsProvider {
         map.put(SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET, embraceClientSecret);
         map.put(SECRET_DATA_KEY_SLACK_CLIENT_SECRET, slackClientSecret);
         map.put(SECRET_DATA_KEY_FIGMA_CLIENT_SECRET, figmaClientSecret);
+        map.put(SECRET_DATA_KEY_ROOTLY_CLIENT_SECRET, rootlyClientSecret);
         map.put(SECRET_DATA_KEY_ORACLE_EPM_CLIENT_SECRET, oracleEpmClientSecret);
         map.put(SECRET_DATA_KEY_WISDOMAI_CLIENT_SECRET, wisdomAiClientSecret);
         map.put(SECRET_DATA_KEY_AIRTABLE_CLIENT_SECRET, airtableClientSecret);

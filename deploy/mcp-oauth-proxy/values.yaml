@@ -185,6 +185,7 @@ application:
       okta: "86400"                  # 24h — paranoids tier; Okta RT rotates every refresh
       google-workspace: "15552000"   # 6 months — applies to all Google Workspace MCPs
       figma: "7776000"               # 90 days — matches Figma's documented access-token lifetime
+      rootly: "15552000"             # 6 months — Rootly RT rotates; capped to bound the L2 row TTL
       datadog: "15552000"            # 6 months — Datadog RT does not expire upstream; capped to bound L2 row TTL
       linear: "15552000"             # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
       wisdomai: "15552000"           # 6 months — Descope RT JWT rexp is ~10y; capped to bound L2 row TTL
@@ -374,6 +375,43 @@ oidc:
     scopes:
       - mcp:connect
       - current_user:read
+  rootly:
+    # Rootly incident-management MCP. Plain OAuth consent-passthrough provider: confidential
+    # client (client_secret_post) + PKCE, real userinfo endpoint. Leave clientId blank in the
+    # open-source chart default; the env-specific values files supply the real registered id.
+    endpoint: "https://rootly.com"
+    authServerUrl: "https://rootly.com"
+    tokenPath: "https://rootly.com/oauth/token"
+    # Rootly signs id_tokens with RS256; discovery is disabled so Quarkus needs an explicit JWKS
+    # to verify them (otherwise it falls back to /introspect and the callback 401s).
+    jwksPath: "https://rootly.com/oauth/discovery/keys"
+    userInfoPath: "https://rootly.com/oauth/userinfo"
+    clientId:
+    # /oauth/userinfo returns an email claim; BaseResource.getUsername strips @domain for email claims.
+    claim: email
+    clientSecretKey: rootly-client-secret
+    pkceRequired: true
+    idTokenRequired: false
+    addOpenidScope: false
+    scopes:
+      - profile
+      - email
+      - openid
+      - ir.incidents:read
+      - ir.incidents:write
+      - ir.incident_types:read
+      - ir.form_fields:read
+      - ir.services:read
+      - ir.services:write
+      - ir.functionalities:read
+      - ir.groups:read
+      - ir.workflows:read
+      - oc.alerts:read
+      - oc.alert_routing_rules:read
+      - oc.alert_sources:read
+      - oc.schedules:read
+      - oc.shift_overrides:write
+      - oc.escalation_policies:read
   datadog:
     # remote-servers.endpoints[name=datadog].endpoint — used by ConfigService when resolving the
     # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.

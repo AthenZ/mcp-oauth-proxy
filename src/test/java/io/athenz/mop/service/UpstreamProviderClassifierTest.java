@@ -43,6 +43,9 @@ class UpstreamProviderClassifierTest {
     private FigmaUpstreamRefreshClient figmaUpstreamRefreshClient;
 
     @Mock
+    private RootlyUpstreamRefreshClient rootlyUpstreamRefreshClient;
+
+    @Mock
     private DatadogUpstreamRefreshClient datadogUpstreamRefreshClient;
 
     @Mock
@@ -66,6 +69,7 @@ class UpstreamProviderClassifierTest {
         classifier = new UpstreamProviderClassifier();
         classifier.googleWorkspaceUpstreamRefreshClient = googleWorkspaceUpstreamRefreshClient;
         classifier.figmaUpstreamRefreshClient = figmaUpstreamRefreshClient;
+        classifier.rootlyUpstreamRefreshClient = rootlyUpstreamRefreshClient;
         classifier.datadogUpstreamRefreshClient = datadogUpstreamRefreshClient;
         classifier.linearUpstreamRefreshClient = linearUpstreamRefreshClient;
         classifier.oracleEpmUpstreamRefreshClient = oracleEpmUpstreamRefreshClient;
@@ -81,6 +85,7 @@ class UpstreamProviderClassifierTest {
             "google-gmail", "google-calendar", "google-tasks", "google-chat",
             "google-forms", "google-keep", "google-meet", "google-cloud-platform",
             "figma",
+            "rootly",
             "datadog",
             "linear",
             "oracle-epm",
@@ -135,6 +140,12 @@ class UpstreamProviderClassifierTest {
     void isGoogleWorkspace_falseForFigma() {
         assertFalse(classifier.isGoogleWorkspace("figma"),
                 "Figma is promoted but is NOT google-workspace; classifier must distinguish them");
+    }
+
+    @Test
+    void isGoogleWorkspace_falseForRootly() {
+        assertFalse(classifier.isGoogleWorkspace("rootly"),
+                "Rootly is promoted but is NOT google-workspace; classifier must distinguish them");
     }
 
     @Test
@@ -198,6 +209,13 @@ class UpstreamProviderClassifierTest {
         Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("figma");
         assertTrue(resolved.isPresent(), "Figma should resolve to the Figma client");
         assertSame(figmaUpstreamRefreshClient, resolved.get());
+    }
+
+    @Test
+    void resolveRefreshTokenClient_returnsRootlyClientForRootly() {
+        Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("rootly");
+        assertTrue(resolved.isPresent(), "Rootly should resolve to the Rootly client");
+        assertSame(rootlyUpstreamRefreshClient, resolved.get());
     }
 
     @Test
