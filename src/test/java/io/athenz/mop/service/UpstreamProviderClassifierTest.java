@@ -61,6 +61,9 @@ class UpstreamProviderClassifierTest {
     private AirtableUpstreamRefreshClient airtableUpstreamRefreshClient;
 
     @Mock
+    private GeminiEnterpriseUpstreamRefreshClient geminiEnterpriseUpstreamRefreshClient;
+
+    @Mock
     private LookerUpstreamRefreshClient lookerUpstreamRefreshClient;
 
     @BeforeEach
@@ -75,6 +78,7 @@ class UpstreamProviderClassifierTest {
         classifier.oracleEpmUpstreamRefreshClient = oracleEpmUpstreamRefreshClient;
         classifier.wisdomAiUpstreamRefreshClient = wisdomAiUpstreamRefreshClient;
         classifier.airtableUpstreamRefreshClient = airtableUpstreamRefreshClient;
+        classifier.geminiEnterpriseUpstreamRefreshClient = geminiEnterpriseUpstreamRefreshClient;
         classifier.lookerUpstreamRefreshClient = lookerUpstreamRefreshClient;
     }
 
@@ -91,6 +95,7 @@ class UpstreamProviderClassifierTest {
             "oracle-epm",
             "wisdomai",
             "airtable",
+            "gemini-enterprise",
             "looker-maw", "looker-ouryahoo", "looker-finance", "looker-hr",
             "looker-search", "looker-enterprise", "looker-prism-mail"
     })
@@ -179,6 +184,13 @@ class UpstreamProviderClassifierTest {
     }
 
     @Test
+    void isGoogleWorkspace_falseForGeminiEnterprise() {
+        assertFalse(classifier.isGoogleWorkspace("gemini-enterprise"),
+                "Gemini Enterprise uses a dedicated Google client and is promoted, but is NOT part of "
+                        + "the shared google-workspace set; classifier must distinguish them");
+    }
+
+    @Test
     void isGoogleWorkspace_falseForLooker() {
         assertFalse(classifier.isGoogleWorkspace("looker-ouryahoo"),
                 "Looker is promoted but is NOT google-workspace; classifier must distinguish them");
@@ -251,6 +263,13 @@ class UpstreamProviderClassifierTest {
         Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("airtable");
         assertTrue(resolved.isPresent(), "Airtable should resolve to the Airtable client");
         assertSame(airtableUpstreamRefreshClient, resolved.get());
+    }
+
+    @Test
+    void resolveRefreshTokenClient_returnsGeminiEnterpriseClientForGeminiEnterprise() {
+        Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("gemini-enterprise");
+        assertTrue(resolved.isPresent(), "Gemini Enterprise should resolve to the Gemini Enterprise client");
+        assertSame(geminiEnterpriseUpstreamRefreshClient, resolved.get());
     }
 
     @ParameterizedTest

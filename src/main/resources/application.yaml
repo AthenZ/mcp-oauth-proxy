@@ -229,6 +229,23 @@ quarkus:
         restore-path-after-redirect: true
         extra-params:
           access_type: "offline"
+    # Gemini Enterprise / GE Stream Assist: direct Google OAuth, but with its OWN dedicated
+    # Google OAuth client (separate from the shared google-workspace-creds anchor).
+    gemini-enterprise:
+      provider: google
+      client-id: ${GEMINI_ENTERPRISE_CLIENT_ID:}
+      credentials:
+        client-secret:
+          provider:
+            key: ${GEMINI_ENTERPRISE_CLIENT_SECRET_KEY:gemini-enterprise-client-secret}
+          method: post
+      authentication:
+        scopes:
+          - openid
+        redirect-path: /gemini-enterprise/authorize/callback
+        restore-path-after-redirect: true
+        extra-params:
+          access_type: "offline"
     slack:
       auth-server-url: "https://slack.com"
       discovery-enabled: false
@@ -845,6 +862,7 @@ server:
     expiry-seconds-by-provider:
       okta: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_OKTA:86400}
       google-workspace: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_GOOGLE_WORKSPACE:15552000}
+      gemini-enterprise: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_GEMINI_ENTERPRISE:15552000}  # 6 months — Gemini Enterprise (direct Google OAuth, dedicated client)
       figma: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_FIGMA:7776000}
       datadog: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_DATADOG:15552000}
       linear: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_LINEAR:15552000}     # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
@@ -931,6 +949,9 @@ server:
     google-workspace:
       client-id: ${GOOGLE_WORKSPACE_CLIENT_ID}
       client-secret-key: ${GOOGLE_WORKSPACE_CLIENT_SECRET_KEY}
+    gemini-enterprise:
+      client-id: ${GEMINI_ENTERPRISE_CLIENT_ID:}
+      client-secret-key: ${GEMINI_ENTERPRISE_CLIENT_SECRET_KEY:gemini-enterprise-client-secret}
     figma:
       client-id: ${FIGMA_CLIENT_ID:}
       client-secret-key: ${FIGMA_CLIENT_SECRET_KEY:figma-client-secret}

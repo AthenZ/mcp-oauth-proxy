@@ -47,6 +47,7 @@ public class K8SSecretsProvider implements CredentialsProvider {
     public static final String SECRET_DATA_KEY_ATLASSIAN_CLIENT_SECRET = "atlassian-client-secret";
     public static final String SECRET_DATA_KEY_GITHUB_CLIENT_SECRET = "github-client-secret";
     public static final String SECRET_DATA_KEY_GOOGLE_CLIENT_SECRET = "google-client-secret";
+    public static final String SECRET_DATA_KEY_GEMINI_ENTERPRISE_CLIENT_SECRET = "gemini-enterprise-client-secret";
     public static final String SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET = "embrace-client-secret";
     public static final String SECRET_DATA_KEY_SLACK_CLIENT_SECRET = "slack-client-secret";
     public static final String SECRET_DATA_KEY_FIGMA_CLIENT_SECRET = "figma-client-secret";
@@ -101,6 +102,7 @@ public class K8SSecretsProvider implements CredentialsProvider {
         String atlassianClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_ATLASSIAN_CLIENT_SECRET);
         String githubClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_GITHUB_CLIENT_SECRET);
         String googleClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_GOOGLE_CLIENT_SECRET);
+        String geminiEnterpriseClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_GEMINI_ENTERPRISE_CLIENT_SECRET);
         String embraceClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET);
         String slackClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_SLACK_CLIENT_SECRET);
         String figmaClientSecret = decodeTrimmed(data, SECRET_DATA_KEY_FIGMA_CLIENT_SECRET);
@@ -119,6 +121,7 @@ public class K8SSecretsProvider implements CredentialsProvider {
         map.put(SECRET_DATA_KEY_ATLASSIAN_CLIENT_SECRET, atlassianClientSecret);
         map.put(SECRET_DATA_KEY_GITHUB_CLIENT_SECRET, githubClientSecret);
         map.put(SECRET_DATA_KEY_GOOGLE_CLIENT_SECRET, googleClientSecret);
+        map.put(SECRET_DATA_KEY_GEMINI_ENTERPRISE_CLIENT_SECRET, geminiEnterpriseClientSecret);
         map.put(SECRET_DATA_KEY_EMBRACE_CLIENT_SECRET, embraceClientSecret);
         map.put(SECRET_DATA_KEY_SLACK_CLIENT_SECRET, slackClientSecret);
         map.put(SECRET_DATA_KEY_FIGMA_CLIENT_SECRET, figmaClientSecret);

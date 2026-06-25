@@ -79,6 +79,9 @@ data:
             airtable:
               paths: "/airtable/*"
               policy: authenticated
+            gemini-enterprise:
+              paths: "/gemini-enterprise/*"
+              policy: authenticated
             {{- range $name, $inst := (.Values.oidc.looker | default dict).instances }}
             {{- if $inst.clientId }}
             {{ $name }}:
@@ -216,6 +219,23 @@ data:
             extra-params:
               access_type: "offline"
         {{- end }}
+        gemini-enterprise:
+          provider: google
+          client-id: {{ .Values.oidc.geminiEnterprise.clientId | quote }}
+          credentials:
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.geminiEnterprise.clientSecretKey | default "gemini-enterprise-client-secret" }}
+              method: post
+          authentication:
+            scopes:
+            {{- range (.Values.oidc.geminiEnterprise.scopes | default (list "openid" "https://www.googleapis.com/auth/cloud-platform" "https://www.googleapis.com/auth/userinfo.email" "https://www.googleapis.com/auth/userinfo.profile")) }}
+              - {{ . | quote }}
+            {{- end }}
+            redirect-path: /gemini-enterprise/authorize/callback
+            restore-path-after-redirect: true
+            extra-params:
+              access_type: "offline"
         slack:
           auth-server-url: "https://slack.com"
           discovery-enabled: false
@@ -791,6 +811,9 @@ data:
         google-workspace:
           client-id: {{ .Values.oidc.googleWorkspace.clientId | quote }}
           client-secret-key: {{ .Values.oidc.googleWorkspace.clientSecretKey }}
+        gemini-enterprise:
+          client-id: {{ .Values.oidc.geminiEnterprise.clientId | quote }}
+          client-secret-key: {{ .Values.oidc.geminiEnterprise.clientSecretKey | default "gemini-enterprise-client-secret" | quote }}
         figma:
           client-id: {{ .Values.oidc.figma.clientId | quote }}
           client-secret-key: {{ .Values.oidc.figma.clientSecretKey | quote }}
@@ -960,6 +983,9 @@ data:
             - name: airtable
               endpoint: {{ .Values.oidc.airtable.endpoint | quote }}
               username-claim: {{ .Values.oidc.airtable.claim | quote }}
+            - name: gemini-enterprise
+              endpoint: {{ .Values.oidc.geminiEnterprise.endpoint | default "https://accounts.google.com/o/oauth2/v2/auth" | quote }}
+              username-claim: {{ .Values.oidc.geminiEnterprise.claim | default "email" | quote }}
             {{- range $name, $inst := (.Values.oidc.looker | default dict).instances }}
             {{- if $inst.clientId }}
             - name: {{ $name }}

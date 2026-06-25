@@ -36,6 +36,7 @@ public final class OauthProviderLabel {
     public static final String GOOGLE_KEEP = "google-keep";
     public static final String GOOGLE_MEET = "google-meet";
     public static final String GOOGLE_CLOUD_PLATFORM = "google-cloud-platform";
+    public static final String GEMINI_ENTERPRISE = "gemini-enterprise";
     public static final String ATLASSIAN = "atlassian";
     public static final String ATHENZ = "athenz";
     public static final String GOOGLE_MONITORING = "google-monitoring";
@@ -75,7 +76,7 @@ public final class OauthProviderLabel {
         return switch (s) {
             case OKTA, GLEAN, GITHUB, EMBRACE, GOOGLE_DRIVE, GOOGLE_DOCS, GOOGLE_SHEETS,
                     GOOGLE_SLIDES, GOOGLE_GMAIL, GOOGLE_CALENDAR, GOOGLE_TASKS, GOOGLE_CHAT, GOOGLE_FORMS,
-                    GOOGLE_KEEP, GOOGLE_MEET, GOOGLE_CLOUD_PLATFORM, ATLASSIAN, ATHENZ, GOOGLE_MONITORING,
+                    GOOGLE_KEEP, GOOGLE_MEET, GOOGLE_CLOUD_PLATFORM, GEMINI_ENTERPRISE, ATLASSIAN, ATHENZ, GOOGLE_MONITORING,
                     GOOGLE_LOGGING, GOOGLE_BIGQUERY, DATABRICKS_SQL, DATABRICKS_VECTOR_SEARCH, SLACK, FIGMA,
                     ROOTLY, DATADOG, LINEAR, ORACLE_EPM, WISDOMAI, AIRTABLE, GRAFANA, EVALUATE, YAHOO_OS,
                     YAHOO_SYNAPSE, UDS, LOOKER_MAW, LOOKER_OURYAHOO, LOOKER_FINANCE, LOOKER_HR, LOOKER_SEARCH,

@@ -42,7 +42,7 @@ import org.slf4j.LoggerFactory;
  * Unified OAuth callback handler for all Google Workspace services.
  * The provider name is extracted from the URL path via {@code @PathParam}.
  */
-@Path("/{provider: google-(?:drive|docs|sheets|slides|gmail|calendar|tasks|chat|forms|keep|meet|cloud-platform)}/authorize")
+@Path("/{provider: google-(?:drive|docs|sheets|slides|gmail|calendar|tasks|chat|forms|keep|meet|cloud-platform)|gemini-enterprise}/authorize")
 public class GoogleWorkspaceResource extends BaseResource {
 
     private static final Logger log = LoggerFactory.getLogger(GoogleWorkspaceResource.class);
@@ -208,6 +208,10 @@ public class GoogleWorkspaceResource extends BaseResource {
         String reconnectUrl = "/" + provider + "/authorize?state="
             + java.net.URLEncoder.encode(state, java.nio.charset.StandardCharsets.UTF_8);
         String revokeUrl = "https://myaccount.google.com/permissions";
+        // The Google OAuth client the user must revoke differs by provider. Gemini Enterprise uses
+        // a dedicated "Yahoo Internal" Google OAuth client (separate from the shared MoP OAuth Proxy
+        // Google client used by the Google Workspace MCPs), so name that app in the revoke steps.
+        String googleAppName = "gemini-enterprise".equals(provider) ? "Yahoo Internal" : "MoP OAuth Proxy";
         String body = "<!DOCTYPE html>\n"
             + "<html lang=\"en\"><head><meta charset=\"utf-8\"/>"
             + "<title>Reconnect Google Workspace</title>"
@@ -242,7 +246,8 @@ public class GoogleWorkspaceResource extends BaseResource {
             + "<p>We could not finish connecting <code>" + escapeHtml(provider) + "</code> "
             + "because Google did not return a refresh token for this session, and we do not have "
             + "one saved for your account.</p>"
-            + "<p>This usually happens when your previous authorization for the MoP OAuth proxy "
+            + "<p>This usually happens when your previous authorization for the "
+            + escapeHtml(googleAppName) + " app "
             + "was revoked or expired (for example, after revoking access in your Google account "
             + "settings, after a long period of inactivity, or after a Workspace admin policy "
             + "change). Simply retrying will keep failing because Google still treats this app as "
@@ -250,7 +255,7 @@ public class GoogleWorkspaceResource extends BaseResource {
 
             + "<p class=\"step\">Step 1</p>"
             + "<h2>Revoke this app at Google</h2>"
-            + "<p>Find <strong>MoP OAuth Proxy</strong> (or the equivalent app name in your "
+            + "<p>Find <strong>" + escapeHtml(googleAppName) + "</strong> (or the equivalent app name in your "
             + "Google account) in the list and click <strong>Remove access</strong>.</p>"
             + "<p><a class=\"btn\" href=\"" + revokeUrl + "\" target=\"_blank\" rel=\"noopener\">"
             + "Open Google Account permissions</a></p>"
