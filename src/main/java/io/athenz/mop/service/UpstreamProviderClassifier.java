@@ -134,6 +134,15 @@ public class UpstreamProviderClassifier {
     public static final String AIRTABLE_PROVIDER = "airtable";
 
     /**
+     * Provider id for Gemini Enterprise / GE Stream Assist. Direct Google OAuth/OIDC like the
+     * Google Workspace providers (~1h access-token lifetime, rotating refresh token), but it uses
+     * its own dedicated Google OAuth client (separate client_id + {@code gemini-enterprise-client-secret})
+     * rather than the shared Google Workspace web app. L2-promoted with a 6-month cap to bound row
+     * sprawl, matching the Google Workspace cap. See {@link GeminiEnterpriseUpstreamRefreshClient}.
+     */
+    public static final String GEMINI_ENTERPRISE_PROVIDER = "gemini-enterprise";
+
+    /**
      * Looker MCP instance provider ids (1h access-token lifetime, <strong>non-rotating</strong> RT
      * ~1 month, L2 promoted, public PKCE). Each Looker deployment is its own provider id so its L2
      * canonical-RT row is keyed per instance; they share one {@link LookerUpstreamRefreshClient}.
@@ -151,6 +160,7 @@ public class UpstreamProviderClassifier {
         all.add(ORACLE_EPM_PROVIDER);
         all.add(WISDOMAI_PROVIDER);
         all.add(AIRTABLE_PROVIDER);
+        all.add(GEMINI_ENTERPRISE_PROVIDER);
         all.addAll(LOOKER_PROVIDERS);
         PROMOTED_PROVIDERS = Set.copyOf(all);
     }
@@ -178,6 +188,9 @@ public class UpstreamProviderClassifier {
 
     @Inject
     AirtableUpstreamRefreshClient airtableUpstreamRefreshClient;
+
+    @Inject
+    GeminiEnterpriseUpstreamRefreshClient geminiEnterpriseUpstreamRefreshClient;
 
     @Inject
     LookerUpstreamRefreshClient lookerUpstreamRefreshClient;
@@ -242,6 +255,9 @@ public class UpstreamProviderClassifier {
         }
         if (AIRTABLE_PROVIDER.equals(provider)) {
             return Optional.of(airtableUpstreamRefreshClient);
+        }
+        if (GEMINI_ENTERPRISE_PROVIDER.equals(provider)) {
+            return Optional.of(geminiEnterpriseUpstreamRefreshClient);
         }
         if (LOOKER_PROVIDERS.contains(provider)) {
             return Optional.of(lookerUpstreamRefreshClient);

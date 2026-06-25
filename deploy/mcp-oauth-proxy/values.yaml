@@ -191,6 +191,7 @@ application:
       wisdomai: "15552000"           # 6 months — Descope RT JWT rexp is ~10y; capped to bound L2 row TTL
       oracle-epm: "2592000"          # 30 days — matches global default; Oracle IDCS RT TTL is operator-tunable
       airtable: "15552000"           # 6 months — caps Airtable 60d rotating RT
+      gemini-enterprise: "15552000"  # 6 months — Gemini Enterprise (direct Google OAuth, dedicated client)
     ttlBufferDays: 3
     # How long REVOKED L2 rows are retained before TTL eviction. Sized so an operator can
     # still inspect a recently-revoked row when triaging a refresh-token-revoked event.
@@ -323,6 +324,19 @@ oidc:
     clientId:
     claim:
     clientSecretKey:
+  # Gemini Enterprise / GE Stream Assist: direct Google OAuth but with its own dedicated
+  # Google OAuth client (separate from googleWorkspace). clientId is env-specific; the matching
+  # client secret lives in K8s under clientSecretKey.
+  geminiEnterprise:
+    endpoint: "https://accounts.google.com/o/oauth2/v2/auth"
+    clientId:
+    claim: email
+    clientSecretKey: gemini-enterprise-client-secret
+    scopes:
+      - openid
+      - https://www.googleapis.com/auth/cloud-platform
+      - https://www.googleapis.com/auth/userinfo.email
+      - https://www.googleapis.com/auth/userinfo.profile
   googleDrive:
     scopes:
       - openid

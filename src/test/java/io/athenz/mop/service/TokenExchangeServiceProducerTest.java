@@ -95,6 +95,9 @@ class TokenExchangeServiceProducerTest {
     private Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
 
     @Mock
+    private Instance<TokenExchangeServiceGeminiEnterpriseImpl> geminiEnterpriseProvider;
+
+    @Mock
     private Instance<TokenExchangeServiceLookerImpl> lookerProvider;
 
     @Mock
@@ -116,6 +119,7 @@ class TokenExchangeServiceProducerTest {
             TokenExchangeServiceGoogleWorkspaceImpl impl = new TokenExchangeServiceGoogleWorkspaceImpl();
             return impl;
         });
+        when(geminiEnterpriseProvider.get()).thenAnswer(invocation -> new TokenExchangeServiceGeminiEnterpriseImpl());
         when(databricksProvider.get()).thenAnswer(invocation -> new TokenExchangeServiceDatabricksImpl());
         when(lookerProvider.get()).thenAnswer(invocation -> new TokenExchangeServiceLookerImpl());
         tokenExchangeServiceProducer.init();
@@ -344,6 +348,28 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService first = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
         TokenExchangeService second = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation(provider);
         assertSame(first, second, "Same provider should return the same cached instance");
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_GeminiEnterprise() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("gemini-enterprise");
+        assertNotNull(result);
+        assertInstanceOf(TokenExchangeServiceGeminiEnterpriseImpl.class, result);
+        assertEquals("gemini-enterprise", ((TokenExchangeServiceGeminiEnterpriseImpl) result).getProviderLabel());
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_GeminiEnterprise_cachedInstance() {
+        TokenExchangeService first = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("gemini-enterprise");
+        TokenExchangeService second = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("gemini-enterprise");
+        assertSame(first, second);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_GeminiEnterprise_distinctFromGoogleWorkspace() {
+        TokenExchangeService gemini = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("gemini-enterprise");
+        TokenExchangeService drive = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("google-drive");
+        assertNotSame(gemini, drive);
     }
 
     @Test

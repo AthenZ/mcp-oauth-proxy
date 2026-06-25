@@ -39,6 +39,9 @@ public class TokenExchangeServiceProducer {
     Instance<TokenExchangeServiceGoogleWorkspaceImpl> googleWorkspaceProvider;
 
     @Inject
+    Instance<TokenExchangeServiceGeminiEnterpriseImpl> geminiEnterpriseProvider;
+
+    @Inject
     Instance<TokenExchangeServiceLookerImpl> lookerProvider;
 
     @Inject
@@ -113,6 +116,7 @@ public class TokenExchangeServiceProducer {
     private final Map<String, TokenExchangeService> googleWorkspaceServices = new HashMap<>();
     private final Map<String, TokenExchangeService> databricksServices = new HashMap<>();
     private final Map<String, TokenExchangeService> lookerServices = new HashMap<>();
+    private TokenExchangeService geminiEnterpriseService;
 
     @PostConstruct
     void init() {
@@ -121,6 +125,10 @@ public class TokenExchangeServiceProducer {
             svc.setProviderLabel(provider);
             googleWorkspaceServices.put(provider, svc);
         }
+
+        TokenExchangeServiceGeminiEnterpriseImpl geminiSvc = geminiEnterpriseProvider.get();
+        geminiSvc.setProviderLabel(OauthProviderLabel.GEMINI_ENTERPRISE);
+        geminiEnterpriseService = geminiSvc;
 
         for (String provider : LookerInstances.PROVIDERS) {
             TokenExchangeServiceLookerImpl svc = lookerProvider.get();
@@ -140,6 +148,10 @@ public class TokenExchangeServiceProducer {
     }
 
     public TokenExchangeService getTokenExchangeServiceImplementation(String idpType) {
+        if (OauthProviderLabel.GEMINI_ENTERPRISE.equals(idpType)) {
+            return geminiEnterpriseService;
+        }
+
         TokenExchangeService googleSvc = googleWorkspaceServices.get(idpType);
         if (googleSvc != null) {
             return googleSvc;

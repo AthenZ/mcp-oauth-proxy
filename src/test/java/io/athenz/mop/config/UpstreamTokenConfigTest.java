@@ -410,6 +410,53 @@ class UpstreamTokenConfigTest {
     }
 
     @Test
+    void geminiEnterprise_exactMatchOverride_returnsConfiguredLifetime() {
+        // Gemini Enterprise is L2 promoted but NOT in GOOGLE_WORKSPACE_PROVIDERS (it uses a
+        // dedicated Google OAuth client), so the Google floor does NOT apply. The exact-match
+        // key must yield the configured cap (6 months by default).
+        Map<String, Long> map = new HashMap<>();
+        map.put("gemini-enterprise", GOOGLE_180D);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(GOOGLE_180D, cfg.expirySecondsForProvider("gemini-enterprise"));
+        assertEquals(GOOGLE_180D, cfg.expirySecondsForProvider("gemini-enterprise#alice@example.com"));
+    }
+
+    @Test
+    void geminiEnterprise_unconfigured_fallsBackToDefault() {
+        // Without an exact-match key Gemini Enterprise falls through to the global default (30 d).
+        // Production sets gemini-enterprise=15552000 (6 months) explicitly via chart values.yaml +
+        // env overrides; if dropped this test demonstrates the fallback (shorter than the intended
+        // cap, so operators must keep the override set).
+        UpstreamTokenConfig cfg = configWith(new HashMap<>());
+
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("gemini-enterprise#user-id"));
+    }
+
+    @Test
+    void geminiEnterprise_groupKeyDoesNotApplyToGeminiEnterprise() {
+        // The google-workspace group key is scoped to the shared-client Workspace providers only.
+        // Gemini Enterprise uses a dedicated client and must NOT inherit the group expiry.
+        Map<String, Long> map = new HashMap<>();
+        map.put(UpstreamTokenConfig.GOOGLE_WORKSPACE_GROUP_KEY, GOOGLE_180D);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(DEFAULT_30D, cfg.expirySecondsForProvider("gemini-enterprise#u"));
+    }
+
+    @Test
+    void geminiEnterprise_notFlooredLikeWorkspace() {
+        // Critical negative test: even with a too-low exact override, Gemini Enterprise is NOT
+        // clamped up to the Google Workspace floor because it is intentionally excluded from
+        // GOOGLE_WORKSPACE_PROVIDERS. A low value passes through as configured.
+        Map<String, Long> map = new HashMap<>();
+        map.put("gemini-enterprise", 300L);
+        UpstreamTokenConfig cfg = configWith(map);
+
+        assertEquals(300L, cfg.expirySecondsForProvider("gemini-enterprise#u"));
+    }
+
+    @Test
     void zeroOrNegativeMapValue_ignoredInFavorOfDefault() {
         // Zero/negative is treated as "unset" — falls back to the default. This catches a
         // malformed values.yaml gracefully rather than writing a row with 0s TTL.
