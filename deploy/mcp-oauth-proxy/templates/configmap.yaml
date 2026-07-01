@@ -557,7 +557,7 @@ data:
               method: basic
           authentication:
             scopes:
-              {{- range ($.Values.oidc.airtable.scopes | default (list "data.recordComments:read" "data.recordComments:write" "data.records:read" "data.records:write" "schema.bases:read" "user.email:read" "workspacesAndBases:read" "enterprise.groups:read")) }}
+              {{- range ($.Values.oidc.airtable.scopes | default (list "data.recordComments:read" "data.recordComments:write" "data.records:read" "data.records:write" "schema.bases:read" "schema.bases:write" "user.email:read" "workspacesAndBases:read" "enterprise.groups:read")) }}
               - {{ . | quote }}
               {{- end }}
             redirect-path: /airtable/authorize/callback
