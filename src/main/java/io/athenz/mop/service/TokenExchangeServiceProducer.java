@@ -108,6 +108,9 @@ public class TokenExchangeServiceProducer {
     TokenExchangeServiceYahooOsImpl tokenExchangeServiceYahooOsImpl;
 
     @Inject
+    TokenExchangeServiceYahooCfoDeCubeImpl tokenExchangeServiceYahooCfoDeCubeImpl;
+
+    @Inject
     TokenExchangeServiceYahooSynapseImpl tokenExchangeServiceYahooSynapseImpl;
 
     @Inject
@@ -187,6 +190,7 @@ public class TokenExchangeServiceProducer {
             case "airtable" -> tokenExchangeServiceAirtableImpl;
             case "evaluate" -> tokenExchangeServiceEvaluateImpl;
             case "yahoo-os" -> tokenExchangeServiceYahooOsImpl;
+            case "yahoo-cfo-de-cube" -> tokenExchangeServiceYahooCfoDeCubeImpl;
             case "yahoo-synapse" -> tokenExchangeServiceYahooSynapseImpl;
             case "uds" -> tokenExchangeServiceUdsImpl;
             default -> throw new IllegalArgumentException("Unsupported IDP type: " + idpType);

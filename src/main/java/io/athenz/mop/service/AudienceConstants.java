@@ -37,6 +37,7 @@ public final class AudienceConstants {
     public static final String PROVIDER_GRAFANA = "grafana";
     public static final String PROVIDER_EVALUATE = "evaluate";
     public static final String PROVIDER_YAHOO_OS = "yahoo-os";
+    public static final String PROVIDER_YAHOO_CFO_DE_CUBE = "yahoo-cfo-de-cube";
     public static final String PROVIDER_YAHOO_SYNAPSE = "yahoo-synapse";
     public static final String PROVIDER_UDS = "uds";
 
@@ -79,6 +80,7 @@ public final class AudienceConstants {
                 || PROVIDER_GRAFANA.equals(audience)
                 || PROVIDER_EVALUATE.equals(audience)
                 || PROVIDER_YAHOO_OS.equals(audience)
+                || PROVIDER_YAHOO_CFO_DE_CUBE.equals(audience)
                 || PROVIDER_YAHOO_SYNAPSE.equals(audience)
                 || PROVIDER_UDS.equals(audience)
                 || PROVIDER_DATABRICKS_SQL.equals(audience)

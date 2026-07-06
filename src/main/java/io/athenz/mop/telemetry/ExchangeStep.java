@@ -20,6 +20,7 @@ public enum ExchangeStep {
     GCP_GOOGLE_STS("gcp_google_sts"),
     EVALUATE_ATHENZ_ID_TOKEN("evaluate_athenz_id_token"),
     YAHOO_OS_ID_TOKEN("yahoo_os_id_token"),
+    YAHOO_CFO_DE_CUBE_ID_TOKEN("yahoo_cfo_de_cube_id_token"),
     YAHOO_SYNAPSE_ACCESS_TOKEN("yahoo_synapse_access_token"),
     UDS_ACCESS_TOKEN("uds_access_token"),
     UPSTREAM_REFRESH("upstream_refresh"),
