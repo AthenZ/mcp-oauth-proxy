@@ -187,6 +187,7 @@ application:
       figma: "7776000"               # 90 days — matches Figma's documented access-token lifetime
       rootly: "15552000"             # 6 months — Rootly RT rotates; capped to bound the L2 row TTL
       datadog: "15552000"            # 6 months — Datadog RT does not expire upstream; capped to bound L2 row TTL
+      datahub: "15552000"            # 6 months — bound the L2 RT row TTL
       linear: "15552000"             # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
       wisdomai: "15552000"           # 6 months — Descope RT JWT rexp is ~10y; capped to bound L2 row TTL
       oracle-epm: "2592000"          # 30 days — matches global default; Oracle IDCS RT TTL is operator-tunable
@@ -457,6 +458,47 @@ oidc:
     # reject the /authorize call or mint a token that fails downstream identity calls. Override
     # per env only if Datadog later begins gating MCP behind explicit scopes.
     scopes: []
+  datahub:
+    # DataHub (Acryl) MCP. Confidential client (client_secret_basic) + PKCE. Leave clientId
+    # blank in the open-source chart default; the env-specific values files supply the real
+    # registered id.
+    # remote-servers.endpoints[name=datahub].endpoint — the direct DataHub MCP server URL (used
+    # by ConfigService when resolving the OIDC remote-server config); the upstream OAuth/AS URLs
+    # below are pinned in configmap.yaml.
+    endpoint: "https://yahoo-datahub.acryl.io/integrations/ai/mcp/"
+    authServerUrl: "https://yahoo-datahub.acryl.io"
+    tokenPath: "https://yahoo-datahub.acryl.io/auth/oauth2/token"
+    jwksPath: "https://yahoo-datahub.acryl.io/auth/oauth2/jwks"
+    clientId:
+    # DataHub's advertised /auth/userinfo rejects MCP-resource access tokens (invalid_token).
+    # The synthetic /internal/datahub/oauth-userinfo proxy POSTs the GraphQL `me { corpUser ... }`
+    # query to <authServerUrl>/api/graphql and flattens properties.email / username / urn to
+    # top-level claims; BaseResource.getUsername strips @domain for email claims.
+    claim: email
+    clientSecretKey: datahub-client-secret
+    # RFC 8707 resource indicator required by DataHub on /authorize and the code exchange.
+    resource: "https://yahoo-datahub.acryl.io"
+    # When non-empty, used verbatim as quarkus.oidc.datahub.user-info-path. When empty,
+    # configmap.yaml defaults to https://<application.host>/internal/datahub/oauth-userinfo
+    # (mirrors datadog.userInfoPath).
+    userInfoPath: ""
+    # Public HTTPS base for MoP (no path). Used only when userInfoPath is empty. Defaults to
+    # https://<application.host>.
+    syntheticUserInfoBaseUrl: ""
+    # Set to true ONLY when userInfoPath points at the in-pod loopback
+    # (https://localhost:<ssl-port>/...). Egress policies in stage/prod block the pod from
+    # reaching its own public hostname, so synthetic UserInfo must round-trip via loopback,
+    # which uses a self-signed cert that the JVM trust store does not accept. When true, the
+    # configmap renders a `datahub-insecure-client` named TLS config (trust-all + skip
+    # hostname verification) and binds it to quarkus.oidc.datahub.tls.tls-configuration-name.
+    tlsInsecureClient: false
+    # Deliberately NO openid scope: with openid DataHub returns an RS256 id_token that is
+    # unverifiable — its JWKS endpoint publishes an empty key set ({"keys":[]}) and its
+    # introspection endpoint reports id_tokens as "not active" (it only introspects
+    # access/refresh tokens). Quarkus always verifies an id_token when present, so the
+    # callback would 401. Without openid the flow is plain OAuth2 (datadog/figma shape).
+    scopes:
+      - datahub:account
   linear:
     # remote-servers.endpoints[name=linear].endpoint — used by ConfigService when resolving the
     # OIDC remote-server config; the actual upstream OAuth/AS URLs are pinned in configmap.yaml.

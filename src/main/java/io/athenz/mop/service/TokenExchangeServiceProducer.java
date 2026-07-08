@@ -90,6 +90,9 @@ public class TokenExchangeServiceProducer {
     TokenExchangeServiceDatadogImpl tokenExchangeServiceDatadogImpl;
 
     @Inject
+    TokenExchangeServiceDatahubImpl tokenExchangeServiceDatahubImpl;
+
+    @Inject
     TokenExchangeServiceLinearImpl tokenExchangeServiceLinearImpl;
 
     @Inject
@@ -184,6 +187,7 @@ public class TokenExchangeServiceProducer {
             case "figma" -> tokenExchangeServiceFigmaImpl;
             case "rootly" -> tokenExchangeServiceRootlyImpl;
             case "datadog" -> tokenExchangeServiceDatadogImpl;
+            case "datahub" -> tokenExchangeServiceDatahubImpl;
             case "linear" -> tokenExchangeServiceLinearImpl;
             case "wisdomai" -> tokenExchangeServiceWisdomAiImpl;
             case "oracle-epm" -> tokenExchangeServiceOracleEpmImpl;

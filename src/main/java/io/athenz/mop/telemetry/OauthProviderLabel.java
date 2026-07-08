@@ -48,6 +48,7 @@ public final class OauthProviderLabel {
     public static final String FIGMA = "figma";
     public static final String ROOTLY = "rootly";
     public static final String DATADOG = "datadog";
+    public static final String DATAHUB = "datahub";
     public static final String LINEAR = "linear";
     public static final String ORACLE_EPM = "oracle-epm";
     public static final String WISDOMAI = "wisdomai";
@@ -79,7 +80,7 @@ public final class OauthProviderLabel {
                     GOOGLE_SLIDES, GOOGLE_GMAIL, GOOGLE_CALENDAR, GOOGLE_TASKS, GOOGLE_CHAT, GOOGLE_FORMS,
                     GOOGLE_KEEP, GOOGLE_MEET, GOOGLE_CLOUD_PLATFORM, GEMINI_ENTERPRISE, ATLASSIAN, ATHENZ, GOOGLE_MONITORING,
                     GOOGLE_LOGGING, GOOGLE_BIGQUERY, DATABRICKS_SQL, DATABRICKS_VECTOR_SEARCH, SLACK, FIGMA,
-                    ROOTLY, DATADOG, LINEAR, ORACLE_EPM, WISDOMAI, AIRTABLE, GRAFANA, EVALUATE, YAHOO_OS,
+                    ROOTLY, DATADOG, DATAHUB, LINEAR, ORACLE_EPM, WISDOMAI, AIRTABLE, GRAFANA, EVALUATE, YAHOO_OS,
                     YAHOO_CFO_DE_CUBE, YAHOO_SYNAPSE, UDS, LOOKER_MAW, LOOKER_OURYAHOO, LOOKER_FINANCE, LOOKER_HR, LOOKER_SEARCH,
                     LOOKER_ENTERPRISE, LOOKER_PRISM_MAIL -> s;
             case "gcp-monitoring" -> GOOGLE_MONITORING;

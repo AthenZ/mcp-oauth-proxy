@@ -86,6 +86,27 @@ class K8SSecretsProviderTest {
     }
 
     @Test
+    void credentialsMapFromData_includesDatahubClientSecret() {
+        // DataHub confidential client_secret_basic. Without this entry the Quarkus OIDC tenant
+        // resolves the secret to null and the token exchange fails to build the HTTP Basic
+        // Authorization header. Mirrors the rootly/figma tests above.
+        Map<String, byte[]> data = new HashMap<>();
+        data.put(K8SSecretsProvider.SECRET_DATA_KEY_DATAHUB_CLIENT_SECRET,
+                "datahub-secret".getBytes(StandardCharsets.UTF_8));
+
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(data);
+
+        assertEquals("datahub-secret", m.get(K8SSecretsProvider.SECRET_DATA_KEY_DATAHUB_CLIENT_SECRET));
+    }
+
+    @Test
+    void credentialsMapFromData_datahubClientSecretAbsent_resolvesToEmpty() {
+        Map<String, String> m = K8SSecretsProvider.credentialsMapFromData(new HashMap<>());
+
+        assertEquals("", m.get(K8SSecretsProvider.SECRET_DATA_KEY_DATAHUB_CLIENT_SECRET));
+    }
+
+    @Test
     void credentialsMapFromData_includesOracleEpmClientSecret() {
         // Oracle IDCS confidential client_secret. Without this entry the Quarkus OIDC tenant
         // resolves the secret to null and the Vert.x token-exchange call NPEs when adding the

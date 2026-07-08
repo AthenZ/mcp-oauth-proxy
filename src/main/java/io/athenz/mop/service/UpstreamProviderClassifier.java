@@ -51,6 +51,12 @@ import java.util.Set;
  *       {@code server.upstream-token.expiry-seconds-by-provider.datadog}) to bound row sprawl.
  *       Datadog is a public PKCE client (DCR returns no client_secret), and the
  *       {@link DatadogUpstreamRefreshClient} reflects that — see the resolver below.</li>
+ *   <li>{@code datahub} — promoted to L2 for cross-client AT amortization. DataHub (Acryl) is a
+ *       plain OAuth consent-passthrough provider (confidential {@code client_secret_basic} + PKCE
+ *       + RFC 8707 resource indicator). Access tokens are ~1h ({@code expires_in=3599}); the L2
+ *       row TTL is capped at 6 months (operator-tunable via
+ *       {@code server.upstream-token.expiry-seconds-by-provider.datahub}) to bound row sprawl.
+ *       See {@link DatahubUpstreamRefreshClient} for the Basic-auth wiring.</li>
  *   <li>{@code linear} — promoted to L2 for the same amortization reasons. Linear access
  *       tokens are ~24h ({@code expires_in=86399}) and the refresh token <strong>rotates</strong>
  *       on every refresh, with a documented 30-min replay-grace window for retry safety. L2 row
@@ -121,6 +127,9 @@ public class UpstreamProviderClassifier {
     /** Provider id for Datadog (1h access-token lifetime, non-rotating RT, L2 promoted). */
     public static final String DATADOG_PROVIDER = "datadog";
 
+    /** Provider id for DataHub / Acryl (1h access-token lifetime, confidential client_secret_basic + PKCE, L2 promoted). */
+    public static final String DATAHUB_PROVIDER = "datahub";
+
     /** Provider id for Linear (~24h access-token lifetime, rotating RT with 30-min replay grace, L2 promoted). */
     public static final String LINEAR_PROVIDER = "linear";
 
@@ -156,6 +165,7 @@ public class UpstreamProviderClassifier {
         all.add(FIGMA_PROVIDER);
         all.add(ROOTLY_PROVIDER);
         all.add(DATADOG_PROVIDER);
+        all.add(DATAHUB_PROVIDER);
         all.add(LINEAR_PROVIDER);
         all.add(ORACLE_EPM_PROVIDER);
         all.add(WISDOMAI_PROVIDER);
@@ -176,6 +186,9 @@ public class UpstreamProviderClassifier {
 
     @Inject
     DatadogUpstreamRefreshClient datadogUpstreamRefreshClient;
+
+    @Inject
+    DatahubUpstreamRefreshClient datahubUpstreamRefreshClient;
 
     @Inject
     LinearUpstreamRefreshClient linearUpstreamRefreshClient;
@@ -243,6 +256,9 @@ public class UpstreamProviderClassifier {
         }
         if (DATADOG_PROVIDER.equals(provider)) {
             return Optional.of(datadogUpstreamRefreshClient);
+        }
+        if (DATAHUB_PROVIDER.equals(provider)) {
+            return Optional.of(datahubUpstreamRefreshClient);
         }
         if (LINEAR_PROVIDER.equals(provider)) {
             return Optional.of(linearUpstreamRefreshClient);

@@ -68,6 +68,9 @@ class TokenExchangeServiceProducerTest {
     private TokenExchangeServiceDatadogImpl tokenExchangeServiceDatadogImpl;
 
     @Mock
+    private TokenExchangeServiceDatahubImpl tokenExchangeServiceDatahubImpl;
+
+    @Mock
     private TokenExchangeServiceLinearImpl tokenExchangeServiceLinearImpl;
 
     @Mock
@@ -268,6 +271,13 @@ class TokenExchangeServiceProducerTest {
         TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("datadog");
         assertNotNull(result);
         assertSame(tokenExchangeServiceDatadogImpl, result);
+    }
+
+    @Test
+    void testGetTokenExchangeServiceImplementation_Datahub() {
+        TokenExchangeService result = tokenExchangeServiceProducer.getTokenExchangeServiceImplementation("datahub");
+        assertNotNull(result);
+        assertSame(tokenExchangeServiceDatahubImpl, result);
     }
 
     @Test

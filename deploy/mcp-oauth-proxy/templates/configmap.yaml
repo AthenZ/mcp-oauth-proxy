@@ -29,6 +29,9 @@ data:
             datadog-internal-userinfo:
               paths: "/internal/datadog/oauth-userinfo"
               policy: permit
+            datahub-internal-userinfo:
+              paths: "/internal/datahub/oauth-userinfo"
+              policy: permit
             linear-internal-userinfo:
               paths: "/internal/linear/oauth-userinfo"
               policy: permit
@@ -66,6 +69,9 @@ data:
               policy: authenticated
             datadog:
               paths: "/datadog/*"
+              policy: authenticated
+            datahub:
+              paths: "/datahub/*"
               policy: authenticated
             linear:
               paths: "/linear/*"
@@ -108,6 +114,11 @@ data:
 {{- end }}
 {{- if (.Values.oidc.datadog.tlsInsecureClient | default false) }}
         datadog-insecure-client:
+          trust-all: true
+          hostname-verification-algorithm: NONE
+{{- end }}
+{{- if (.Values.oidc.datahub.tlsInsecureClient | default false) }}
+        datahub-insecure-client:
           trust-all: true
           hostname-verification-algorithm: NONE
 {{- end }}
@@ -376,6 +387,52 @@ data:
             pkce-required: true
             extra-params:
               resource: {{ .Values.oidc.datadog.resource | default "https://mcp.datadoghq.com/v1/mcp" | quote }}
+          application-type: web-app
+          allow-user-info-cache: false
+          cache-user-info-in-idtoken: true
+          token-state-manager:
+            strategy: keep-all-tokens
+          token:
+            issuer: any
+        datahub:
+{{- if (.Values.oidc.datahub.tlsInsecureClient | default false) }}
+          tls:
+            tls-configuration-name: datahub-insecure-client
+{{- end }}
+          auth-server-url: {{ .Values.oidc.datahub.authServerUrl | default "https://yahoo-datahub.acryl.io" | quote }}
+          discovery-enabled: false
+          authorization-path: "/auth/oauth2/authorize"
+          token-path: {{ .Values.oidc.datahub.tokenPath | default "https://yahoo-datahub.acryl.io/auth/oauth2/token" | quote }}
+          jwks-path: {{ .Values.oidc.datahub.jwksPath | default "https://yahoo-datahub.acryl.io/auth/oauth2/jwks" | quote }}
+          {{- if .Values.oidc.datahub.userInfoPath }}
+          user-info-path: {{ .Values.oidc.datahub.userInfoPath | quote }}
+          {{- else }}
+          {{- $datahubUiBase := .Values.oidc.datahub.syntheticUserInfoBaseUrl | default (printf "https://%s" .Values.application.host) }}
+          user-info-path: {{ printf "%s/internal/datahub/oauth-userinfo" $datahubUiBase | quote }}
+          {{- end }}
+          client-id: {{ .Values.oidc.datahub.clientId | quote }}
+          credentials:
+            client-secret:
+              provider:
+                key: {{ .Values.oidc.datahub.clientSecretKey | default "datahub-client-secret" | quote }}
+              method: basic
+          authentication:
+            scopes:
+            {{- range (.Values.oidc.datahub.scopes | default (list "datahub:account")) }}
+              - {{ . | quote }}
+            {{- end }}
+            redirect-path: /datahub/authorize/callback
+            restore-path-after-redirect: true
+            add-openid-scope: false
+            id-token-required: false
+            user-info-required: true
+            verify-access-token: false
+            pkce-required: true
+            extra-params:
+              resource: {{ .Values.oidc.datahub.resource | default "https://yahoo-datahub.acryl.io" | quote }}
+          code-grant:
+            extra-params:
+              resource: {{ .Values.oidc.datahub.resource | default "https://yahoo-datahub.acryl.io" | quote }}
           application-type: web-app
           allow-user-info-cache: false
           cache-user-info-in-idtoken: true
@@ -825,6 +882,9 @@ data:
           client-secret-key: {{ .Values.oidc.rootly.clientSecretKey | default "rootly-client-secret" | quote }}
         datadog:
           client-id: {{ .Values.oidc.datadog.clientId | quote }}
+        datahub:
+          client-id: {{ .Values.oidc.datahub.clientId | quote }}
+          client-secret-key: {{ .Values.oidc.datahub.clientSecretKey | default "datahub-client-secret" | quote }}
         linear:
           client-id: {{ .Values.oidc.linear.clientId | quote }}
           client-secret-key: {{ .Values.oidc.linear.clientSecretKey | default "linear-client-secret" | quote }}
@@ -971,6 +1031,9 @@ data:
             - name: datadog
               endpoint: {{ .Values.oidc.datadog.endpoint | quote }}
               username-claim: {{ .Values.oidc.datadog.claim | quote }}
+            - name: datahub
+              endpoint: {{ .Values.oidc.datahub.endpoint | default "https://yahoo-datahub.acryl.io/integrations/ai/mcp/" | quote }}
+              username-claim: {{ .Values.oidc.datahub.claim | default "email" | quote }}
             - name: linear
               endpoint: {{ .Values.oidc.linear.endpoint | quote }}
               username-claim: {{ .Values.oidc.linear.claim | quote }}

@@ -49,6 +49,9 @@ class UpstreamProviderClassifierTest {
     private DatadogUpstreamRefreshClient datadogUpstreamRefreshClient;
 
     @Mock
+    private DatahubUpstreamRefreshClient datahubUpstreamRefreshClient;
+
+    @Mock
     private LinearUpstreamRefreshClient linearUpstreamRefreshClient;
 
     @Mock
@@ -74,6 +77,7 @@ class UpstreamProviderClassifierTest {
         classifier.figmaUpstreamRefreshClient = figmaUpstreamRefreshClient;
         classifier.rootlyUpstreamRefreshClient = rootlyUpstreamRefreshClient;
         classifier.datadogUpstreamRefreshClient = datadogUpstreamRefreshClient;
+        classifier.datahubUpstreamRefreshClient = datahubUpstreamRefreshClient;
         classifier.linearUpstreamRefreshClient = linearUpstreamRefreshClient;
         classifier.oracleEpmUpstreamRefreshClient = oracleEpmUpstreamRefreshClient;
         classifier.wisdomAiUpstreamRefreshClient = wisdomAiUpstreamRefreshClient;
@@ -91,6 +95,7 @@ class UpstreamProviderClassifierTest {
             "figma",
             "rootly",
             "datadog",
+            "datahub",
             "linear",
             "oracle-epm",
             "wisdomai",
@@ -108,7 +113,7 @@ class UpstreamProviderClassifierTest {
     @ValueSource(strings = {
             "slack", "github", "atlassian", "embrace", "splunk", "grafana",
             "evaluate", "databricks-sql", "google", "google-unknown", "Google-Drive",
-            "Figma", "Datadog", "datadoghq", "Linear", "linears",
+            "Figma", "Datadog", "datadoghq", "Datahub", "data-hub", "datahubs", "Linear", "linears",
             "Oracle-Epm", "oracleepm", "oracle",
             "WisdomAi", "wisdom-ai", "wisdom_ai", "wisdom",
             "Airtable", "AIRTABLE", "air-table", "air_table", "airtables",
@@ -157,6 +162,12 @@ class UpstreamProviderClassifierTest {
     void isGoogleWorkspace_falseForDatadog() {
         assertFalse(classifier.isGoogleWorkspace("datadog"),
                 "Datadog is promoted but is NOT google-workspace; classifier must distinguish them");
+    }
+
+    @Test
+    void isGoogleWorkspace_falseForDatahub() {
+        assertFalse(classifier.isGoogleWorkspace("datahub"),
+                "DataHub is promoted but is NOT google-workspace; classifier must distinguish them");
     }
 
     @Test
@@ -238,6 +249,13 @@ class UpstreamProviderClassifierTest {
     }
 
     @Test
+    void resolveRefreshTokenClient_returnsDatahubClientForDatahub() {
+        Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("datahub");
+        assertTrue(resolved.isPresent(), "DataHub should resolve to the DataHub client");
+        assertSame(datahubUpstreamRefreshClient, resolved.get());
+    }
+
+    @Test
     void resolveRefreshTokenClient_returnsLinearClientForLinear() {
         Optional<UpstreamRefreshClient> resolved = classifier.resolveRefreshTokenClient("linear");
         assertTrue(resolved.isPresent(), "Linear should resolve to the Linear client");
@@ -295,6 +313,7 @@ class UpstreamProviderClassifierTest {
     @ValueSource(strings = {
             "slack", "github", "atlassian", "embrace", "splunk", "grafana", "evaluate",
             "databricks-sql", "unknown", "Figma", "Google-Drive", "Datadog", "datadoghq",
+            "Datahub", "data-hub", "datahubs",
             "Linear", "linears", "Oracle-Epm", "oracleepm", "oracle",
             "WisdomAi", "wisdom-ai", "wisdom_ai", "wisdom",
             "Airtable", "AIRTABLE", "air-table", "air_table", "airtables",

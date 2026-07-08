@@ -20,6 +20,9 @@ quarkus:
         datadog-internal-userinfo:
           paths: "/internal/datadog/oauth-userinfo"
           policy: permit
+        datahub-internal-userinfo:
+          paths: "/internal/datahub/oauth-userinfo"
+          policy: permit
         linear-internal-userinfo:
           paths: "/internal/linear/oauth-userinfo"
           policy: permit
@@ -326,6 +329,53 @@ quarkus:
         pkce-required: true
         extra-params:
           resource: "https://mcp.datadoghq.com/v1/mcp"
+      application-type: web-app
+      allow-user-info-cache: false
+      cache-user-info-in-idtoken: true
+      token-state-manager:
+        strategy: keep-all-tokens
+      token:
+        issuer: any
+    datahub:
+      # DataHub (Acryl) is a confidential client_secret_basic + PKCE client. Its advertised OIDC
+      # userinfo endpoint (/auth/userinfo) rejects MCP-resource access tokens with invalid_token,
+      # so identity comes from the synthetic GraphQL proxy (DatahubUserInfoResource) that runs the
+      # `me { corpUser ... }` query and flattens email/username/urn to top-level claims — same
+      # pattern as Linear/Datadog. The RFC 8707 resource indicator must be sent on both the
+      # /authorize leg (authentication.extra-params) and the code exchange (code-grant.extra-params).
+      auth-server-url: "https://yahoo-datahub.acryl.io"
+      discovery-enabled: false
+      authorization-path: "/auth/oauth2/authorize"
+      token-path: "https://yahoo-datahub.acryl.io/auth/oauth2/token"
+      jwks-path: "https://yahoo-datahub.acryl.io/auth/oauth2/jwks"
+      user-info-path: ${MOP_DATAHUB_SYNTHETIC_USERINFO_URL:https://127.0.0.1/internal/datahub/oauth-userinfo}
+      client-id: ${DATAHUB_CLIENT_ID:}
+      credentials:
+        client-secret:
+          provider:
+            key: ${DATAHUB_CLIENT_SECRET_KEY:datahub-client-secret}
+          method: basic
+      authentication:
+        # Deliberately NO openid scope: with openid DataHub returns an RS256 id_token that is
+        # unverifiable — its JWKS endpoint publishes an empty key set ({"keys":[]}) and its
+        # introspection endpoint reports id_tokens as "not active" (it only introspects
+        # access/refresh tokens). Quarkus always verifies an id_token when one is present, so
+        # the callback would 401. Without openid this is a plain OAuth2 code flow (same shape
+        # as datadog/figma); identity comes from the synthetic GraphQL userinfo proxy.
+        scopes:
+          - datahub:account
+        redirect-path: /datahub/authorize/callback
+        restore-path-after-redirect: true
+        add-openid-scope: false
+        id-token-required: false
+        user-info-required: true
+        verify-access-token: false
+        pkce-required: true
+        extra-params:
+          resource: "https://yahoo-datahub.acryl.io"
+      code-grant:
+        extra-params:
+          resource: "https://yahoo-datahub.acryl.io"
       application-type: web-app
       allow-user-info-cache: false
       cache-user-info-in-idtoken: true
@@ -866,6 +916,7 @@ server:
       gemini-enterprise: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_GEMINI_ENTERPRISE:15552000}  # 6 months — Gemini Enterprise (direct Google OAuth, dedicated client)
       figma: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_FIGMA:7776000}
       datadog: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_DATADOG:15552000}
+      datahub: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_DATAHUB:15552000}   # 6 months — bound the L2 RT row TTL
       linear: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_LINEAR:15552000}     # 6 months — Linear RT lifetime is unbounded; capped to bound L2 row TTL
       wisdomai: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_WISDOMAI:15552000} # 6 months — Descope RT JWT rexp is ~10y; capped to bound L2 row TTL
       oracle-epm: ${MOP_UPSTREAM_TOKEN_EXPIRY_SECONDS_ORACLE_EPM:2592000}  # 30 days — matches the global default; Oracle IDCS RT TTL is operator-tunable
@@ -958,6 +1009,12 @@ server:
       client-secret-key: ${FIGMA_CLIENT_SECRET_KEY:figma-client-secret}
     datadog:
       client-id: ${DATADOG_CLIENT_ID:}
+    datahub:
+      client-id: ${DATAHUB_CLIENT_ID:}
+      # K8s secret key holding the DataHub confidential client_secret. Same key is read by
+      # DatahubUpstreamRefreshClient (canonical L2 path) and TokenExchangeServiceDatahubImpl
+      # (legacy passthrough path) so they always agree on which secret to use.
+      client-secret-key: ${DATAHUB_CLIENT_SECRET_KEY:datahub-client-secret}
     linear:
       client-id: ${LINEAR_CLIENT_ID:}
       client-secret-key: ${LINEAR_CLIENT_SECRET_KEY:linear-client-secret}
@@ -1036,6 +1093,9 @@ server:
         - name: evaluate
           endpoint: ${EVALUATE_MCP_URL:https://evaluate-elide-api.data.yahoo.com/}
           username-claim: short_id
+        - name: datahub
+          endpoint: ${DATAHUB_HOST:https://yahoo-datahub.acryl.io/integrations/ai/mcp/}
+          username-claim: email
         # Looker instances: endpoint is the per-instance host base (same LOOKER_<INSTANCE>_HOST as
         # the OIDC tenant above); LookerUpstreamRefreshClient appends /api/token. Hosts are
         # injected per environment (configmap / env) and intentionally left blank in this
