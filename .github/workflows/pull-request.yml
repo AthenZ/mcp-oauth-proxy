@@ -33,7 +33,7 @@ jobs:
 
       - name: Setup Java
         id: setup-java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ env.JAVA_VERSION_FULL_BUILD }}
           distribution: ${{ env.JAVA_DISTRO }}
